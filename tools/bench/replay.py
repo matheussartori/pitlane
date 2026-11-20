@@ -126,6 +126,8 @@ def main():
     ap.add_argument("--model", default="sonnet")
     ap.add_argument("--judge-model", default="sonnet")
     ap.add_argument("--parallel", type=int, default=2)
+    ap.add_argument("--brief-budget", type=int, default=12000, help="map size in characters; 4000 or less is the lean map")
+    ap.add_argument("--only", choices=["map", "bare"], help="run one variant (reuse the other from an earlier run)")
     ap.add_argument("commits", nargs="+")
     a = ap.parse_args()
     repo, out = Path(a.repo).resolve(), Path(a.out).resolve()
@@ -141,7 +143,7 @@ def main():
         real_files = sh(["git", "show", "--name-only", "--format=", sha], cwd=repo).split()
         sh(["git", "checkout", "-q", "--detach", parent], cwd=repo)
         title = task_title(subject)
-        brief = sh(["pit", "brief", "--text", title], cwd=repo, check=False)
+        brief = sh(["pit", "brief", "--text", title, "--budget", str(a.brief_budget)], cwd=repo, check=False)
         brief = "" if brief.startswith("nothing in the index") else brief.strip()
         tasks.append({"sha": sha, "parent": parent, "title": title, "real_files": real_files, "real_diff": real_diff, "brief": brief})
         print(f"prepared {sha} {title} (map {len(brief)} chars)", flush=True)
@@ -151,9 +153,10 @@ def main():
     results = []
     with cf.ThreadPoolExecutor(max_workers=a.parallel) as pool:
         for t in tasks:
-            futs = {pool.submit(attempt, repo, out, t["sha"], t["parent"], t["title"], t["brief"], v, a.model): v for v in ("map", "bare")}
+            variants = (a.only,) if a.only else ("map", "bare")
+            futs = {pool.submit(attempt, repo, out, t["sha"], t["parent"], t["title"], t["brief"], v, a.model): v for v in variants}
             runs = {futs[f]: f.result() for f in cf.as_completed(futs)}
-            for v in ("map", "bare"):
+            for v in variants:
                 r = runs[v]
                 r["judge"] = judge(out, t["title"], t["real_diff"], r["diff"], a.judge_model)
                 want = set(code_files(t["real_files"]))
@@ -161,10 +164,8 @@ def main():
                 r["file_recall"] = round(len(want & got) / len(want), 2) if want else None
                 r["extra_files"] = sorted(got - want)
             results.append({k: t[k] for k in ("sha", "title", "real_files")} | {"map_chars": len(t["brief"]), "runs": runs})
-            m, b = runs["map"], runs["bare"]
             print(
-                f"{t['sha']} map: {m['judge']['verdict']} ${m['cost_usd'] or 0:.2f} {m['tokens_in']//1000}k in {m['turns']}t | "
-                f"bare: {b['judge']['verdict']} ${b['cost_usd'] or 0:.2f} {b['tokens_in']//1000}k in {b['turns']}t",
+                t["sha"] + " " + " | ".join(f"{v}: {r['judge']['verdict']} ${r['cost_usd'] or 0:.2f} {r['tokens_in']//1000}k in {r['turns']}t" for v, r in runs.items()),
                 flush=True,
             )
             (out / "results.json").write_text(json.dumps(results, indent=1))
@@ -183,12 +184,12 @@ def main():
             "wall_s": round(sum(r["wall_s"] for r in rs)),
             "file_recall": round(sum(r["file_recall"] or 0 for r in rs) / max(n, 1), 2),
         }
-    summary = {"map": agg("map"), "bare": agg("bare"), "model": a.model, "tasks": len(results)}
+    summary = {v: agg(v) for v in ((a.only,) if a.only else ("map", "bare"))} | {"model": a.model, "tasks": len(results), "brief_budget": a.brief_budget}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps(summary, indent=1))
     # Clean up the worktrees; the repository is left as it was.
     for t in tasks:
-        for v in ("map", "bare"):
+        for v in ((a.only,) if a.only else ("map", "bare")):
             sh(["git", "worktree", "remove", "--force", str(out / "wt" / f"{t['sha']}-{v}")], cwd=repo, check=False)
 
 

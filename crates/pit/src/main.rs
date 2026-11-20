@@ -137,6 +137,9 @@ enum Cmd {
         /// Print JSON (files, scores, why).
         #[arg(long)]
         json: bool,
+        /// Size in characters; 4000 or less gives the lean map (paths and named symbols).
+        #[arg(long, default_value_t = pit_core::brief::DEFAULT_BUDGET)]
+        budget: usize,
     },
     /// The merge queue: lanes shipping into dev or main, one at a time.
     Queue,
@@ -458,13 +461,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 st.ms
             );
         }
-        Cmd::Brief { card, text, json } => {
+        Cmd::Brief { card, text, json, budget } => {
             let c = match (card, text) {
                 (Some(id), None) => cards::get(&repo, id)?,
                 (None, Some(t)) => cards::Card { title: t, ..Default::default() },
                 _ => anyhow::bail!("give a card number or --text"),
             };
-            let b = pit_core::brief::compile(&repo, &pit_core::default_homes().1, &c, pit_core::brief::DEFAULT_BUDGET)?;
+            let b = pit_core::brief::compile(&repo, &pit_core::default_homes().1, &c, budget)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&b)?);
             } else if b.text.is_empty() {

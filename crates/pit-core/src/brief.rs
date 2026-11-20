@@ -16,6 +16,8 @@ use crate::index::{self, FileEntry, Index, IndexStats, Lang, Symbol};
 
 /// About 3k tokens.
 pub const DEFAULT_BUDGET: usize = 12_000;
+/// About 1k tokens: below this budget the map is lean (paths, and only the symbols the card names).
+pub const LEAN_BUDGET: usize = 4_000;
 const MAX_FILES: usize = 12;
 const MAX_SYMBOLS: usize = 24;
 
@@ -310,26 +312,34 @@ pub fn compile_with(idx: &Index, card: &Card, cochange: &HashMap<String, HashMap
         return Brief { stats: BriefStats { indexed: idx.files.len(), ..Default::default() }, ..Default::default() };
     }
 
-    // Tests that go with the picked files, by name.
-    let stems: HashSet<&str> = picked.iter().map(|&i| stem_of(&idx.files[i].path)).filter(|s| s.len() >= 3).collect();
-    let mut tests: Vec<String> = idx
-        .files
+    // Tests that go with the picked files, by name, in the order of the files they test.
+    // An index, mod or main file is named by its folder: `index.test.ts` alone says nothing.
+    let stems: Vec<&str> = picked
         .iter()
-        .filter(|f| is_test(&f.path))
-        .filter(|f| {
-            let s = stem_of(&f.path).trim_start_matches("test_");
-            stems.contains(s) || stems.iter().any(|st| f.path.contains(&format!("/{st}.")) || f.path.contains(&format!("/{st}/")))
+        .map(|&i| {
+            let p = idx.files[i].path.as_str();
+            let s = stem_of(p);
+            if matches!(s, "index" | "mod" | "main" | "lib" | "__init__") { p.rsplit('/').nth(1).unwrap_or(s) } else { s }
         })
-        .map(|f| f.path.clone())
+        .filter(|s| s.len() >= 3)
         .collect();
-    tests.sort();
+    let rank = |path: &str| -> Option<usize> {
+        let s = stem_of(path).trim_start_matches("test_");
+        stems.iter().position(|st| *st == s || path.contains(&format!("/{st}.")) || path.contains(&format!("/{st}/")))
+    };
+    let mut ranked_tests: Vec<(usize, String)> = idx.files.iter().filter(|f| is_test(&f.path)).filter_map(|f| rank(&f.path).map(|r| (r, f.path.clone()))).collect();
+    ranked_tests.sort();
+    let mut tests: Vec<String> = ranked_tests.into_iter().map(|(_, p)| p).collect();
     tests.truncate(8);
 
     let query_set: HashSet<&str> = query.iter().map(String::as_str).collect();
-    let mut out = String::from(
+    let lean = budget <= LEAN_BUDGET;
+    let mut out = String::from(if lean {
+        "## Where to look\n\nLikely files for this card, from Pitlane's index (a map, not the answer):\n"
+    } else {
         "## Where to look\n\nFrom Pitlane's index of this repository: the files most likely to matter for this card, most relevant first, \
-with their symbols (line numbers from the main checkout; your branch may differ slightly). It is a map, not the answer: open what you need and look further when it misses.\n",
-    );
+with their symbols (line numbers from the main checkout; your branch may differ slightly). It is a map, not the answer: open what you need and look further when it misses.\n"
+    });
     let mut files = Vec::new();
     for &i in &picked {
         let f = &idx.files[i];
@@ -340,6 +350,23 @@ with their symbols (line numbers from the main checkout; your branch may differ 
             }
         }
         why.truncate(5);
+        if lean {
+            // One line per file: the path and the symbols the card's words name, with lines.
+            let named: Vec<String> = f
+                .symbols
+                .iter()
+                .filter(|s| words(&s.name).iter().any(|w| query_set.contains(w.as_str())))
+                .take(4)
+                .map(|s| format!("{} L{}", s.name, s.line))
+                .collect();
+            let line = if named.is_empty() { format!("- {}\n", f.path) } else { format!("- {}: {}\n", f.path, named.join(", ")) };
+            if out.len() + line.len() > budget && !files.is_empty() {
+                break;
+            }
+            out.push_str(&line);
+            files.push(BriefFile { path: f.path.clone(), score: (scores[i].0 * 100.0).round() / 100.0, why });
+            continue;
+        }
         let mut section = format!("\n### {} ({} lines; {})\n", f.path, f.lines, why.join(", "));
         for s in pick_symbols(&f.symbols, &query_set) {
             let indent = if s.parent.is_some() { "  " } else { "" };
@@ -355,7 +382,11 @@ with their symbols (line numbers from the main checkout; your branch may differ 
         files.push(BriefFile { path: f.path.clone(), score: (scores[i].0 * 100.0).round() / 100.0, why });
     }
     if !tests.is_empty() {
-        let t = format!("\n### Tests nearby\n{}", tests.iter().map(|t| format!("- {t}\n")).collect::<String>());
+        let t = if lean {
+            format!("Tests nearby: {}\n", tests.join(", "))
+        } else {
+            format!("\n### Tests nearby\n{}", tests.iter().map(|t| format!("- {t}\n")).collect::<String>())
+        };
         if out.len() + t.len() <= budget + 600 {
             out.push_str(&t);
         }
