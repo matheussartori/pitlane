@@ -473,7 +473,13 @@ async function split(dir: Dir) {
   try {
     const info = await terms.open(from?.cwd ?? "", from?.label ?? "terminal", 100, 30);
     make(info);
-    setTab(t.id, (x) => ({ root: insert(x.root, x.focus, pane(info.id), dir === "row" ? "right" : "bottom"), focus: info.id, zoom: false }));
+    // As in Warp: the panes along the split share the room equally, however many there are.
+    setTab(t.id, (x) => {
+      const root = insert(x.root, x.focus, pane(info.id), dir === "row" ? "right" : "bottom");
+      const o = owner(root, info.id, dir);
+      if (o) o.split.sizes = o.split.children.map(() => 1 / o.split.children.length);
+      return { root, focus: info.id, zoom: false };
+    });
   } catch (e) {
     toast({ tone: "fail", title: "No terminal", body: msg(e) });
   }
