@@ -46,6 +46,18 @@ pub struct StartOpts {
     pub allow_api_key: bool,
     /// This run continues that one, which hit a usage limit.
     pub handoff_from: Option<String>,
+    /// For a resumed run: the first message instead of "continue" (a person's review comments).
+    pub message: Option<String>,
+    /// Review round this run belongs to.
+    pub round: u32,
+}
+
+/// What a person decides about a card in review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewAction {
+    Approve,
+    Changes,
+    Discard,
 }
 
 /// What the daemon holds for a run while its process lives.
@@ -331,6 +343,10 @@ impl Supervisor {
             exhausted,
             next: None,
             resets_at: None,
+            round: opts.round,
+            verdict: None,
+            proofs_ok: None,
+            base_sha: None,
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -353,7 +369,7 @@ impl Supervisor {
         let me = Arc::clone(self);
         let run = id.clone();
         tokio::spawn(async move {
-            if let Err(e) = me.clone().drive(run.clone(), repo, card, resume.is_some(), choice, opts.handoff_from).await {
+            if let Err(e) = me.clone().drive(run.clone(), repo, card, resume.is_some(), choice, opts).await {
                 me.fail(&run, &format!("{e:#}"));
             }
         });
@@ -380,8 +396,9 @@ impl Supervisor {
         card: u32,
         resuming: bool,
         choice: Choice,
-        handoff_from: Option<String>,
+        opts: StartOpts,
     ) -> Result<()> {
+        let StartOpts { handoff_from, message, .. } = opts;
         // Worktree and branch: blocking git work, off the async threads.
         let home = self.cfg.home.clone();
         let me = Arc::clone(&self);
@@ -393,9 +410,11 @@ impl Supervisor {
             prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), |t| me.emit(&rid, RunEvent::Note { text: t }))
         })
         .await??;
+        let base_sha = pit_core::git::Git::new(&prep.worktree).run(&["rev-parse", "HEAD"]).ok();
         self.update(&id, |m| {
             m.branch = prep.branch.clone();
             m.worktree = prep.worktree.clone();
+            m.base_sha = base_sha;
         });
 
         let session = self.get(&id)?.session_id;
@@ -447,7 +466,7 @@ impl Supervisor {
         let pid = child.id();
         let mut stdin = child.stdin.take().context("no stdin")?;
         let first = if resuming {
-            "Continue where you stopped. End with the handoff.".to_owned()
+            message.clone().unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned())
         } else {
             fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
             prep.briefing.clone()
@@ -536,6 +555,11 @@ impl Supervisor {
         let error = (state == RunState::Failed).then(|| {
             if tail.is_empty() { format!("the agent exited with {status}") } else { tail.join("\n") }
         });
+        // Finished work is checked before anyone reviews it: the repository's proofs, then the judge.
+        let blocked = self.get(&id)?.handoff.as_ref().and_then(|h| h.get("status")).and_then(|s| s.as_str()) == Some("blocked");
+        if state == RunState::Done && !blocked {
+            self.verify(&id, card).await;
+        }
         // The card follows the run first (a handoff moves it to review, its questions go to the
         // Inbox), so anyone who sees the run ended also sees where the card went.
         let mut settled = self.get(&id)?;
@@ -736,7 +760,7 @@ impl Supervisor {
         self.emit(&id, RunEvent::Exited { code, state: RunState::Failed });
         self.live.lock().unwrap().remove(&id);
 
-        match self.start(repo, card, None, StartOpts { allow_api_key: false, handoff_from: Some(id.clone()) }) {
+        match self.start(repo, card, None, StartOpts { allow_api_key: false, handoff_from: Some(id.clone()), round: meta.round, ..Default::default() }) {
             Ok(next) => {
                 let text = format!("{why} Continues as run {} with {}.", next.id, next.reason.clone().unwrap_or_default());
                 self.update_disk(&id, |m| m.error = Some(text.clone()));
@@ -763,6 +787,180 @@ impl Supervisor {
         }
     }
 
+    /// Proofs, then the judge, on the run's lane. The run stays live (state `verifying`) meanwhile,
+    /// so everyone following it sees each step. Failures here are recorded, never fatal.
+    async fn verify(self: &Arc<Self>, id: &str, card: u32) {
+        let meta = match self.get(id) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let home = self.cfg.home.clone();
+        let Ok(r) = Repo::open(&meta.repo, &home_dir(), &home) else { return };
+        let cfg = r.flow.verify.clone();
+        if cfg.commands.is_empty() && !cfg.judge {
+            return;
+        }
+        self.update(id, |m| m.state = RunState::Verifying);
+        let _ = set_card_state(&meta, CardState::Verifying, &home);
+        let mut v = pit_core::verify::Verification {
+            run: id.to_owned(),
+            started_at: now_secs(),
+            no_commands: cfg.commands.is_empty(),
+            max_rounds: cfg.max_rounds,
+            ..Default::default()
+        };
+
+        for cmd in &cfg.commands {
+            self.emit(id, RunEvent::Note { text: format!("Checking: {cmd}") });
+            let (wt, c) = (meta.worktree.clone(), cmd.clone());
+            let proof = tokio::task::spawn_blocking(move || pit_core::verify::run_proof(&wt, &c)).await.unwrap_or_else(|e| pit_core::verify::Proof {
+                command: cmd.clone(),
+                ok: false,
+                code: None,
+                duration_ms: 0,
+                tail: e.to_string(),
+            });
+            self.emit(id, RunEvent::Proof { command: proof.command.clone(), ok: proof.ok, duration_ms: proof.duration_ms });
+            v.proofs.push(proof);
+        }
+        if !v.proofs.is_empty() {
+            let ok = v.proofs_ok();
+            self.update(id, move |m| m.proofs_ok = Some(ok));
+        }
+
+        if cfg.judge {
+            let model = cfg.judge_model.clone();
+            self.emit(id, RunEvent::Note { text: format!("The judge reads the diff ({}), in a session of its own.", model.as_deref().unwrap_or("default model")) });
+            let judge = self.judge(&meta, &r, card, &v.proofs, model.clone()).await;
+            if let Some(j) = &judge.judgement {
+                let (verdict, summary, n) = (j.verdict, j.summary.clone(), j.findings.len());
+                self.update(id, move |m| m.verdict = Some(verdict));
+                self.emit(id, RunEvent::Judged { verdict, summary, findings: n });
+            } else if let Some(e) = &judge.error {
+                self.emit(id, RunEvent::Note { text: format!("The judge could not finish: {e}") });
+            }
+            v.judge = Some(judge);
+        }
+        v.ended_at = Some(now_secs());
+        let _ = fs::write(self.dir(id).join("verify.json"), serde_json::to_string_pretty(&v).unwrap_or_default());
+    }
+
+    /// The judge: a fresh Claude Code session, read-only, on the same account as the run. It gets
+    /// the spec, the decisions and the diff; nothing the working agent said.
+    async fn judge(&self, meta: &RunMeta, r: &Repo, card: u32, proofs: &[pit_core::verify::Proof], model: Option<String>) -> pit_core::verify::JudgeRun {
+        let mut out = pit_core::verify::JudgeRun { model: model.clone(), ..Default::default() };
+        let prompt = (|| -> Result<String> {
+            let c = cards::get(r, card)?;
+            let diff = pit_core::verify::lane_diff(r, &meta.branch, 200_000, None)?;
+            let decisions = fs::read_to_string(r.root.join(cards::DECISIONS)).unwrap_or_default();
+            Ok(pit_core::verify::judge_prompt(&c, &decisions, &diff, proofs))
+        })();
+        let prompt = match prompt {
+            Ok(p) => p,
+            Err(e) => {
+                out.error = Some(format!("{e:#}"));
+                return out;
+            }
+        };
+        let routing = Routing::load(&self.cfg.home).ok();
+        let account = routing.as_ref().and_then(|rt| rt.account(&meta.account).cloned());
+        let mut cmd = Command::new(&self.cfg.claude_bin);
+        cmd.args(["-p", "--output-format", "json", "--setting-sources", "project,local", "--permission-mode", "default"])
+            .args(["--permission-prompts", "none", "--allowedTools", "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"])
+            .args(["--max-turns", "30"])
+            .arg("--append-system-prompt")
+            .arg(pit_core::verify::JUDGE_RULES)
+            .arg("--json-schema")
+            .arg(pit_core::verify::verdict_schema().to_string());
+        if let Some(m) = &model {
+            cmd.args(["--model", m]);
+        }
+        if let Some(dir) = accounts::profile_dir(&meta.account, &self.cfg.home) {
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
+        if let Some(helper) = account.and_then(|a| a.api_key_helper) {
+            cmd.arg("--settings").arg(serde_json::json!({ "apiKeyHelper": helper }).to_string());
+        }
+        cmd.current_dir(&meta.worktree)
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let run = async {
+            let mut child = cmd.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(prompt.as_bytes()).await?;
+                stdin.shutdown().await?;
+            }
+            let o = child.wait_with_output().await?;
+            anyhow::Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        };
+        match tokio::time::timeout(Duration::from_secs(20 * 60), run).await {
+            Ok(Ok(stdout)) => match pit_core::verify::read_judge(&stdout) {
+                Ok((j, cost, dur)) => {
+                    out.judgement = Some(j);
+                    out.cost_usd = cost;
+                    out.duration_ms = dur;
+                }
+                Err(e) => out.error = Some(format!("{e:#}")),
+            },
+            Ok(Err(e)) => out.error = Some(format!("{e:#}")),
+            Err(_) => out.error = Some("the judge took longer than 20 minutes".into()),
+        }
+        out
+    }
+
+    /// A person's decision on a card in review. Approve ships the lane one stage (into
+    /// integration); changes resumes the run's session with the comments; discard returns the
+    /// card to ready with its lane intact.
+    pub async fn review(self: &Arc<Self>, repo: PathBuf, card: u32, action: ReviewAction, message: Option<String>) -> Result<serde_json::Value> {
+        let home = self.cfg.home.clone();
+        let r = Repo::open(&repo, &home_dir(), &home)?;
+        let c = cards::get(&r, card)?;
+        if c.state != CardState::Review {
+            bail!("card #{card} is not in review (it is {})", c.state.as_str());
+        }
+        // The card's latest run: the highest review round, then the newest (ids can share a second).
+        let last = self.list(Some(&r.root))?.into_iter().filter(|m| m.card == card).max_by_key(|m| (m.round, m.started_at));
+        match action {
+            ReviewAction::Discard => {
+                cards::update(&r, card, CardPatch { state: Some(CardState::Ready), ..Default::default() })?;
+                Ok(serde_json::json!({ "card": card, "state": "ready" }))
+            }
+            ReviewAction::Changes => {
+                let text = message.filter(|m| !m.trim().is_empty()).context("say what to change")?;
+                let prev = last.context("this card has no run to continue")?;
+                let round = prev.round + 1;
+                if round > r.flow.verify.max_rounds {
+                    bail!("card #{card} already went through {} rounds of changes; take it from here yourself or discard it", r.flow.verify.max_rounds);
+                }
+                let first = format!("A person reviewed your work and asks for changes:\n\n{}\n\nMake them, commit, and end with the handoff.", text.trim());
+                let next = self.start(repo, card, Some(prev.id), StartOpts { message: Some(first), round, ..Default::default() })?;
+                Ok(serde_json::json!({ "run": next }))
+            }
+            ReviewAction::Approve => {
+                let branch = c.lane.clone().context("this card has no lane to ship")?;
+                let shipped = tokio::task::spawn_blocking(move || -> Result<(String, String)> {
+                    let r = Repo::open(&repo, &home_dir(), &home)?;
+                    let plan = actions::plan_ship(&r, &branch, None, true)?;
+                    if plan.already.is_none() {
+                        if !plan.conflicts.is_empty() {
+                            bail!("{branch} conflicts with {} in {}; resolve it in the lane first", plan.target, plan.conflicts.join(", "));
+                        }
+                        actions::execute_ship(&r, &plan)?;
+                    }
+                    let state = if Some(plan.target.as_str()) == r.flow.flow.integration() { CardState::InDev } else { CardState::Done };
+                    cards::update(&r, card, CardPatch { state: Some(state), ..Default::default() })?;
+                    Ok((plan.target, state.as_str().to_owned()))
+                })
+                .await??;
+                Ok(serde_json::json!({ "card": card, "shipped_to": shipped.0, "state": shipped.1 }))
+            }
+        }
+    }
+
     /// Changes a run that is no longer live, on disk.
     fn update_disk(&self, id: &str, f: impl FnOnce(&mut RunMeta)) {
         if let Ok(mut m) = self.get(id) {
@@ -777,7 +975,7 @@ impl Supervisor {
         if prev.state.is_live() {
             bail!("run {id} is still running");
         }
-        let next = self.start(prev.repo.clone(), prev.card, None, StartOpts { allow_api_key, handoff_from: Some(prev.id.clone()) })?;
+        let next = self.start(prev.repo.clone(), prev.card, None, StartOpts { allow_api_key, handoff_from: Some(prev.id.clone()), round: prev.round, ..Default::default() })?;
         self.update_disk(id, |m| m.next = None);
         Ok(next)
     }

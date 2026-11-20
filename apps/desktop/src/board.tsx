@@ -2,7 +2,7 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { api, cardStates, isLive, type Card, type CardState, type RunMeta, type Yard } from "./api";
 import { clock, elapsed, money, runStateView } from "./run";
-import { columnEmpty, columnTitle, columns, openQuestions, place, stateLabel } from "./cards";
+import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
 import { Icon } from "./icons";
 import { QuestionBlock } from "./inbox";
 import { track } from "./lane";
@@ -66,6 +66,10 @@ export function BoardView(props: {
   const placed = createMemo(() =>
     (props.cards ?? []).map((c) => {
       const asking = props.runs.find((r) => r.card === c.id && isLive(r.state) && r.waiting.length > 0);
+      if (c.state === "review" && !asking) {
+        const r = reviewSummary(latestRun(props.runs, c.id));
+        return { card: c, p: { ...place(c, props.yard), chip: r.chip, icon: r.icon, label: r.label, why: r.text } };
+      }
       const p = asking
         ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? "Wants to run" : `Wants ${asking.waiting[0]!.tool}`, why: `Asks to run ${asking.waiting[0]!.detail}` }
         : place(c, props.yard);

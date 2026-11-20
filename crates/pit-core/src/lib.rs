@@ -9,6 +9,7 @@ pub mod git;
 pub mod lanes;
 pub mod runs;
 pub mod trash;
+pub mod verify;
 
 use std::path::{Path, PathBuf};
 

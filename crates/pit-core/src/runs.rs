@@ -27,6 +27,8 @@ pub fn runs_dir(pitlane_home: &Path) -> PathBuf {
 pub enum RunState {
     Starting,
     Running,
+    /// The agent finished; proofs and the judge are checking its work.
+    Verifying,
     /// Finished with a handoff.
     Done,
     /// The agent or the process failed, or a limit was hit.
@@ -39,7 +41,7 @@ pub enum RunState {
 
 impl RunState {
     pub fn is_live(self) -> bool {
-        matches!(self, Self::Starting | Self::Running)
+        matches!(self, Self::Starting | Self::Running | Self::Verifying)
     }
 }
 
@@ -110,6 +112,18 @@ pub struct RunMeta {
     /// When the limit it hit resets (unix seconds), if the agent said.
     #[serde(default)]
     pub resets_at: Option<u64>,
+    /// Review rounds: 0 for the first run of a card, +1 each time a person asks for changes.
+    #[serde(default)]
+    pub round: u32,
+    /// The judge's verdict, once the checks ran.
+    #[serde(default)]
+    pub verdict: Option<crate::verify::Verdict>,
+    /// Every proof passed (None: no proofs ran).
+    #[serde(default)]
+    pub proofs_ok: Option<bool>,
+    /// The lane's commit when the agent started: the diff of this round starts here.
+    #[serde(default)]
+    pub base_sha: Option<String>,
 }
 
 fn default_account() -> String {
@@ -202,6 +216,10 @@ pub enum RunEvent {
     Quota { window: String, used: f64, resets_at: u64 },
     /// The account refused more work until `resets_at`.
     Limited { window: String, resets_at: u64 },
+    /// One of the repository's checks ran on the lane.
+    Proof { command: String, ok: bool, duration_ms: u64 },
+    /// The judge, a separate session, gave its verdict.
+    Judged { verdict: crate::verify::Verdict, summary: String, findings: usize },
     Finished {
         ok: bool,
         cost_usd: f64,

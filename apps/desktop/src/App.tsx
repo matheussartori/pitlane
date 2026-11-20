@@ -5,6 +5,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type Yard } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
+import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
 import { BoardView, CardSheet, NewCardSheet } from "./board";
 import { openQuestions } from "./cards";
@@ -55,6 +56,7 @@ export default function App() {
   const setTab = (t: Tab) => {
     setTabSignal(t);
     setRunView(null);
+    setReviewView(null);
     history.replaceState(null, "", `#${t}`);
     try {
       localStorage.setItem(TAB_KEY, t);
@@ -73,6 +75,17 @@ export default function App() {
   const openRun = (id: string) => {
     location.hash = `#run/${encodeURIComponent(id)}`;
   };
+  const reviewFromHash = () => {
+    const m = /^#review\/(\d+)$/.exec(location.hash);
+    return m ? Number(m[1]) : null;
+  };
+  const [reviewView, setReviewView] = createSignal<number | null>(reviewFromHash());
+  const openReview = (card: number) => {
+    location.hash = `#review/${card}`;
+  };
+  /** The card's latest run: the highest review round, then the newest. */
+  const lastRun = (card: number) =>
+    (runs() ?? []).filter((r) => r.card === card).sort((a, b) => (b.round ?? 0) - (a.round ?? 0) || b.started_at - a.started_at)[0];
   const [problems, setProblems] = createSignal<string[]>([]);
   const [yard, setYard] = createSignal<Yard | null>(null);
   const [fetching, setFetching] = createSignal(false);
@@ -267,7 +280,9 @@ export default function App() {
     const onHash = () => {
       const r = runFromHash();
       setRunView(r);
-      if (!r) {
+      const rv = reviewFromHash();
+      setReviewView(rv);
+      if (!r && rv == null) {
         const t = location.hash.replace(/^#\/?/, "");
         if (isTab(t)) setTabSignal(t);
       }
@@ -389,7 +404,7 @@ export default function App() {
           </Show>
         </div>
         <nav class="tabs" aria-label="Screens" data-tauri-drag-region>
-          <button type="button" class="tab" aria-current={!runView() && tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
+          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
             Inbox
             <Show when={asking() > 0}>
               <span class="count count-hot" title={`${asking()} open ${asking() === 1 ? "question" : "questions"}`}>
@@ -398,10 +413,10 @@ export default function App() {
               </span>
             </Show>
           </button>
-          <button type="button" class="tab" aria-current={!runView() && tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
+          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
             Board
           </button>
-          <button type="button" class="tab" aria-current={!runView() && tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
+          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
             Lanes
             <Show when={needs() > 0}>
               <span class="count count-hot" title={`${needs()} ${needs() === 1 ? "lane waits" : "lanes wait"} on you`}>
@@ -410,7 +425,7 @@ export default function App() {
               </span>
             </Show>
           </button>
-          <button type="button" class="tab" aria-current={!runView() && tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
+          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
             Ledger
           </button>
         </nav>
@@ -466,6 +481,24 @@ export default function App() {
           >
             {(path) => (
               <Switch>
+                <Match when={reviewView() != null && reviewView()}>
+                  {(card) => (
+                    <ReviewScreen
+                      repo={path()}
+                      card={(cards() ?? []).find((c) => c.id === card())}
+                      run={lastRun(card())}
+                      now={now()}
+                      integration={yard()?.integration ?? null}
+                      onBack={() => setTab("board")}
+                      onOpenRun={openRun}
+                      onChanged={() => {
+                        void loadRuns();
+                        void loadCards();
+                        void load(false);
+                      }}
+                    />
+                  )}
+                </Match>
                 <Match when={runView()}>
                   {(id) => (
                     <RunScreen
@@ -534,6 +567,7 @@ export default function App() {
                     onOpen={(id) => {
                       const live = (runs() ?? []).find((r) => r.card === id && isLive(r.state));
                       if (live) openRun(live.id);
+                      else if ((cards() ?? []).find((c) => c.id === id)?.state === "review") openReview(id);
                       else setSheet({ kind: "card", id });
                     }}
                     onNew={() => setSheet({ kind: "new-card" })}
@@ -598,7 +632,15 @@ export default function App() {
           </Show>
         </main>
         <Show when={tab() !== "lanes"}>
-          <Tower yard={yard()} runs={runs() ?? []} now={now()} selected={selected()} onSelect={select} onOpenRun={openRun} />
+          <Tower
+            yard={yard()}
+            runs={runs() ?? []}
+            reviewing={(cards() ?? []).filter((c) => c.state === "review" && c.lane).map((c) => c.lane!)}
+            now={now()}
+            selected={selected()}
+            onSelect={select}
+            onOpenRun={openRun}
+          />
         </Show>
       </div>
       <Toasts />

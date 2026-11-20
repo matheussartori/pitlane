@@ -143,8 +143,8 @@ export interface NewReport {
   setup_ok: boolean | null;
 }
 
-export type CardState = "inbox" | "ready" | "running" | "review" | "in-dev" | "done" | "blocked";
-export const cardStates: CardState[] = ["inbox", "ready", "running", "review", "in-dev", "done", "blocked"];
+export type CardState = "inbox" | "ready" | "running" | "verifying" | "review" | "in-dev" | "done" | "blocked";
+export const cardStates: CardState[] = ["inbox", "ready", "running", "verifying", "review", "in-dev", "done", "blocked"];
 
 export interface Question {
   id: number;
@@ -175,7 +175,48 @@ export interface CardList {
   problems: string[];
 }
 
-export type RunState = "starting" | "running" | "done" | "failed" | "stopped" | "interrupted";
+export type RunState = "starting" | "running" | "verifying" | "done" | "failed" | "stopped" | "interrupted";
+
+export type Verdict = "approve" | "changes";
+
+export interface Proof {
+  command: string;
+  ok: boolean;
+  code: number | null;
+  duration_ms: number;
+  tail: string;
+}
+
+export interface Finding {
+  file?: string | null;
+  line?: number | null;
+  severity: "blocker" | "major" | "minor" | "nit" | string;
+  text: string;
+}
+
+export interface Verification {
+  run: string;
+  proofs: Proof[];
+  no_commands: boolean;
+  max_rounds: number;
+  judge: {
+    model: string | null;
+    judgement: { verdict: Verdict; summary: string; findings: Finding[] } | null;
+    error: string | null;
+    cost_usd: number | null;
+    duration_ms: number | null;
+  } | null;
+  started_at: number;
+  ended_at: number | null;
+}
+
+export interface LaneDiff {
+  base: string;
+  head: string;
+  files: { path: string; added: number; removed: number }[];
+  patch: string;
+  truncated: boolean;
+}
 
 export interface Tokens {
   input: number;
@@ -226,6 +267,11 @@ export interface RunMeta {
   next?: string | null;
   /** When the limit this run hit resets (unix seconds). */
   resets_at?: number | null;
+  round?: number;
+  verdict?: Verdict | null;
+  proofs_ok?: boolean | null;
+  /** The lane's commit when this run started: where this round's diff begins. */
+  base_sha?: string | null;
 }
 
 export interface Quota {
@@ -281,9 +327,11 @@ export type RunEvent =
   | { kind: "approval"; approval: Approval }
   | { kind: "decided"; id: string; decision: Decision; message: string | null }
   | { kind: "limited"; window: string; resets_at: number }
+  | { kind: "proof"; command: string; ok: boolean; duration_ms: number }
+  | { kind: "judged"; verdict: Verdict; summary: string; findings: number }
   | { kind: "exited"; code: number | null; state: RunState };
 
-export const isLive = (s: RunState) => s === "starting" || s === "running";
+export const isLive = (s: RunState) => s === "starting" || s === "running" || s === "verifying";
 
 /** Live events from the daemon, pushed by the Tauri backend. Nothing in the browser preview. */
 export async function onRun(
@@ -333,6 +381,10 @@ export const api = {
   runStart: (path: string, card: number, allowApiKey = false) => invoke<RunMeta>("run_start", { path, card, allowApiKey }),
   runContinue: (run: string, allowApiKey: boolean) => invoke<RunMeta>("run_continue", { run, allowApiKey }),
   accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),
+  runVerification: (run: string) => invoke<Verification | null>("run_verification", { run }),
+  laneDiff: (path: string, branch: string, from?: string) => invoke<LaneDiff>("lane_diff", { path, branch, from: from ?? null }),
+  cardReview: (path: string, card: number, action: "approve" | "changes" | "discard", message?: string) =>
+    invoke<{ run?: RunMeta; shipped_to?: string; state?: string }>("card_review", { path, card, action, message: message ?? null }),
   accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),
   runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),

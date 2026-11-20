@@ -8,6 +8,7 @@
 /* Hallmark · waive 72 · .tower-title clips a long branch name with text-overflow: ellipsis inside its row · the text range only runs past the Tower as the hidden tail behind the ellipsis */
 /* Hallmark · dismissed recommended-option · an approval offers no recommended answer and ↵ does nothing on it: allowing a command is the person's call, never a default */
 /* Hallmark · dismissed F25 · the desktop window has a 900px minimum width (minWidth in tauri.conf.json), so no phone width exists to fit */
+/* Hallmark · Review (build) · finish-review: subagent · fix · 8 findings · 8 resolved; per-hunk accept and reject wait for Monaco (Phase 3), the diff here is read and annotated only · gap: none */
 /* Hallmark · Accounts (build) · finish-review: subagent · fix · 8 findings · 7 resolved 1 partial (the meters still hide under 1100px; the repository menu opens Accounts there) · gap: none */
 /* Hallmark · Approvals (build) · finish-review: subagent · fix · 8 findings · 8 resolved · gap: none */
 /* Hallmark · Run and Ledger (build) · finish-review: subagent · fix · 8 findings · 8 resolved (fixture paths repaired for the old 160-character cut) · gap: none */
@@ -281,6 +282,52 @@ body { overflow: clip; cursor: default; -webkit-user-select: none; user-select: 
 .account-signin { height: var(--control-h); font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); }
 .route { margin: 0; padding-left: var(--space-lg); display: grid; gap: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink-2); }
 .tl-limit { color: var(--color-accent-text); }
+.review-screen { width: 100%; max-width: 1280px; margin-inline: auto; display: flex; flex-direction: column; gap: var(--space-sm); height: 100%; min-height: 0; }
+.main:has(.review-screen) { overflow: hidden; padding-bottom: var(--space-md); }
+.review-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--space-lg); min-height: 0; }
+.review-main { overflow: auto; min-height: 0; display: grid; align-content: start; gap: var(--space-md); padding-right: var(--space-2xs); }
+.review-side { overflow: auto; min-height: 0; display: grid; align-content: start; gap: var(--space-sm); }
+.walkthrough { display: grid; gap: var(--space-xs); font-size: var(--text-md); color: var(--color-ink); max-width: var(--measure); }
+.review-diff { display: grid; gap: var(--space-sm); }
+.review-diff .diff-file { padding-block: var(--space-2xs); }
+.diff-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); min-width: 0; flex: 1; min-height: var(--control-h); border: 0; padding: 0; background: none; color: var(--color-ink-2); font: inherit; text-align: left; cursor: pointer; }
+.diff-toggle:hover { color: var(--color-ink); }
+.diff-toggle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.diff-viewed { display: inline-flex; align-items: center; gap: var(--space-2xs); font-size: var(--text-xs); color: var(--color-muted); cursor: pointer; flex-shrink: 0; }
+.chev-closed { transform: rotate(-90deg); }
+.diff-noted { font-size: var(--text-xs); font-weight: var(--weight-strong); color: var(--color-ink-2); flex-shrink: 0; }
+.diff-empty { padding: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+/* A judge finding, at the line it is about. Blockers and majors in the fail tone; the rest quiet. */
+.diff-finding { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm) var(--space-xs) 40px; font: var(--weight-regular) var(--text-sm)/1.45 var(--font-body); color: var(--color-ink); background: var(--color-paper-2); box-shadow: inset 2px 0 0 var(--color-rule-strong); white-space: normal; cursor: pointer; }
+.diff-finding[data-severity="blocker"], .diff-finding[data-severity="major"] { box-shadow: inset 2px 0 0 var(--color-fail); }
+.diff-finding .check { margin-top: var(--space-3xs); }
+.finding-sev { font-size: var(--text-xs); font-weight: var(--weight-strong); color: var(--color-ink-2); flex-shrink: 0; padding-top: var(--space-3xs); }
+.proofs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2xs); }
+.proof-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--space-xs); align-items: center; font-size: var(--text-sm); }
+.proof-row > .icon { color: var(--color-fail); }
+.proof-row[data-ok] > .icon { color: var(--color-done); }
+.proof-row code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proof-row .figure { font-size: var(--text-xs); color: var(--color-muted); }
+.proof-tail { grid-column: 2 / 4; margin: 0; padding: var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); font: var(--weight-regular) var(--text-xs)/1.5 var(--font-mono); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12lh; overflow: auto; }
+.review-side .side-title { margin-top: var(--space-sm); }
+.review-side .side-title:first-child { margin-top: 0; }
+.review-side > p { font-size: var(--text-sm); color: var(--color-ink-2); }
+.review-side > .chip { justify-self: start; }
+.findings { list-style: none; margin: 0; padding: 0; display: grid; }
+.finding { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--space-xs); align-items: baseline; padding: var(--space-xs) 0; border-top: 1px solid var(--color-rule); font-size: var(--text-sm); color: var(--color-ink-2); }
+.finding .check { align-self: center; }
+.finding-jump { font-family: var(--font-mono); font-size: var(--text-xs); justify-self: start; }
+.finding-text { min-width: 0; }
+.review-verdict { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-md); color: var(--color-ink); }
+.review-verdict .icon { color: var(--color-accent-text); }
+.review-verdict[data-tone="failed"] .icon { color: var(--color-fail); }
+.review-main > .seg { justify-self: start; }
+/* The back control hangs in the gutter, so the title lines up with everything under it. */
+.screen-head .back { margin-inline-start: calc(-1 * (var(--control-h) + var(--space-sm))); }
+.link-btn { border: 0; padding: 0; background: none; color: var(--color-muted); font: inherit; font-size: var(--text-sm); cursor: pointer; text-decoration: underline; text-decoration-color: var(--color-rule-strong); text-underline-offset: 0.2em; }
+.link-btn:hover { color: var(--color-ink); }
+.link-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+@media (max-width: 60rem) { .review-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; } .review-side { max-height: 40vh; } }
 .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); }
 /* Narrow windows: the figures and the handoff stack under the log instead of disappearing. */
 @media (max-width: 60rem) { .run-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; } .run-side { max-height: 38vh; } }

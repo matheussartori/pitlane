@@ -57,7 +57,7 @@ export async function preview<T>(cmd: string): Promise<T> {
     }
     case "runs_list": {
       if (new URLSearchParams(location.search).get("state") === "empty") return [] as T;
-      return [liveRun(), failedRun(), runMeta] as T;
+      return [liveRun(), failedRun(), { ...runMeta, round: 0, verdict: "changes", proofs_ok: false }] as T;
     }
     case "run_timeline":
       return (location.hash.includes("3-live") ? liveTimeline() : location.hash.includes("5-failed") ? failedTimeline() : pairs(runTimeline)) as T;
@@ -75,6 +75,37 @@ export async function preview<T>(cmd: string): Promise<T> {
         five_hour_at: 90,
         seven_day_at: 95,
         file: "/Users/you/.pitlane/routing.toml",
+      } as T;
+    case "run_verification":
+      return {
+        run: runMeta.id,
+        no_commands: false,
+        max_rounds: 3,
+        started_at: now() - 600,
+        ended_at: now() - 560,
+        proofs: [
+          { command: "test -f README.md", ok: true, code: 0, duration_ms: 12, tail: "" },
+          { command: "npm run lint", ok: false, code: 1, duration_ms: 2140,
+            tail: "README.md:1:1  MD041  First line in a file should be a top-level heading\n✖ 1 problem (1 error, 0 warnings)" },
+        ],
+        judge: {
+          model: "sonnet", cost_usd: 0.04, duration_ms: 18000, error: null,
+          judgement: {
+            verdict: "changes",
+            summary: "The sentence is right, but the README lost its heading, which the lint rule in this repo requires.",
+            findings: [
+              { file: "README.md", line: 1, severity: "major", text: "The first line is no longer a top-level heading; keep `# demo` and put the sentence under it." },
+              { file: "README.md", line: 1, severity: "nit", text: "End the sentence without the trailing space." },
+            ],
+          },
+        },
+      } as T;
+    case "lane_diff":
+      return {
+        base: "8e924ea0", head: "951104d0",
+        files: [{ path: "README.md", added: 1, removed: 1 }],
+        patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
+        truncated: false,
       } as T;
     case "quota":
       return {

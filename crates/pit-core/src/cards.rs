@@ -27,6 +27,8 @@ pub enum CardState {
     /// Specced and answered: can run.
     Ready,
     Running,
+    /// The run finished; proofs and the judge are checking it.
+    Verifying,
     Review,
     InDev,
     Done,
@@ -34,14 +36,15 @@ pub enum CardState {
 }
 
 impl CardState {
-    pub const ALL: [CardState; 7] =
-        [Self::Inbox, Self::Ready, Self::Running, Self::Review, Self::InDev, Self::Done, Self::Blocked];
+    pub const ALL: [CardState; 8] =
+        [Self::Inbox, Self::Ready, Self::Running, Self::Verifying, Self::Review, Self::InDev, Self::Done, Self::Blocked];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Inbox => "inbox",
             Self::Ready => "ready",
             Self::Running => "running",
+            Self::Verifying => "verifying",
             Self::Review => "review",
             Self::InDev => "in-dev",
             Self::Done => "done",

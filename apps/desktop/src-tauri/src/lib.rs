@@ -350,6 +350,33 @@ async fn quota(path: String) -> CmdResult<QuotaOut> {
     .await
 }
 
+/// What the checks found for a run (proofs and the judge), if they ran.
+#[tauri::command]
+async fn run_verification(run: String) -> CmdResult<Option<pit_core::verify::Verification>> {
+    blocking(move || {
+        let path = runs::runs_dir(&default_homes().1).join(&run).join("verify.json");
+        Ok(std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()))
+    })
+    .await
+}
+
+/// What a lane changes against production: per-file counts and the patch (cut past 600 KB).
+#[tauri::command]
+async fn lane_diff(path: String, branch: String, from: Option<String>) -> CmdResult<pit_core::verify::LaneDiff> {
+    blocking(move || pit_core::verify::lane_diff(&open(&path)?, &branch, 600_000, from.as_deref())).await
+}
+
+/// Your decision on a card in review: approve (ship into integration), changes (the run continues
+/// with your comments) or discard (back to ready, lane kept).
+#[tauri::command]
+async fn card_review(path: String, card: u32, action: String, message: Option<String>) -> CmdResult<serde_json::Value> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        call(serde_json::json!({ "op": "review", "repo": root, "card": card, "action": action, "message": message }))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn run_continue(run: String, allow_api_key: bool) -> CmdResult<RunMeta> {
     blocking(move || {
@@ -532,6 +559,9 @@ pub fn run() {
             run_stop,
             run_decide,
             run_continue,
+            run_verification,
+            lane_diff,
+            card_review,
             accounts_list,
             account_use,
             run_timeline,

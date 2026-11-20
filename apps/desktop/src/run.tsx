@@ -12,6 +12,7 @@ const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.
 export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; label: string }> = {
   starting: { chip: "running", icon: "run", label: "Starting" },
   running: { chip: "running", icon: "run", label: "Running" },
+  verifying: { chip: "running", icon: "verify", label: "Checking" },
   done: { chip: "done", icon: "done", label: "Done" },
   failed: { chip: "failed", icon: "fail", label: "Failed" },
   stopped: { chip: "queued", icon: "queued", label: "Stopped" },
@@ -296,6 +297,25 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                         <p class="tl-note tl-asked" data-pending={m().waiting.some((w) => w.id === x().approval.id) ? "" : undefined}>
                           <Icon name="needs" small /> Asked to {x().approval.tool === "Bash" ? "run" : "use"}{" "}
                           <code>{rel(x().approval.detail || x().approval.tool)}</code>
+                        </p>
+                      )}
+                    </Match>
+                    <Match when={e.kind === "proof" && e}>
+                      {(x) => (
+                        <div class="tl-tool" data-state={x().ok ? "ok" : "fail"}>
+                          <span class="tl-tool-name">Check</span>
+                          <code class="tl-tool-detail selectable">{x().command}</code>
+                          <span class="tl-tool-mark">
+                            <Icon name={x().ok ? "done" : "fail"} small />
+                          </span>
+                        </div>
+                      )}
+                    </Match>
+                    <Match when={e.kind === "judged" && e}>
+                      {(x) => (
+                        <p class="tl-finished" data-ok={x().verdict === "approve" ? "" : undefined}>
+                          <Icon name={x().verdict === "approve" ? "done" : "needs"} small />
+                          The judge {x().verdict === "approve" ? "approves" : `asks for changes (${x().findings} finding${x().findings === 1 ? "" : "s"})`}: {x().summary}
                         </p>
                       )}
                     </Match>

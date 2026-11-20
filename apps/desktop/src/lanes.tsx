@@ -368,6 +368,8 @@ function Skeleton() {
 export function Tower(props: {
   yard: Yard | null;
   runs: RunMeta[];
+  /** Branches whose card waits in review: their lanes wait on you too. */
+  reviewing: string[];
   now: number;
   selected: string | null;
   onSelect: (branch: string) => void;
@@ -375,7 +377,12 @@ export function Tower(props: {
 }) {
   // A lane counts once, whether its branch or its running agent is waiting on you.
   const needs = () =>
-    props.yard?.lanes.filter((l) => group(l) === "waiting" || props.runs.some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0)).length ?? 0;
+    props.yard?.lanes.filter(
+      (l) =>
+        group(l) === "waiting" ||
+        props.reviewing.includes(l.branch) ||
+        props.runs.some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0),
+    ).length ?? 0;
   return (
     <aside class="tower-pane" aria-label="Tower">
       <div class="panel-head">
@@ -389,7 +396,7 @@ export function Tower(props: {
         <For each={props.yard?.lanes ?? []}>
           {(l) => {
             const v = () => laneView(l, props.yard!);
-            const waiting = () => group(l) === "waiting";
+            const waiting = () => group(l) === "waiting" || props.reviewing.includes(l.branch);
             const chip = () => (waiting() ? (v().chip === "failed" ? "failed" : "needs") : v().chip);
             const sync = l.sync;
             const run = () => props.runs.find((r) => r.branch === l.branch && isLive(r.state));

@@ -14,6 +14,26 @@ pub struct FlowFile {
     pub worktree: WorktreeCfg,
     pub ship: ShipCfg,
     pub run: RunCfg,
+    pub verify: VerifyCfg,
+}
+
+/// Checks after a run, before a person reviews.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct VerifyCfg {
+    /// Run in the lane's worktree, one after the other: build, lint, tests.
+    pub commands: Vec<String>,
+    /// A separate Claude Code session reviews the diff against the spec.
+    pub judge: bool,
+    pub judge_model: Option<String>,
+    /// Rounds of "ask for changes" on one card before Pitlane hands it back to you.
+    pub max_rounds: u32,
+}
+
+impl Default for VerifyCfg {
+    fn default() -> Self {
+        Self { commands: Vec::new(), judge: true, judge_model: Some("sonnet".into()), max_rounds: 3 }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +239,12 @@ clone_deps = []             # copy-on-write clones, e.g. ["node_modules"]
 
 [ship]
 # check = "npm test"        # must pass before a lane ships to production
+
+[verify]
+commands    = []            # checks after each run, in the lane's worktree, e.g. ["npm test", "npm run lint"]
+judge       = true          # a separate Claude Code session reviews the diff against the spec
+judge_model = "sonnet"
+max_rounds  = 3             # "ask for changes" rounds before the card comes back to you
 
 [run]
 allow       = []            # extra tools for agents, e.g. ["Bash(npm test:*)", "Bash(npm run lint:*)"]

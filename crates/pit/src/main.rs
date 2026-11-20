@@ -107,6 +107,18 @@ enum Cmd {
         #[arg(short, long)]
         detach: bool,
     },
+    /// What the checks found on a card in review: proofs, the judge, the diff.
+    Review { card: u32 },
+    /// Approve a card in review: its lane ships into the integration branch.
+    Approve { card: u32 },
+    /// Ask for changes on a card in review: its run continues with your comments.
+    Changes {
+        card: u32,
+        #[arg(short, long)]
+        message: String,
+    },
+    /// Put a card in review back to ready; its lane stays.
+    Discard { card: u32 },
     /// Your accounts: signed in or not, their last usage, and this repository's.
     Accounts,
     /// Add an account, sign in to it, or choose this repository's.
@@ -333,6 +345,68 @@ fn run(cli: Cli) -> Result<ExitCode> {
             println!("{} run {} continues {run}", paint(DONE, "✓"), m.id);
             println!("  {}", paint(MUTED, m.reason.as_deref().unwrap_or_default()));
             return follow_or_detach(&m.id, detach);
+        }
+        Cmd::Review { card } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "list", "repo": repo.root }))?;
+            let runs: Vec<RunMeta> = serde_json::from_value(v["runs"].clone())?;
+            let Some(m) = runs.iter().filter(|m| m.card == card).max_by_key(|m| (m.round, m.started_at)) else {
+                bail!("card #{card} has no runs");
+            };
+            println!("#{} {}  {}  {}", m.card, m.card_title, state_word(m.state), paint(MUTED, &m.branch));
+            if let Some(s) = m.handoff.as_ref().and_then(|h| h.get("summary")).and_then(|s| s.as_str()) {
+                println!("\n{s}");
+            }
+            let (_, home) = pit_core::default_homes();
+            match std::fs::read_to_string(pit_core::runs::runs_dir(&home).join(&m.id).join("verify.json")) {
+                Ok(t) => {
+                    let v: pit_core::verify::Verification = serde_json::from_str(&t)?;
+                    println!();
+                    if v.no_commands {
+                        println!("{}", paint(MUTED, "no checks configured ([verify] commands in .pitlane/flow.toml)"));
+                    }
+                    for p in &v.proofs {
+                        println!("{} {}  {}", if p.ok { paint(DONE, "✓") } else { paint(FAIL, "✕") }, p.command, paint(MUTED, &format!("{:.1}s", p.duration_ms as f64 / 1000.0)));
+                        if !p.ok {
+                            for l in p.tail.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev() {
+                                println!("    {}", paint(MUTED, l));
+                            }
+                        }
+                    }
+                    if let Some(j) = v.judge.as_ref().and_then(|j| j.judgement.as_ref()) {
+                        let word = match j.verdict {
+                            pit_core::verify::Verdict::Approve => paint(DONE, "approves"),
+                            pit_core::verify::Verdict::Changes => paint(ACCENT, "asks for changes"),
+                        };
+                        println!("\njudge {word}: {}", j.summary);
+                        for f in &j.findings {
+                            let at = match (&f.file, f.line) {
+                                (Some(file), Some(l)) => format!("{file}:{l} "),
+                                (Some(file), None) => format!("{file} "),
+                                _ => String::new(),
+                            };
+                            println!("  {} {at}{}", paint(MUTED, &f.severity), f.text);
+                        }
+                    } else if let Some(e) = v.judge.as_ref().and_then(|j| j.error.as_ref()) {
+                        println!("\njudge could not finish: {e}");
+                    }
+                }
+                Err(_) => println!("\n{}", paint(MUTED, "no checks ran for this run")),
+            }
+            println!("\n{}", paint(MUTED, &format!("pit approve {card} | pit changes {card} -m \"…\" | pit discard {card}")));
+        }
+        Cmd::Approve { card } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "approve" }))?;
+            println!("{} #{card} shipped into {}", paint(DONE, "✓"), v["shipped_to"].as_str().unwrap_or("its next stage"));
+        }
+        Cmd::Changes { card, message } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "changes", "message": message }))?;
+            let run = v["run"]["id"].as_str().unwrap_or_default().to_owned();
+            println!("{} #{card} goes back to its agent as run {run}", paint(DONE, "✓"));
+            return follow_or_detach(&run, false);
+        }
+        Cmd::Discard { card } => {
+            daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "discard" }))?;
+            println!("{} #{card} is ready again; its lane stays", paint(DONE, "✓"));
         }
         Cmd::Accounts => {
             let (home, pitlane_home) = pit_core::default_homes();
@@ -578,6 +652,7 @@ fn state_word(s: RunState) -> String {
         RunState::Failed => paint(FAIL, "failed  "),
         RunState::Stopped => paint(MUTED, "stopped "),
         RunState::Interrupted => paint(ACCENT, "interrupted"),
+        RunState::Verifying => paint(RUN, "checking"),
     }
 }
 
@@ -604,6 +679,16 @@ fn print_event(e: &RunEvent) {
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
         RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
         RunEvent::Note { text } => println!("{}", paint(MUTED, text)),
+        RunEvent::Proof { command, ok, duration_ms } => println!(
+            "{} {command}  {}",
+            if *ok { paint(DONE, "✓") } else { paint(FAIL, "✕") },
+            paint(MUTED, &format!("{:.1}s", *duration_ms as f64 / 1000.0))
+        ),
+        RunEvent::Judged { verdict, summary, findings } => println!(
+            "{} judge {}: {summary} ({findings} finding(s))",
+            paint(ACCENT, "?"),
+            if *verdict == pit_core::verify::Verdict::Approve { "approves" } else { "asks for changes" }
+        ),
         RunEvent::Limited { window, .. } => println!("{} hit the {} usage limit", paint(ACCENT, "!"), window.replace('_', "-")),
         RunEvent::Approval { approval } => println!(
             "{} waiting for you: {} {}  {}",

@@ -15,6 +15,12 @@ use tempfile::TempDir;
 /// One result per user message, like the real CLI; exits when stdin closes.
 /// FAKE_MODE=slow waits on SIGINT before answering; FAKE_MODE=ask ends blocked with a question.
 const FAKE: &str = r#"#!/bin/bash
+# The judge: one prompt on stdin, one JSON result. FAKE_VERDICT picks the verdict.
+if [[ " $* " == *" --output-format json "* ]]; then
+  cat > "$PWD/.judge-prompt"
+  echo "{\"type\":\"result\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":40,\"structured_output\":{\"verdict\":\"${FAKE_VERDICT:-changes}\",\"summary\":\"Needs the SVG case.\",\"findings\":[{\"file\":\"a.ts\",\"line\":3,\"severity\":\"major\",\"text\":\"SVG is not refused.\"}]}}"
+  exit 0
+fi
 trap 'echo "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"num_turns\":1,\"duration_ms\":5,\"total_cost_usd\":0.01,\"usage\":{}}"; exit 130' INT
 n=0
 while IFS= read -r line; do
@@ -63,7 +69,7 @@ fn fx() -> Fx {
     let wt_root = tmp.path().join("wt/{repo}/{branch}");
     fs::write(
         repo.join(".pitlane/flow.toml"),
-        format!("[worktree]\nroot = \"{}\"\n", wt_root.display()),
+        format!("[worktree]\nroot = \"{}\"\n\n[verify]\njudge = false\n", wt_root.display()),
     )
     .unwrap();
     fs::write(repo.join("README.md"), "demo\n").unwrap();
@@ -150,6 +156,8 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
             RunEvent::Note { .. } => "note",
             RunEvent::Approval { .. } => "approval",
             RunEvent::Limited { .. } => "limited",
+            RunEvent::Proof { .. } => "proof",
+            RunEvent::Judged { .. } => "judged",
             RunEvent::Decided { .. } => "decided",
             RunEvent::Exited { .. } => "exited",
         })
@@ -411,4 +419,70 @@ exec {fake} "$@"
     assert!(args.contains(&format!("CCD={}", fx.home.join("profiles/api").display())), "{args}");
     assert!(args.lines().any(|l| l == "CCD="), "the first run used your normal login");
     assert!(s.get(&first.id).unwrap().next.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proofs_and_a_judge_then_your_review() {
+    use pitd::supervisor::ReviewAction;
+    let fx = fx();
+    // A real origin with main and dev, so approving can ship the lane into dev.
+    let origin = fx.home.parent().unwrap().join("origin.git");
+    git(fx.home.parent().unwrap(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    git(&fx.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&fx.repo, &["push", "-q", "origin", "main"]);
+    git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap().replace(
+        "[verify]\njudge = false\n",
+        "[verify]\ncommands = [\"test -f README.md\", \"echo two failing >&2; false\"]\njudge = true\njudge_model = \"sonnet\"\nmax_rounds = 1\n",
+    );
+    fs::write(fx.repo.join(".pitlane/flow.toml"), flow).unwrap();
+    let id = card(&fx, "Refuse SVG avatars");
+    // The lane has work of its own, so there is a diff to judge and something to ship.
+    git(&fx.repo, &["switch", "-q", "feat/x"]);
+    fs::write(fx.repo.join("validate.ts"), "export const refuseSvg = true;\n").unwrap();
+    git(&fx.repo, &["add", "validate.ts"]);
+    git(&fx.repo, &["commit", "-qm", "refuse svg"]);
+    git(&fx.repo, &["switch", "-q", "main"]);
+    let s = sup(&fx);
+
+    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap().id;
+    let end = wait_end(&s, &run).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    assert_eq!(end.proofs_ok, Some(false));
+    assert_eq!(end.verdict, Some(pit_core::verify::Verdict::Changes));
+    assert_eq!(card_state(&fx, id).0, CardState::Review);
+    let v: pit_core::verify::Verification = serde_json::from_str(&fs::read_to_string(fx.home.join("runs").join(&run).join("verify.json")).unwrap()).unwrap();
+    assert_eq!(v.proofs.len(), 2);
+    assert!(v.proofs[0].ok && !v.proofs[1].ok);
+    assert!(v.proofs[1].tail.contains("two failing"), "{}", v.proofs[1].tail);
+    assert_eq!(v.judge.as_ref().unwrap().judgement.as_ref().unwrap().findings.len(), 1);
+    // The judge saw the spec and the diff, never what the working agent said.
+    let prompt = fs::read_to_string(end.worktree.join(".judge-prompt")).unwrap();
+    assert!(prompt.contains("Do the thing.") && prompt.contains("## The diff"), "{prompt}");
+    assert!(prompt.contains("validate.ts") && prompt.contains("refuseSvg"), "the diff is in the prompt");
+    assert!(!prompt.contains("Reading the card."), "the agent's words stay out of the judge's context");
+    let kinds: Vec<bool> = s.subscribe(&run, 0).unwrap().replay.iter().map(|(_, e)| matches!(e, RunEvent::Proof { .. } | RunEvent::Judged { .. })).collect();
+    assert_eq!(kinds.iter().filter(|k| **k).count(), 3);
+
+    // Ask for changes: the same session continues with the comments, one round allowed.
+    let again = s.review(fx.repo.clone(), id, ReviewAction::Changes, Some("Also refuse SVG.".into())).await.unwrap();
+    let next = again["run"]["id"].as_str().unwrap().to_owned();
+    let next_end = wait_end(&s, &next).await;
+    assert_eq!(next_end.round, 1);
+    assert_eq!(next_end.resumed_from.as_deref(), Some(run.as_str()));
+    assert!(fs::read_to_string(next_end.worktree.join(".briefing-seen")).unwrap().contains("Also refuse SVG."));
+    assert_eq!(card_state(&fx, id).0, CardState::Review);
+    let over = s.review(fx.repo.clone(), id, ReviewAction::Changes, Some("More.".into())).await.unwrap_err();
+    assert!(format!("{over:#}").contains("rounds of changes"), "{over:#}");
+
+    // Approve: the lane ships into dev and the card follows.
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let ok = s.review(fx.repo.clone(), id, ReviewAction::Approve, None).await.unwrap();
+    assert_eq!(ok["shipped_to"], "dev");
+    assert_eq!(card_state(&fx, id).0, CardState::InDev);
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
+    assert!(merged.success(), "feat/x is in origin/dev");
+    assert!(s.review(fx.repo.clone(), id, ReviewAction::Discard, None).await.is_err(), "no longer in review");
 }
