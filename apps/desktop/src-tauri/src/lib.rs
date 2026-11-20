@@ -377,6 +377,36 @@ async fn card_review(path: String, card: u32, action: String, message: Option<St
     .await
 }
 
+/// The merge queue of this repository: open jobs, then recent ones.
+#[tauri::command]
+async fn queue_list(path: String) -> CmdResult<Vec<pit_core::queue::ShipJob>> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        // No daemon: nothing is shipping; the saved queue still says what waits.
+        if Client::connect(&default_homes().1, None).is_err() {
+            return Ok(pit_core::queue::load(&default_homes().1).into_iter().filter(|j| j.repo == root).collect());
+        }
+        let v = call(serde_json::json!({ "op": "queue", "repo": root }))?;
+        Ok(serde_json::from_value(v["jobs"].clone())?)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn queue_add(path: String, branch: String, to: Option<String>) -> CmdResult<pit_core::queue::ShipJob> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        let v = call(serde_json::json!({ "op": "enqueue", "repo": root, "branch": branch, "to": to }))?;
+        Ok(serde_json::from_value(v["job"].clone())?)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn queue_remove(id: String) -> CmdResult<()> {
+    blocking(move || call(serde_json::json!({ "op": "dequeue", "id": id })).map(drop)).await
+}
+
 #[tauri::command]
 async fn run_continue(run: String, allow_api_key: bool) -> CmdResult<RunMeta> {
     blocking(move || {
@@ -562,6 +592,9 @@ pub fn run() {
             run_verification,
             lane_diff,
             card_review,
+            queue_list,
+            queue_add,
+            queue_remove,
             accounts_list,
             account_use,
             run_timeline,

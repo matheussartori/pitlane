@@ -251,7 +251,8 @@ export function ReviewScreen(props: {
     setBusy(action);
     try {
       const r = await api.cardReview(props.repo, c.id, action, action === "changes" ? message() : undefined);
-      if (action === "approve") toast({ tone: "done", title: `#${c.id} shipped into ${r.shipped_to ?? "its next stage"}` });
+      if (action === "approve")
+        toast({ tone: "done", title: `#${c.id} is in line for ${r.shipped_to ?? "its next stage"}`, body: "The merge queue ships it next; the card moves when it lands." });
       if (action === "discard") toast({ tone: "done", title: `#${c.id} is ready again`, body: "Its lane stays as it is." });
       props.onChanged();
       if (action === "changes" && r.run) props.onOpenRun(r.run.id);

@@ -1,7 +1,7 @@
 // The Lanes screen: every lane grouped by who acts next, each with its place on the track
 // (local, remote, integration, production). The Tower is the same lanes, compact, for the other screens.
 import { For, Show, createEffect, type JSX } from "solid-js";
-import { isLive, type Lane, type RunMeta, type Yard } from "./api";
+import { isLive, isOpenJob, type Lane, type RunMeta, type ShipJob, type Yard } from "./api";
 import { clock, elapsed } from "./run";
 import { Icon } from "./icons";
 import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, track, worktreeName, type Group } from "./lane";
@@ -22,6 +22,10 @@ export interface LanesProps {
   /** Branch being checked out right now. */
   checkingOut: string | null;
   onClean: () => void;
+  /** The merge queue of this repository. */
+  jobs: ShipJob[];
+  onQueueAll: (lanes: Lane[], to: string) => void;
+  onDequeue: (id: string) => void;
   onNew: () => void;
 }
 
@@ -36,11 +40,16 @@ export function LanesView(props: LanesProps) {
     const y = props.yard;
     if (!y) return [];
     return groupOrder
-      .map((g) => ({ key: g, lanes: y.lanes.filter((l) => group(l) === g) }))
+      .map((g) => ({ key: g, lanes: y.lanes.filter((l) => queuedGroup(l, props.jobs) === g) }))
       .filter((g) => g.lanes.length > 0);
   };
   const waiting = () => groups().find((g) => g.key === "waiting")?.lanes.length ?? 0;
   const deletable = () => props.yard?.lanes.filter((l) => l.status === "can-delete").length ?? 0;
+  const open = () => props.jobs.filter(isOpenJob);
+  const shipping = () => open().find((j) => j.state === "shipping");
+  /** Lanes ready for production that are not in line yet. */
+  const readyForMain = () =>
+    (props.yard?.lanes ?? []).filter((l) => l.status === "needs-production" && !open().some((j) => j.branch === l.branch));
 
   return (
     <div class="lanes">
@@ -52,6 +61,12 @@ export function LanesView(props: LanesProps) {
               {y().lanes.length} {y().lanes.length === 1 ? "lane" : "lanes"},{" "}
               <Show when={waiting() > 0} fallback="nothing waiting on you.">
                 <b>{waiting()} waiting on you.</b>
+              </Show>
+              <Show when={open().length > 0}>
+                {" "}
+                <Show when={shipping()} fallback={`${open().length} in the merge queue.`}>
+                  {(j) => `Shipping ${j().branch} to ${j().target}${open().length > 1 ? `, ${open().length - 1} more in line` : ""}.`}
+                </Show>
               </Show>
             </p>
           )}
@@ -117,6 +132,12 @@ export function LanesView(props: LanesProps) {
                       <th scope="rowgroup" colspan="5">
                         <span class="group-head">
                           <GroupTitle group={g.key} count={g.lanes.length} />
+                          <Show when={g.key === "waiting" && readyForMain().length > 1}>
+                            <button type="button" class="btn" onClick={() => props.onQueueAll(readyForMain(), y().production)}>
+                              <Icon name="ship" small />
+                              Queue all {readyForMain().length} for {y().production}
+                            </button>
+                          </Show>
                           <Show when={g.key === "shipped" && deletable() > 0}>
                             <button type="button" class="btn" onClick={props.onClean}>
                               <Icon name="trash" small />
@@ -168,6 +189,16 @@ export function LanesView(props: LanesProps) {
   );
 }
 
+/** A lane in the merge queue is in progress, not waiting on you; one the queue stopped on a conflict is. */
+export function queuedGroup(l: Lane, jobs: ShipJob[]): Group {
+  const mine = jobs.filter((j) => j.branch === l.branch);
+  if (mine.some(isOpenJob)) return "progress";
+  if (mine.some((j) => j.state === "conflict" || j.state === "failed")) return "waiting";
+  return group(l);
+}
+
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
+
 function GroupTitle(props: { group: Group; count: number }) {
   return (
     <>
@@ -180,8 +211,18 @@ function GroupTitle(props: { group: Group; count: number }) {
 function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLTableRowElement) => void }) {
   const props = p.props;
   const l = p.lane;
-  const needs = () => group(l) === "waiting";
-  const target = () => shipTarget(l, p.yard);
+  const needs = () => queuedGroup(l, props.jobs) === "waiting";
+  // The lane's place in the merge queue: in line, shipping, or the conflict that stopped it.
+  const job = () => {
+    const mine = p.props.jobs.filter((j) => j.branch === l.branch);
+    return mine.find(isOpenJob) ?? mine.find((j) => j.state === "conflict" || j.state === "failed");
+  };
+  const place = () => {
+    const j = job();
+    if (!j || j.state !== "queued") return 0;
+    return p.props.jobs.filter((x) => x.state === "queued" && x.queued_at <= j.queued_at).length;
+  };
+  const target = () => (job() && isOpenJob(job()!) ? null : shipTarget(l, p.yard));
   const n = () => next(l, p.yard);
   const wt = () => worktreeName(l);
 
@@ -261,7 +302,45 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
       </td>
       <td>
         <div class="next">
-          <Show when={n()}>
+          <Show when={job()}>
+            {(j) => (
+              <span
+                class="next-text"
+                data-tone={j().state === "conflict" || j().state === "failed" ? "failed" : "plain"}
+                title={j().conflicts.length ? j().conflicts.join("\n") : (j().error ?? undefined)}
+              >
+                <Show when={j().state === "shipping"}>
+                  <Spinner />
+                </Show>
+                <Show when={j().state === "conflict" || j().state === "failed"}>
+                  <Icon name="fail" small />
+                </Show>
+                {j().state === "shipping"
+                  ? `Shipping to ${j().target}`
+                  : j().state === "queued"
+                    ? `${ordinal(place())} in line for ${j().target}`
+                    : j().state === "conflict"
+                      ? `Conflicts with ${j().target} in ${j().conflicts.map((c) => c.split("/").pop()).join(", ")}`
+                      : `Did not ship to ${j().target}`}
+              </span>
+            )}
+          </Show>
+          <Show when={job() && !isOpenJob(job()!) ? job() : null}>
+            {(j) => (
+              <button
+                type="button"
+                class="btn"
+                title={j().error ?? undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  p.props.onDequeue(j().id);
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </Show>
+          <Show when={!job() && n()}>
             {(x) => (
               <span class="next-text" data-tone={x().tone}>
                 <Show when={x().tone === "failed"}>
@@ -370,6 +449,7 @@ export function Tower(props: {
   runs: RunMeta[];
   /** Branches whose card waits in review: their lanes wait on you too. */
   reviewing: string[];
+  jobs: ShipJob[];
   now: number;
   selected: string | null;
   onSelect: (branch: string) => void;
@@ -379,7 +459,7 @@ export function Tower(props: {
   const needs = () =>
     props.yard?.lanes.filter(
       (l) =>
-        group(l) === "waiting" ||
+        queuedGroup(l, props.jobs) === "waiting" ||
         props.reviewing.includes(l.branch) ||
         props.runs.some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0),
     ).length ?? 0;
@@ -396,7 +476,7 @@ export function Tower(props: {
         <For each={props.yard?.lanes ?? []}>
           {(l) => {
             const v = () => laneView(l, props.yard!);
-            const waiting = () => group(l) === "waiting" || props.reviewing.includes(l.branch);
+            const waiting = () => queuedGroup(l, props.jobs) === "waiting" || props.reviewing.includes(l.branch);
             const chip = () => (waiting() ? (v().chip === "failed" ? "failed" : "needs") : v().chip);
             const sync = l.sync;
             const run = () => props.runs.find((r) => r.branch === l.branch && isLive(r.state));

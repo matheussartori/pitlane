@@ -33,6 +33,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
     std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
 
     let sup = Supervisor::new(cfg);
+    sup.start_queue();
     let recovered = sup.recover()?;
     eprintln!("pitd: listening on {} ({recovered} interrupted run(s) recovered)", sock.display());
     loop {
@@ -120,6 +121,20 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             };
             let message = req.get("message").and_then(Value::as_str).map(str::to_owned);
             sup.review(repo, card, action, message).await?
+        }
+        "enqueue" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let branch = req.get("branch").and_then(Value::as_str).context("branch is required")?;
+            let to = req.get("to").and_then(Value::as_str);
+            json!({ "job": sup.enqueue(&repo, branch, to)? })
+        }
+        "queue" => {
+            let repo = req.get("repo").and_then(Value::as_str).map(PathBuf::from);
+            json!({ "jobs": sup.queue_list(repo.as_deref()) })
+        }
+        "dequeue" => {
+            sup.dequeue(req.get("id").and_then(Value::as_str).context("id is required")?)?;
+            json!({ "ok": true })
         }
         "continue" => {
             let allow_api_key = req.get("allow_api_key").and_then(Value::as_bool).unwrap_or(false);

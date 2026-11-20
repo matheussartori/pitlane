@@ -119,6 +119,16 @@ enum Cmd {
     },
     /// Put a card in review back to ready; its lane stays.
     Discard { card: u32 },
+    /// The merge queue: lanes shipping into dev or main, one at a time.
+    Queue,
+    /// Put a lane in the merge queue (default: its next stage).
+    Enqueue {
+        branch: String,
+        #[arg(long, value_name = "BRANCH")]
+        to: Option<String>,
+    },
+    /// Take a job out of the merge queue.
+    Dequeue { id: String },
     /// Your accounts: signed in or not, their last usage, and this repository's.
     Accounts,
     /// Add an account, sign in to it, or choose this repository's.
@@ -396,7 +406,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Approve { card } => {
             let v = daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "approve" }))?;
-            println!("{} #{card} shipped into {}", paint(DONE, "✓"), v["shipped_to"].as_str().unwrap_or("its next stage"));
+            println!("{} #{card} is in the merge queue for {} (pit queue)", paint(DONE, "✓"), v["shipped_to"].as_str().unwrap_or("its next stage"));
         }
         Cmd::Changes { card, message } => {
             let v = daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "changes", "message": message }))?;
@@ -407,6 +417,37 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Discard { card } => {
             daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "discard" }))?;
             println!("{} #{card} is ready again; its lane stays", paint(DONE, "✓"));
+        }
+        Cmd::Queue => {
+            let v = daemon()?.call(serde_json::json!({ "op": "queue", "repo": repo.root }))?;
+            let jobs: Vec<pit_core::queue::ShipJob> = serde_json::from_value(v["jobs"].clone())?;
+            if jobs.is_empty() {
+                println!("the queue is empty. Add a lane: pit enqueue <branch>");
+            }
+            for j in jobs {
+                let state = match j.state {
+                    pit_core::queue::JobState::Queued => paint(MUTED, "queued  "),
+                    pit_core::queue::JobState::Shipping => paint(RUN, "shipping"),
+                    pit_core::queue::JobState::Done => paint(DONE, "done    "),
+                    pit_core::queue::JobState::Conflict => paint(FAIL, "conflict"),
+                    pit_core::queue::JobState::Failed => paint(FAIL, "failed  "),
+                    pit_core::queue::JobState::Removed => paint(MUTED, "removed "),
+                };
+                let extra = if !j.conflicts.is_empty() {
+                    format!("  {}", j.conflicts.join(", "))
+                } else {
+                    j.error.clone().map(|e| format!("  {}", e.lines().next().unwrap_or_default())).unwrap_or_default()
+                };
+                println!("{state}  {} → {}  {}{}", j.branch, j.target, paint(MUTED, &j.id), paint(MUTED, &extra));
+            }
+        }
+        Cmd::Enqueue { branch, to } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "enqueue", "repo": repo.root, "branch": branch, "to": to }))?;
+            println!("{} {branch} is in line for {} ({})", paint(DONE, "✓"), v["job"]["target"].as_str().unwrap_or_default(), v["job"]["id"].as_str().unwrap_or_default());
+        }
+        Cmd::Dequeue { id } => {
+            daemon()?.call(serde_json::json!({ "op": "dequeue", "id": id }))?;
+            println!("{} {id} left the queue", paint(DONE, "✓"));
         }
         Cmd::Accounts => {
             let (home, pitlane_home) = pit_core::default_homes();

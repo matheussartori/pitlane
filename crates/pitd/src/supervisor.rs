@@ -83,6 +83,9 @@ pub struct Supervisor {
     live: Mutex<HashMap<String, Live>>,
     /// Last usage events seen, per account.
     quota: Mutex<HashMap<String, Vec<RunEvent>>>,
+    /// The merge queue, shipped one job at a time by `run_queue`.
+    queue: Mutex<Vec<pit_core::queue::ShipJob>>,
+    queue_wake: tokio::sync::Notify,
 }
 
 pub struct Subscription {
@@ -93,7 +96,14 @@ pub struct Subscription {
 
 impl Supervisor {
     pub fn new(cfg: Config) -> Arc<Self> {
-        Arc::new(Self { cfg, live: Mutex::new(HashMap::new()), quota: Mutex::new(HashMap::new()) })
+        let queue = pit_core::queue::load(&cfg.home);
+        Arc::new(Self {
+            cfg,
+            live: Mutex::new(HashMap::new()),
+            quota: Mutex::new(HashMap::new()),
+            queue: Mutex::new(queue),
+            queue_wake: tokio::sync::Notify::new(),
+        })
     }
 
     fn dir(&self, id: &str) -> PathBuf {
@@ -776,12 +786,13 @@ impl Supervisor {
                     }
                     None => (None, format!("{why} Nothing else in the route can take it now: {e}")),
                 };
+                // The card first: whoever sees the run's next option finds the card already waiting.
+                let home = self.cfg.home.clone();
+                tokio::task::spawn_blocking(move || set_card_state(&meta, CardState::Blocked, &home)).await??;
                 self.update_disk(&id, |m| {
                     m.error = Some(text.clone());
                     m.next = next.clone();
                 });
-                let home = self.cfg.home.clone();
-                tokio::task::spawn_blocking(move || set_card_state(&meta, CardState::Blocked, &home)).await??;
                 Ok(())
             }
         }
@@ -941,23 +952,134 @@ impl Supervisor {
                 Ok(serde_json::json!({ "run": next }))
             }
             ReviewAction::Approve => {
+                // Approved work joins the merge queue; the card moves when its lane lands.
                 let branch = c.lane.clone().context("this card has no lane to ship")?;
-                let shipped = tokio::task::spawn_blocking(move || -> Result<(String, String)> {
-                    let r = Repo::open(&repo, &home_dir(), &home)?;
-                    let plan = actions::plan_ship(&r, &branch, None, true)?;
-                    if plan.already.is_none() {
-                        if !plan.conflicts.is_empty() {
-                            bail!("{branch} conflicts with {} in {}; resolve it in the lane first", plan.target, plan.conflicts.join(", "));
-                        }
-                        actions::execute_ship(&r, &plan)?;
-                    }
-                    let state = if Some(plan.target.as_str()) == r.flow.flow.integration() { CardState::InDev } else { CardState::Done };
-                    cards::update(&r, card, CardPatch { state: Some(state), ..Default::default() })?;
-                    Ok((plan.target, state.as_str().to_owned()))
-                })
-                .await??;
-                Ok(serde_json::json!({ "card": card, "shipped_to": shipped.0, "state": shipped.1 }))
+                let job = self.enqueue(&repo, &branch, None)?;
+                Ok(serde_json::json!({ "card": card, "job": job, "shipped_to": job.target }))
             }
+        }
+    }
+
+    // ------------------------------------------------------------ merge queue
+
+    /// Puts a lane in line to ship into `to` (default: its next stage). One open job per lane.
+    pub fn enqueue(&self, repo: &Path, branch: &str, to: Option<&str>) -> Result<pit_core::queue::ShipJob> {
+        use pit_core::queue::{JobState, ShipJob};
+        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        if r.flow.flow.is_trunk(branch) {
+            bail!("{branch} is a trunk branch; only lanes ship");
+        }
+        // The target is decided now, against what is known locally; the worker fetches before merging.
+        let target = match to {
+            Some(t) => t.to_owned(),
+            None => actions::plan_ship(&r, branch, None, false)?.target,
+        };
+        let card = cards::list(&r).ok().and_then(|(all, _)| all.into_iter().find(|c| c.lane.as_deref() == Some(branch)).map(|c| c.id));
+        let job = {
+            let mut q = self.queue.lock().unwrap();
+            if let Some(open) = q.iter().find(|j| j.repo == r.root && j.branch == branch && j.state.is_open()) {
+                bail!("{branch} is already in line for {} ({})", open.target, open.id);
+            }
+            let job = ShipJob {
+                id: format!("q{}-{}", now_secs(), &uuid::Uuid::new_v4().simple().to_string()[..4]),
+                repo: r.root.clone(),
+                branch: branch.to_owned(),
+                target,
+                state: JobState::Queued,
+                queued_at: now_secs(),
+                finished_at: None,
+                merge_sha: None,
+                conflicts: Vec::new(),
+                error: None,
+                card,
+            };
+            q.push(job.clone());
+            pit_core::queue::save(&self.cfg.home, &q)?;
+            job
+        };
+        self.queue_wake.notify_one();
+        Ok(job)
+    }
+
+    /// The queue of a repository (or all): open jobs, then the last 20 finished.
+    pub fn queue_list(&self, repo: Option<&Path>) -> Vec<pit_core::queue::ShipJob> {
+        let q = self.queue.lock().unwrap();
+        let mine: Vec<_> = q.iter().filter(|j| repo.is_none_or(|r| j.repo == r)).cloned().collect();
+        let mut open: Vec<_> = mine.iter().filter(|j| j.state.is_open()).cloned().collect();
+        open.sort_by_key(|j| j.queued_at);
+        let mut done: Vec<_> = mine.into_iter().filter(|j| !j.state.is_open()).collect();
+        done.sort_by_key(|j| std::cmp::Reverse(j.finished_at.unwrap_or(j.queued_at)));
+        open.extend(done.into_iter().take(20));
+        open
+    }
+
+    /// Takes a job out of line (not one that is shipping right now).
+    pub fn dequeue(&self, id: &str) -> Result<()> {
+        use pit_core::queue::JobState;
+        let mut q = self.queue.lock().unwrap();
+        let j = q.iter_mut().find(|j| j.id == id).with_context(|| format!("no job {id}"))?;
+        if j.state == JobState::Shipping {
+            bail!("{} is shipping right now", j.branch);
+        }
+        j.state = JobState::Removed;
+        j.finished_at = Some(now_secs());
+        pit_core::queue::save(&self.cfg.home, &q)
+    }
+
+    pub fn start_queue(self: &Arc<Self>) {
+        let me = Arc::clone(self);
+        tokio::spawn(async move { me.run_queue().await });
+    }
+
+    /// Ships queued jobs one at a time, oldest first, forever.
+    async fn run_queue(self: Arc<Self>) {
+        use pit_core::queue::{JobState, Outcome};
+        loop {
+            let next = {
+                let mut q = self.queue.lock().unwrap();
+                let pick = q.iter_mut().filter(|j| j.state == JobState::Queued).min_by_key(|j| j.queued_at);
+                pick.map(|j| {
+                    j.state = JobState::Shipping;
+                    j.clone()
+                })
+            };
+            let Some(job) = next else {
+                self.queue_wake.notified().await;
+                continue;
+            };
+            let _ = pit_core::queue::save(&self.cfg.home, &self.queue.lock().unwrap());
+            let (home, ph) = (home_dir(), self.cfg.home.clone());
+            let (repo, branch, target) = (job.repo.clone(), job.branch.clone(), job.target.clone());
+            let result = tokio::task::spawn_blocking(move || -> Result<(pit_core::queue::Outcome, Option<u32>)> {
+                let out = pit_core::queue::ship(&repo, &home, &ph, &branch, &target)?;
+                let card = match &out {
+                    Outcome::Shipped { .. } => pit_core::queue::move_card(&repo, &home, &ph, &branch, &target)?,
+                    Outcome::Conflict { .. } => None,
+                };
+                Ok((out, card))
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|r| r);
+            let mut q = self.queue.lock().unwrap();
+            if let Some(j) = q.iter_mut().find(|j| j.id == job.id) {
+                j.finished_at = Some(now_secs());
+                match result {
+                    Ok((Outcome::Shipped { merge_sha }, _)) => {
+                        j.state = JobState::Done;
+                        j.merge_sha = merge_sha;
+                    }
+                    Ok((Outcome::Conflict { files }, _)) => {
+                        j.state = JobState::Conflict;
+                        j.conflicts = files;
+                    }
+                    Err(e) => {
+                        j.state = JobState::Failed;
+                        j.error = Some(format!("{e:#}"));
+                    }
+                }
+            }
+            let _ = pit_core::queue::save(&self.cfg.home, &q);
         }
     }
 

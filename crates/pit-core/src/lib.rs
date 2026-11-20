@@ -7,6 +7,7 @@ pub mod cards;
 pub mod flow;
 pub mod git;
 pub mod lanes;
+pub mod queue;
 pub mod runs;
 pub mod trash;
 pub mod verify;

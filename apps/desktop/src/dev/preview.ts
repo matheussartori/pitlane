@@ -107,6 +107,15 @@ export async function preview<T>(cmd: string): Promise<T> {
         patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
         truncated: false,
       } as T;
+    case "queue_list":
+      return [
+        { id: "q1", repo: "/demo", branch: "feat/billing-retry", target: "main", state: "shipping", queued_at: now() - 40, finished_at: null, merge_sha: null, conflicts: [], error: null, card: null },
+        { id: "q2", repo: "/demo", branch: "fix/avatar-svg", target: "dev", state: "queued", queued_at: now() - 20, finished_at: null, merge_sha: null, conflicts: [], error: null, card: null },
+        { id: "q3", repo: "/demo", branch: "feat/kart-drift", target: "dev", state: "conflict", queued_at: now() - 900, finished_at: now() - 860, merge_sha: null, conflicts: ["src/kart/physics.ts"], error: null, card: null },
+      ] as T;
+    case "queue_add":
+    case "queue_remove":
+      return null as T;
     case "quota":
       return {
         account: "default",

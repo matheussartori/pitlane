@@ -1,23 +1,11 @@
 // The three actions that change a repository. Each shows exactly what will happen first.
 import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
-import { api, landedLabel, short, type CleanPlan, type Lane, type LocalUpdate, type ShipPlan } from "./api";
+import { api, landedLabel, short, type CleanPlan, type Lane, type ShipPlan } from "./api";
 import { Icon } from "./icons";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
-function localNote(local: LocalUpdate, target: string): string | undefined {
-  switch (local.kind) {
-    case "updated":
-      return `Local ${target} fast-forwarded too.`;
-    case "left-behind":
-      return `Local ${target} has changes in ${local.detail}; pull there when ready.`;
-    case "diverged":
-      return `Local ${target} has commits origin lacks; left as is.`;
-    case "no-local-branch":
-      return undefined;
-  }
-}
 
 // ---------------------------------------------------------------- Ship
 
@@ -34,8 +22,9 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
     setBusy(true);
     setError(null);
     try {
-      const r = await api.ship(props.repo, p);
-      toast({ tone: "done", title: `${p.branch} is in ${r.target}`, body: localNote(r.local, r.target) });
+      // Shipping goes through the merge queue: one lane at a time, each against a fresh target.
+      const job = await api.enqueue(props.repo, p.branch, p.target);
+      toast({ tone: "done", title: `${p.branch} is in line for ${job.target}`, body: "The queue ships one lane at a time; Lanes shows its place." });
       props.onDone();
       props.onClose();
     } catch (e) {
@@ -62,7 +51,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 <Show when={busy()} fallback={<Icon name="ship" small />}>
                   <Spinner />
                 </Show>
-                {busy() ? "Shipping" : `Ship to ${p().target}`}
+                {busy() ? "Adding" : `Ship to ${p().target}`}
               </button>
             )}
           </Show>
@@ -117,9 +106,9 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 </div>
               </div>
               <p>
-                Pitlane builds the merge commit <span class="code">Merge {p().branch} into {p().target}</span> without
-                touching your checkouts, then pushes it. If someone pushes to {p().target} first, the push is refused and
-                nothing changes.
+                It joins the merge queue. When its turn comes, Pitlane fetches {p().target} again, builds{" "}
+                <span class="code">Merge {p().branch} into {p().target}</span> without touching your checkouts, and pushes
+                it. A conflict at that point stops only this lane.
               </p>
               <Show when={p().check}>
                 {(c) => (

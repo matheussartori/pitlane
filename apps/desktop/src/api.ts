@@ -347,6 +347,24 @@ export async function onRun(
   };
 }
 
+export type JobState = "queued" | "shipping" | "done" | "conflict" | "failed" | "removed";
+
+export interface ShipJob {
+  id: string;
+  repo: string;
+  branch: string;
+  target: string;
+  state: JobState;
+  queued_at: number;
+  finished_at: number | null;
+  merge_sha: string | null;
+  conflicts: string[];
+  error: string | null;
+  card: number | null;
+}
+
+export const isOpenJob = (j: ShipJob) => j.state === "queued" || j.state === "shipping";
+
 export interface RepoEntry {
   path: string;
   name: string;
@@ -383,6 +401,9 @@ export const api = {
   accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),
   runVerification: (run: string) => invoke<Verification | null>("run_verification", { run }),
   laneDiff: (path: string, branch: string, from?: string) => invoke<LaneDiff>("lane_diff", { path, branch, from: from ?? null }),
+  queue: (path: string) => invoke<ShipJob[]>("queue_list", { path }),
+  enqueue: (path: string, branch: string, to?: string) => invoke<ShipJob>("queue_add", { path, branch, to: to ?? null }),
+  dequeue: (id: string) => invoke<void>("queue_remove", { id }),
   cardReview: (path: string, card: number, action: "approve" | "changes" | "discard", message?: string) =>
     invoke<{ run?: RunMeta; shipped_to?: string; state?: string }>("card_review", { path, card, action, message: message ?? null }),
   accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),

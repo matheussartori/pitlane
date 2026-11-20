@@ -453,7 +453,10 @@ mod tests {
     }
 
     fn tempfile_dir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("pit-accounts-{}-{}", std::process::id(), uuid_ish()));
+        // A counter, not the clock: parallel tests read the clock in the same microsecond.
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("pit-accounts-{}-{n}-{}", std::process::id(), uuid_ish()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }

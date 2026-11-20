@@ -2,7 +2,7 @@
 import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type Yard } from "./api";
+import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type ShipJob, type Yard, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
 import { ReviewScreen } from "./review";
@@ -11,8 +11,7 @@ import { BoardView, CardSheet, NewCardSheet } from "./board";
 import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon } from "./icons";
-import { group } from "./lane";
-import { LanesView, Tower } from "./lanes";
+import { LanesView, Tower, queuedGroup } from "./lanes";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
 
@@ -175,6 +174,60 @@ export default function App() {
     }
   }
 
+  // The merge queue: polled while something is in line; a job that finishes refreshes the lanes.
+  const [jobs, setJobs] = createSignal<ShipJob[]>([]);
+  let jobsGen = 0;
+  async function loadQueue() {
+    const path = repo();
+    if (!path) return;
+    const gen = ++jobsGen;
+    try {
+      const next = await api.queue(path);
+      if (gen !== jobsGen || path !== repo()) return;
+      const wasOpen = new Set(jobs().filter(isOpenJob).map((j) => j.id));
+      const landed = next.filter((j) => wasOpen.has(j.id) && !isOpenJob(j));
+      setJobs(next);
+      for (const j of landed) {
+        if (j.state === "done") toast({ tone: "done", title: `${j.branch} is in ${j.target}` });
+        else
+          toast({
+            tone: "fail",
+            title: `${j.branch} did not ship to ${j.target}`,
+            body: j.state === "conflict" ? `It conflicts in ${j.conflicts.join(", ")}.` : (j.error ?? undefined),
+          });
+      }
+      if (landed.length) {
+        void load(false);
+        void loadCards();
+      }
+    } catch {
+      if (gen === jobsGen) setJobs([]);
+    }
+  }
+  async function queueAll(lanes: Lane[], to: string) {
+    const path = repo();
+    if (!path) return;
+    let n = 0;
+    for (const l of lanes) {
+      try {
+        await api.enqueue(path, l.branch, to);
+        n++;
+      } catch (e) {
+        toast({ tone: "fail", title: `${l.branch} stayed out of line`, body: msg(e) });
+      }
+    }
+    if (n) toast({ tone: "done", title: `${n} ${n === 1 ? "lane is" : "lanes are"} in line for ${to}`, body: "The queue ships them one at a time." });
+    void loadQueue();
+  }
+  async function dequeue(id: string) {
+    try {
+      await api.dequeue(id);
+    } catch (e) {
+      toast({ tone: "fail", title: "Not cleared", body: msg(e) });
+    }
+    void loadQueue();
+  }
+
   async function notify(run: string, detail: string) {
     try {
       let ok = await isPermissionGranted();
@@ -231,6 +284,7 @@ export default function App() {
     void api.selectRepo(path);
     void loadCards();
     void loadRuns();
+    void loadQueue();
     await load(false); // local refs first: instant
     await load(true); // then fetch and GitHub
   }
@@ -292,12 +346,14 @@ export default function App() {
     const onFocus = () => {
       void loadCards();
       void loadRuns();
+      void loadQueue();
       if (!fetching() && !sheet()) void load(false);
     };
     // Agents write cards through MCP while the app is open: pick them up within a few seconds.
     const poll = setInterval(() => {
       if (document.visibilityState === "visible" && (tab() === "inbox" || tab() === "board") && !sheet()) void loadCards();
       if (document.visibilityState === "visible" && (runs() ?? []).some((r) => isLive(r.state))) void loadRuns();
+      if (document.visibilityState === "visible" && jobs().some(isOpenJob)) void loadQueue();
     }, 4000);
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -330,7 +386,7 @@ export default function App() {
   });
 
   const current = (): RepoEntry | undefined => settings().repos.find((r) => r.path === repo());
-  const needs = () => yard()?.lanes.filter((l) => group(l) === "waiting").length ?? 0;
+  const needs = () => yard()?.lanes.filter((l) => queuedGroup(l, jobs()) === "waiting").length ?? 0;
   const approvals = () =>
     (runs() ?? []).filter((r) => isLive(r.state)).flatMap((r) => r.waiting.map((approval) => ({ run: r, approval })));
   const asking = () => openQuestions(cards() ?? []).length + approvals().length;
@@ -492,6 +548,7 @@ export default function App() {
                       onBack={() => setTab("board")}
                       onOpenRun={openRun}
                       onChanged={() => {
+                        void loadQueue();
                         void loadRuns();
                         void loadCards();
                         void load(false);
@@ -507,6 +564,7 @@ export default function App() {
                       now={now()}
                       onBack={() => setTab(tab() === "lanes" ? "board" : tab())}
                       onChanged={() => {
+                        void loadQueue();
                         void loadRuns();
                         void loadCards();
                       }}
@@ -528,6 +586,9 @@ export default function App() {
                     checkingOut={checkingOut()}
                     onClean={() => setSheet({ kind: "clean" })}
                     onNew={() => setSheet({ kind: "new" })}
+                    jobs={jobs()}
+                    onQueueAll={(ls, to) => void queueAll(ls, to)}
+                    onDequeue={(id) => void dequeue(id)}
                   />
                   <Switch>
                     <Match when={sheet()?.kind === "ship" && (sheet() as { lane: Lane; to: string })}>
@@ -536,7 +597,7 @@ export default function App() {
                           repo={path()}
                           lane={s().lane}
                           to={s().to}
-                          onDone={() => void load(false)}
+                          onDone={() => void loadQueue()}
                           onClose={() => setSheet(null)}
                         />
                       )}
@@ -636,6 +697,7 @@ export default function App() {
             yard={yard()}
             runs={runs() ?? []}
             reviewing={(cards() ?? []).filter((c) => c.state === "review" && c.lane).map((c) => c.lane!)}
+            jobs={jobs()}
             now={now()}
             selected={selected()}
             onSelect={select}

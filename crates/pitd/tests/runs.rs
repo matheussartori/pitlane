@@ -476,13 +476,84 @@ async fn proofs_and_a_judge_then_your_review() {
     let over = s.review(fx.repo.clone(), id, ReviewAction::Changes, Some("More.".into())).await.unwrap_err();
     assert!(format!("{over:#}").contains("rounds of changes"), "{over:#}");
 
-    // Approve: the lane ships into dev and the card follows.
+    // Approve: the lane joins the merge queue, ships into dev, and the card follows.
     git(&fx.repo, &["fetch", "-q", "origin"]);
+    s.start_queue();
     let ok = s.review(fx.repo.clone(), id, ReviewAction::Approve, None).await.unwrap();
     assert_eq!(ok["shipped_to"], "dev");
+    let job = ok["job"]["id"].as_str().unwrap().to_owned();
+    wait_job(&s, &job).await;
     assert_eq!(card_state(&fx, id).0, CardState::InDev);
     git(&fx.repo, &["fetch", "-q", "origin"]);
     let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
     assert!(merged.success(), "feat/x is in origin/dev");
     assert!(s.review(fx.repo.clone(), id, ReviewAction::Discard, None).await.is_err(), "no longer in review");
+}
+
+async fn wait_job(s: &Arc<Supervisor>, id: &str) -> pit_core::queue::ShipJob {
+    for _ in 0..300 {
+        if let Some(j) = s.queue_list(None).into_iter().find(|j| j.id == id)
+            && !j.state.is_open()
+        {
+            return j;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    panic!("job {id} never finished");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_merge_queue_ships_one_lane_at_a_time() {
+    use pit_core::queue::JobState;
+    let fx = fx();
+    let origin = fx.home.parent().unwrap().join("origin.git");
+    git(fx.home.parent().unwrap(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    git(&fx.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&fx.repo, &["push", "-q", "origin", "main", "main:dev"]);
+    // Three lanes off main: two touch different files, the third clashes with the first.
+    for (branch, file, text) in [("feat/a", "a.txt", "a\n"), ("feat/b", "b.txt", "b\n"), ("feat/clash", "a.txt", "other\n")] {
+        git(&fx.repo, &["switch", "-q", "-c", branch, "main"]);
+        fs::write(fx.repo.join(file), text).unwrap();
+        git(&fx.repo, &["add", "-A"]);
+        git(&fx.repo, &["commit", "-qm", branch]);
+    }
+    git(&fx.repo, &["switch", "-q", "main"]);
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::add(&r, NewCard { title: "B".into(), ..Default::default() }).unwrap();
+    cards::update(&r, c.id, CardPatch { lane: Some(Some("feat/b".into())), state: Some(CardState::Review), ..Default::default() }).unwrap();
+
+    let s = sup(&fx);
+    let a = s.enqueue(&fx.repo, "feat/a", None).unwrap();
+    let b = s.enqueue(&fx.repo, "feat/b", None).unwrap();
+    let x = s.enqueue(&fx.repo, "feat/clash", None).unwrap();
+    assert_eq!(a.target, "dev", "the next stage of a fresh lane is integration");
+    assert!(s.enqueue(&fx.repo, "feat/a", None).is_err(), "one open job per lane");
+    assert!(s.enqueue(&fx.repo, "main", None).is_err());
+    assert_eq!(s.queue_list(Some(&r.root)).len(), 3);
+
+    // The queue survives a restart before it ships anything.
+    let s2 = sup(&fx);
+    assert_eq!(s2.queue_list(None).iter().filter(|j| j.state == JobState::Queued).count(), 3);
+    drop(s2);
+
+    s.start_queue();
+    let (ja, jb, jx) = (wait_job(&s, &a.id).await, wait_job(&s, &b.id).await, wait_job(&s, &x.id).await);
+    assert_eq!((ja.state, jb.state), (JobState::Done, JobState::Done));
+    assert_eq!(jx.state, JobState::Conflict, "{:?}", jx.error);
+    assert_eq!(jx.conflicts, vec!["a.txt".to_owned()]);
+    assert!(ja.finished_at <= jb.finished_at, "in order");
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    for b in ["feat/a", "feat/b"] {
+        let ok = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", b, "origin/dev"]).status().unwrap();
+        assert!(ok.success(), "{b} is in origin/dev");
+    }
+    assert_eq!(card_state(&fx, c.id).0, CardState::InDev, "the card followed its lane");
+
+    // The clash can leave the line; a lane already in dev goes on to main next.
+    s.dequeue(&jx.id).unwrap();
+    let main_job = s.enqueue(&fx.repo, "feat/b", None).unwrap();
+    assert_eq!(main_job.target, "main");
+    assert_eq!(wait_job(&s, &main_job.id).await.state, JobState::Done);
+    assert_eq!(card_state(&fx, c.id).0, CardState::Done);
 }
