@@ -57,6 +57,13 @@
 .field.is-error .input { box-shadow: inset 0 0 0 1px var(--color-fail); }
 .field.is-success .input { box-shadow: inset 0 0 0 1px var(--color-done); }
 .input-mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+/* Search field: a quiet fill with the icon inside; the ring only on hover and focus. */
+.search-field { display: flex; align-items: center; gap: var(--space-xs); height: var(--control-h); padding-inline: var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-2); color: var(--color-muted); }
+.search-field:hover { box-shadow: inset 0 0 0 1px var(--color-rule-strong); }
+.search-field:focus-within { box-shadow: none; outline: 2px solid var(--color-focus); outline-offset: -1px; color: var(--color-ink-2); }
+.search-field input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) var(--text-md)/1 var(--font-body); outline: none; appearance: none; -webkit-appearance: none; }
+.search-field input::placeholder { color: var(--color-muted); }
+.search-field input::-webkit-search-cancel-button, .search-field input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
 
 /* ---------- Switch and check ---------- */
 .switch { appearance: none; width: 28px; height: 16px; margin: 0; border-radius: var(--radius-pill); background: var(--color-rule-strong); position: relative; cursor: pointer; flex-shrink: 0; }

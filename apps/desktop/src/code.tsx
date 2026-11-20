@@ -251,9 +251,10 @@ function SearchPanel(props: { root: string; onPick: (path: string, line: number,
   };
   return (
     <div class="code-search">
+      <label class="search-field code-filter">
+        <Icon name="search" small />
       <input
         ref={input}
-        class="input code-filter"
         type="search"
         placeholder="Search in files"
         aria-label="Search in files"
@@ -261,9 +262,11 @@ function SearchPanel(props: { root: string; onPick: (path: string, line: number,
         onInput={(e) => (setQ(e.currentTarget.value), run(e.currentTarget.value))}
         onKeyDown={(e) => {
           if (e.key === "Enter" && hits()?.[0]) props.onPick(hits()![0]!.path, hits()![0]!.line, hits()![0]!.col);
+          if (e.key === "Escape") (setQ(""), run(""));
           e.stopPropagation();
         }}
       />
+      </label>
       <div class="code-tree" role="list">
         <Show when={hits()} fallback={<p class="side-hint code-none">{busy() ? "Searching" : "Text across this folder’s files. A capital letter makes it match case."}</p>}>
           <p class="side-hint code-none">
