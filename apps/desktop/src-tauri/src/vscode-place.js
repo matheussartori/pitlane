@@ -94,8 +94,9 @@
   var closer = setInterval(function () {
     tries++;
     var aux = document.querySelector(".part.auxiliarybar");
-    if (aux && aux.offsetWidth > 0 && aux.innerText.trim() === "") {
-      var close = aux.querySelector('[aria-label*="Hide Secondary Side Bar"], .action-label.codicon-close');
+    var text = aux ? aux.innerText.trim() : "";
+    if (aux && aux.offsetWidth > 0 && (text === "" || /^Drag a view here/.test(text))) {
+      var close = aux.querySelector('.codicon-auxiliarybar-close, [aria-label*="Hide Secondary Side Bar"]');
       if (close) {
         close.click();
         clearInterval(closer);
