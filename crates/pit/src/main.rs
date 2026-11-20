@@ -59,7 +59,34 @@ enum Cmd {
     #[command(subcommand)]
     Card(CardCmd),
     /// Serve the cards over MCP on stdio: claude mcp add pitlane -- pit mcp
-    Mcp,
+    Mcp {
+        /// Internal: answer a run's permission prompts (started by the daemon for each run).
+        #[arg(long, value_name = "RUN", hide = true)]
+        approve: Option<String>,
+    },
+    /// Tools agents are waiting on you to allow, across runs.
+    Approvals,
+    /// Allow what a run is waiting on: once, for the rest of the run, or always in this repo.
+    Allow {
+        run: String,
+        /// Which approval (default: the oldest).
+        #[arg(long)]
+        id: Option<String>,
+        /// The same command until the run ends.
+        #[arg(long, conflicts_with = "always")]
+        run_wide: bool,
+        /// The same command from now on, saved to [run] allow in .pitlane/flow.toml.
+        #[arg(long)]
+        always: bool,
+    },
+    /// Deny what a run is waiting on; the agent reads the reason.
+    Deny {
+        run: String,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(short, long)]
+        message: Option<String>,
+    },
     /// Run the daemon that owns agent runs (started on demand by pit and the app).
     Daemon,
     /// Have an agent work a card in the card's worktree, and follow it.
@@ -191,10 +218,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
     if let Cmd::Daemon = cli.cmd {
         let (_, home) = pit_core::default_homes();
         let claude_bin = std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
-        tokio::runtime::Runtime::new()?.block_on(pitd::serve(pitd::Config { home, claude_bin }))?;
+        let pit_bin = std::env::current_exe().ok();
+        tokio::runtime::Runtime::new()?.block_on(pitd::serve(pitd::Config { home, claude_bin, pit_bin }))?;
         return Ok(ExitCode::SUCCESS);
     }
-    if let Cmd::Mcp = cli.cmd {
+    if let Cmd::Mcp { approve: Some(run) } = cli.cmd {
+        mcp::serve_approver(run)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Cmd::Mcp { .. } = cli.cmd {
         // The agent may start it anywhere; each tool call opens the repository it runs in.
         let dir = match cli.dir {
             Some(d) => d,
@@ -221,7 +253,34 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 print_yard(&y);
             }
         }
-        Cmd::Mcp | Cmd::Daemon => unreachable!("handled above"),
+        Cmd::Mcp { .. } | Cmd::Daemon => unreachable!("handled above"),
+        Cmd::Approvals => {
+            let v = daemon()?.call(serde_json::json!({ "op": "approvals" }))?;
+            let list = v["approvals"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                println!("nothing is waiting on you");
+            }
+            for a in list {
+                println!(
+                    "{}  #{} {}\n  {} {}  {}",
+                    paint(ACCENT, a["run"].as_str().unwrap_or_default()),
+                    a["card"],
+                    a["card_title"].as_str().unwrap_or_default(),
+                    a["approval"]["tool"].as_str().unwrap_or_default(),
+                    a["approval"]["detail"].as_str().unwrap_or_default(),
+                    paint(MUTED, &format!("pit allow {} | pit deny {}", a["run"].as_str().unwrap_or_default(), a["run"].as_str().unwrap_or_default()))
+                );
+            }
+        }
+        Cmd::Allow { run, id, run_wide, always } => {
+            let decision = if always { "always" } else if run_wide { "run" } else { "once" };
+            let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": decision }))?;
+            println!("{} allowed {} ({decision})", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
+        }
+        Cmd::Deny { run, id, message } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": "deny", "message": message }))?;
+            println!("{} denied {}", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
+        }
         Cmd::Run { card, detach } => {
             let mut c = daemon()?;
             let v = c.call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card }))?;
@@ -401,6 +460,18 @@ fn print_event(e: &RunEvent) {
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
         RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
         RunEvent::Note { text } => println!("{}", paint(MUTED, text)),
+        RunEvent::Approval { approval } => println!(
+            "{} waiting for you: {} {}  {}",
+            paint(ACCENT, "?"),
+            approval.tool,
+            approval.detail,
+            paint(MUTED, "pit allow <run> [--run-wide|--always] | pit deny <run>")
+        ),
+        RunEvent::Decided { decision, message, .. } => println!(
+            "  {} {}",
+            paint(MUTED, &format!("{decision:?}").to_lowercase()),
+            paint(MUTED, message.as_deref().unwrap_or_default())
+        ),
         RunEvent::Finished { ok, handoff, denied, .. } => {
             if let Some(s) = handoff.as_ref().and_then(|h| h.get("summary")).and_then(|s| s.as_str()) {
                 println!("\n{} {s}", if *ok { paint(DONE, "✓") } else { paint(FAIL, "✕") });

@@ -1,6 +1,7 @@
 // The shell: top bar, the current screen, the Tower. Inbox, Board and Lanes read the repository; Ledger arrives with runs.
 import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { api, isLive, onRun, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type Yard } from "./api";
 import { LedgerView } from "./ledger";
 import { RunScreen } from "./run";
@@ -34,6 +35,13 @@ function savedTab(): Tab {
   } catch {
     return "lanes";
   }
+}
+
+/** `/Users/me/Projects/a/b/c/repo` → `~/Projects/…/c/repo`: short, and still the right folder. */
+function shortPath(p: string): string {
+  const home = p.replace(/^\/Users\/[^/]+/, "~");
+  const parts = home.split("/").filter(Boolean);
+  return parts.length > 4 ? [parts[0], parts[1], "…", ...parts.slice(-2)].join("/") : home;
 }
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -152,6 +160,17 @@ export default function App() {
     }
   }
 
+  async function notify(run: string, detail: string) {
+    try {
+      let ok = await isPermissionGranted();
+      if (!ok) ok = (await requestPermission()) === "granted";
+      const m = (runs() ?? []).find((r) => r.id === run);
+      if (ok) sendNotification({ title: m ? `#${m.card} ${m.card_title} is waiting for you` : "An agent is waiting for you", body: detail });
+    } catch {
+      /* the browser preview has no notifications */
+    }
+  }
+
   async function startRun(card: number) {
     const path = repo();
     if (!path) return;
@@ -217,7 +236,12 @@ export default function App() {
       if ((runs() ?? []).some((r) => isLive(r.state)) || Date.now() - now() >= 30_000) setNow(Date.now());
     }, 1000);
     const offRun = await onRun(
-      () => {},
+      (run, _i, e) => {
+        if (e.kind !== "approval" && e.kind !== "decided") return;
+        void loadRuns();
+        // Not looking at Pitlane: say so where the person is.
+        if (e.kind === "approval" && !document.hasFocus()) void notify(run, e.approval.detail || e.approval.tool);
+      },
       () => {
         void loadRuns();
         void loadCards();
@@ -276,7 +300,9 @@ export default function App() {
 
   const current = (): RepoEntry | undefined => settings().repos.find((r) => r.path === repo());
   const needs = () => yard()?.lanes.filter((l) => group(l) === "waiting").length ?? 0;
-  const asking = () => openQuestions(cards() ?? []).length;
+  const approvals = () =>
+    (runs() ?? []).filter((r) => isLive(r.state)).flatMap((r) => r.waiting.map((approval) => ({ run: r, approval })));
+  const asking = () => openQuestions(cards() ?? []).length + approvals().length;
   const openCard = () => {
     const s = sheet();
     return s?.kind === "card" ? (cards() ?? []).find((c) => c.id === s.id) : undefined;
@@ -312,8 +338,12 @@ export default function App() {
                     onKeyDown={(e) => e.key === "Enter" && switchTo(r.path)}
                   >
                     <Icon name="branch" small />
-                    {r.name}
-                    <span class="path">{r.path}</span>
+                    <span class="repo-entry">
+                      <span class="repo-name">{r.name}</span>
+                      <span class="repo-path" title={r.path}>
+                        {shortPath(r.path)}
+                      </span>
+                    </span>
                   </div>
                 )}
               </For>
@@ -452,6 +482,8 @@ export default function App() {
                     active={tab() === "inbox" && !sheet()}
                     onChanged={() => void loadCards()}
                     onOpenCard={(id) => setSheet({ kind: "card", id })}
+                    approvals={approvals()}
+                    onOpenRun={openRun}
                   />
                 </Match>
                 <Match when={tab() === "board"}>

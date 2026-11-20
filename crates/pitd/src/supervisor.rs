@@ -15,18 +15,25 @@ use pit_core::actions::{self, NewOptions};
 use pit_core::cards::{self, CardPatch, CardState, NewQuestion};
 use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::lanes::now_secs;
-use pit_core::runs::{self, RunEvent, RunMeta, RunState};
+use pit_core::flow;
+use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta, RunState};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 
 pub struct Config {
     /// `~/.pitlane` (or `$PITLANE_HOME`).
     pub home: PathBuf,
     /// The Claude Code executable: `claude`, or a stand-in for tests.
     pub claude_bin: String,
+    /// The `pit` executable the agent starts as its approval MCP server (`pit mcp --approve <run>`).
+    /// `None`: no approvals; anything outside the allowed tools is denied.
+    pub pit_bin: Option<PathBuf>,
 }
+
+/// What a person answered to an approval.
+pub type Answer = (Decision, Option<String>);
 
 /// What the daemon holds for a run while its process lives.
 struct Live {
@@ -39,6 +46,9 @@ struct Live {
     stop_requested: bool,
     events: usize,
     tx: broadcast::Sender<(usize, RunEvent)>,
+    /// Rules allowed "for this run".
+    rules: Vec<String>,
+    pending: HashMap<String, oneshot::Sender<Answer>>,
 }
 
 pub struct Supervisor {
@@ -212,13 +222,24 @@ impl Supervisor {
             error: None,
             denied: Vec::new(),
             resumed_from,
+            waiting: Vec::new(),
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
         let (tx, _) = broadcast::channel(1024);
         self.live.lock().unwrap().insert(
             id.clone(),
-            Live { meta: meta.clone(), stdin: None, sent: 0, results: 0, stop_requested: false, events: 0, tx },
+            Live {
+                meta: meta.clone(),
+                stdin: None,
+                sent: 0,
+                results: 0,
+                stop_requested: false,
+                events: 0,
+                tx,
+                rules: Vec::new(),
+                pending: HashMap::new(),
+            },
         );
         let me = Arc::clone(self);
         let run = id.clone();
@@ -273,6 +294,14 @@ impl Supervisor {
             .arg(runs::handoff_schema().to_string());
         if let Some(m) = &prep.model {
             cmd.args(["--model", m]);
+        }
+        if let Some(pit) = &self.cfg.pit_bin {
+            // Anything no rule allows is asked to a person, through Pitlane, and waits for them.
+            let mcp = serde_json::json!({ "mcpServers": { "pitlane_run": {
+                "command": pit, "args": ["mcp", "--approve", &id] } } });
+            cmd.args(["--mcp-config", &mcp.to_string()])
+                .args(["--permission-prompts", "host", "--permission-prompt-tool", "mcp__pitlane_run__approve"])
+                .env("MCP_TOOL_TIMEOUT", "86400000");
         }
         cmd.current_dir(&prep.worktree)
             .env_remove("CLAUDECODE")
@@ -368,25 +397,27 @@ impl Supervisor {
         } else {
             RunState::Failed
         };
+        let error = (state == RunState::Failed).then(|| {
+            if tail.is_empty() { format!("the agent exited with {status}") } else { tail.join("\n") }
+        });
+        // The card follows the run first (a handoff moves it to review, its questions go to the
+        // Inbox), so anyone who sees the run ended also sees where the card went.
+        let mut settled = self.get(&id)?;
+        settled.state = state;
+        let home = self.cfg.home.clone();
+        let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home)).await?;
         self.update(&id, |m| {
             m.state = state;
             m.ended_at = Some(now_secs());
             m.pid = None;
-            if state == RunState::Failed && m.error.is_none() {
-                m.error = Some(if tail.is_empty() {
-                    format!("the agent exited with {status}")
-                } else {
-                    tail.join("\n")
-                });
+            m.waiting.clear();
+            if m.error.is_none() {
+                m.error = error;
             }
         });
-        let meta = self.get(&id)?;
         self.emit(&id, RunEvent::Exited { code: status.code(), state });
         self.live.lock().unwrap().remove(&id);
-
-        // The card follows the run: a handoff moves it to review, its questions go to the Inbox.
-        let home = self.cfg.home.clone();
-        tokio::task::spawn_blocking(move || settle_card(&meta, &home)).await??;
+        card_result?;
         Ok(())
     }
 
@@ -444,6 +475,96 @@ impl Supervisor {
             }
             _ => {}
         }
+    }
+
+    /// The agent asks to use a tool no rule allows. Answers at once when a rule of this run or of
+    /// the repository allows it; otherwise waits for a person. Returns Claude Code's answer:
+    /// `{"behavior":"allow","updatedInput":…}` or `{"behavior":"deny","message":…}`.
+    pub async fn ask(&self, run: &str, tool: &str, input: Value, tool_use_id: Option<String>) -> Value {
+        let allow = |input: &Value| serde_json::json!({ "behavior": "allow", "updatedInput": input });
+        let deny = |msg: &str| serde_json::json!({ "behavior": "deny", "message": msg });
+        let (repo, run_rules) = {
+            let live = self.live.lock().unwrap();
+            let Some(l) = live.get(run) else { return deny("This run is not live any more.") };
+            (l.meta.repo.clone(), l.rules.clone())
+        };
+        let repo_rules = Repo::open(&repo, &home_dir(), &self.cfg.home).map(|r| r.flow.run.allow).unwrap_or_default();
+        if run_rules.iter().chain(repo_rules.iter()).any(|r| runs::rule_allows(r, tool, &input)) {
+            return allow(&input);
+        }
+        let approval = Approval {
+            id: tool_use_id.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
+            tool: tool.to_owned(),
+            detail: runs::read_claude_line(&serde_json::json!({
+                "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "", "name": tool, "input": input }] } }))
+            .into_iter()
+            .find_map(|e| match e {
+                RunEvent::Tool { detail, .. } => Some(detail),
+                _ => None,
+            })
+            .unwrap_or_default(),
+            rule: runs::rule_for(tool, &input),
+            input: input.clone(),
+            asked_at: now_secs(),
+        };
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut live = self.live.lock().unwrap();
+            let Some(l) = live.get_mut(run) else { return deny("This run is not live any more.") };
+            l.pending.insert(approval.id.clone(), tx);
+            l.meta.waiting.push(approval.clone());
+        }
+        self.update(run, |_| {});
+        self.emit(run, RunEvent::Approval { approval: approval.clone() });
+
+        let answer = rx.await;
+        self.update(run, |m| m.waiting.retain(|a| a.id != approval.id));
+        let Ok((decision, message)) = answer else { return deny("The run ended before anyone answered.") };
+        match decision {
+            Decision::Run => {
+                if let Some(l) = self.live.lock().unwrap().get_mut(run) {
+                    l.rules.push(approval.rule.clone());
+                }
+            }
+            Decision::Always => {
+                if let Err(e) = flow::add_run_allow(&repo, &approval.rule) {
+                    self.emit(run, RunEvent::Note { text: format!("Could not save {} to flow.toml: {e:#}", approval.rule) });
+                }
+                if let Some(l) = self.live.lock().unwrap().get_mut(run) {
+                    l.rules.push(approval.rule.clone());
+                }
+            }
+            Decision::Once | Decision::Deny => {}
+        }
+        self.emit(run, RunEvent::Decided { id: approval.id.clone(), decision, message: message.clone() });
+        if decision == Decision::Deny {
+            deny(message.as_deref().filter(|m| !m.trim().is_empty()).unwrap_or("The person declined this. Find another way or report it in the handoff."))
+        } else {
+            allow(&input)
+        }
+    }
+
+    /// Answers a waiting approval: the one named, or the oldest of the run.
+    pub fn decide(&self, run: &str, approval: Option<&str>, decision: Decision, message: Option<String>) -> Result<String> {
+        let mut live = self.live.lock().unwrap();
+        let l = live.get_mut(run).with_context(|| format!("run {run} is not live"))?;
+        let id = match approval {
+            Some(a) => a.to_owned(),
+            None => l.meta.waiting.first().map(|a| a.id.clone()).context("nothing is waiting in this run")?,
+        };
+        let tx = l.pending.remove(&id).with_context(|| format!("no approval {id} waiting in run {run}"))?;
+        tx.send((decision, message)).map_err(|_| anyhow::anyhow!("the agent stopped waiting"))?;
+        Ok(id)
+    }
+
+    /// Everything waiting on a person, across live runs.
+    pub fn approvals(&self) -> Vec<(RunMeta, Approval)> {
+        self.live
+            .lock()
+            .unwrap()
+            .values()
+            .flat_map(|l| l.meta.waiting.iter().map(|a| (l.meta.clone(), a.clone())))
+            .collect()
     }
 
     /// A message to the agent while it works: it reads it after its current step.

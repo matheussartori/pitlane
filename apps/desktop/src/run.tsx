@@ -1,6 +1,7 @@
 // One run: what the agent is doing, live, beside the figures and its handoff.
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { api, isLive, onRun, type RunEvent, type RunMeta, type RunState, type Yard } from "./api";
+import { ApprovalBlock } from "./approvals";
 import { LaneTrack } from "./board";
 import { Icon, type IconName } from "./icons";
 import type { ChipState } from "./lane";
@@ -167,10 +168,20 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
             <h1 class="title">
               #{m().card} {m().card_title}
             </h1>
-            <span class="chip" data-state={runStateView[m().state].chip}>
-              <Icon name={runStateView[m().state].icon} small />
-              {runStateView[m().state].label}
-            </span>
+            <Show
+              when={m().waiting.length > 0}
+              fallback={
+                <span class="chip" data-state={runStateView[m().state].chip}>
+                  <Icon name={runStateView[m().state].icon} small />
+                  {runStateView[m().state].label}
+                </span>
+              }
+            >
+              <span class="chip" data-state="needs">
+                <Icon name="needs" small />
+                {m().waiting[0]!.tool === "Bash" ? "Wants to run a command" : `Wants ${m().waiting[0]!.tool}`}
+              </span>
+            </Show>
             <span class="run-clock" aria-label="Elapsed">
               {clock(elapsed(m(), props.now))}
             </span>
@@ -201,7 +212,7 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
             <ErrorLine>{error()}</ErrorLine>
           </Show>
 
-          <div class="run-body">
+          <div class="run-body" data-live={isLive(m().state) ? "" : undefined}>
             <div
               class="timeline"
               ref={list}
@@ -247,6 +258,22 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                         </p>
                       )}
                     </Match>
+                    <Match when={e.kind === "approval" && e}>
+                      {(x) => (
+                        <p class="tl-note tl-asked" data-pending={m().waiting.some((w) => w.id === x().approval.id) ? "" : undefined}>
+                          <Icon name="needs" small /> Asked to {x().approval.tool === "Bash" ? "run" : "use"}{" "}
+                          <code>{rel(x().approval.detail || x().approval.tool)}</code>
+                        </p>
+                      )}
+                    </Match>
+                    <Match when={e.kind === "decided" && e}>
+                      {(x) => (
+                        <p class="tl-note">
+                          {{ once: "You allowed it once.", run: "You allowed it for this run.", always: "You allowed it in this repository.", deny: "You denied it." }[x().decision]}
+                          {x().message ? ` ${x().message}` : ""}
+                        </p>
+                      )}
+                    </Match>
                     <Match when={e.kind === "note" && (startedAt() < 0 || ordered().indexOf(e) > startedAt()) && e}>
                       {(x) => <p class="tl-note">{x().text}</p>}
                     </Match>
@@ -264,7 +291,7 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                   </Switch>
                 )}
               </For>
-              <Show when={isLive(m().state) && !openTool()}>
+              <Show when={isLive(m().state) && !openTool() && m().waiting.length === 0}>
                 <p class="tl-note tl-working">
                   <Spinner /> Working
                 </p>
@@ -272,6 +299,7 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
             </div>
 
             <aside class="run-side" aria-label="Run figures">
+              <Show when={m().turns != null} fallback={<p class="side-hint">Turns, cost and tokens arrive with the agent's first report.</p>}>
               <dl class="figures">
                 <div>
                   <dt>Turns</dt>
@@ -293,6 +321,7 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                   <dd>{kTokens(m().tokens.output)}</dd>
                 </div>
               </dl>
+              </Show>
               <Show when={m().handoff}>
                 {(h) => (
                   <section class="handoff">
@@ -338,6 +367,8 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
               </Show>
             </aside>
           </div>
+
+          <For each={m().waiting}>{(a, i) => <ApprovalBlock run={m().id} approval={a} keys={i() === 0} />}</For>
 
           <Show when={isLive(m().state)}>
             <form class="composer" onSubmit={say}>

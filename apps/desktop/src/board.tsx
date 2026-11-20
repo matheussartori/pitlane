@@ -63,7 +63,15 @@ export function BoardView(props: {
   onNew: () => void;
 }) {
   const liveRun = (id: number) => props.runs.find((r) => r.card === id && isLive(r.state));
-  const placed = createMemo(() => (props.cards ?? []).map((c) => ({ card: c, p: place(c, props.yard) })));
+  const placed = createMemo(() =>
+    (props.cards ?? []).map((c) => {
+      const asking = props.runs.find((r) => r.card === c.id && isLive(r.state) && r.waiting.length > 0);
+      const p = asking
+        ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? "Wants to run" : `Wants ${asking.waiting[0]!.tool}`, why: `Asks to run ${asking.waiting[0]!.detail}` }
+        : place(c, props.yard);
+      return { card: c, p };
+    }),
+  );
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);
   const needs = () => byColumn("needs").length;
 
@@ -125,7 +133,7 @@ export function BoardView(props: {
                         >
                           <div class="card-top">
                             <Show
-                              when={liveRun(card.id)}
+                              when={p.column !== "needs" && liveRun(card.id)}
                               fallback={
                                 <span class="chip" data-state={p.chip}>
                                   <Icon name={p.icon} small />

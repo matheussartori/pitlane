@@ -13,6 +13,7 @@
     "@fontsource/jetbrains-mono": "^5",
     "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-notification": "^2.8.1",
     "solid-js": "^1.9.20"
   },
   "devDependencies": {

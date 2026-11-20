@@ -90,7 +90,7 @@ fn card_state(fx: &Fx, id: u32) -> (CardState, usize) {
 }
 
 fn sup(fx: &Fx) -> Arc<Supervisor> {
-    Supervisor::new(Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned() })
+    Supervisor::new(Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned(), pit_bin: None })
 }
 
 async fn wait_end(s: &Arc<Supervisor>, id: &str) -> pit_core::runs::RunMeta {
@@ -148,6 +148,8 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
             RunEvent::Quota { .. } => "quota",
             RunEvent::Finished { .. } => "finished",
             RunEvent::Note { .. } => "note",
+            RunEvent::Approval { .. } => "approval",
+            RunEvent::Decided { .. } => "decided",
             RunEvent::Exited { .. } => "exited",
         })
         .filter(|k| *k != "note")
@@ -170,6 +172,7 @@ async fn a_blocked_handoff_asks_in_the_inbox() {
             Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
             wrapper.to_string_lossy().into_owned()
         },
+        pit_bin: None,
     });
     let meta = s.start(fx.repo.clone(), id, None).unwrap();
     let end = wait_end(&s, &meta.id).await;
@@ -188,7 +191,7 @@ async fn stop_ends_the_turn_and_frees_the_card() {
     let wrapper = fx.fake.with_file_name("fake-slow");
     fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
     Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
-    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned() });
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
     let meta = s.start(fx.repo.clone(), id, None).unwrap();
     for _ in 0..100 {
         if s.get(&meta.id).unwrap().pid.is_some() {
@@ -208,7 +211,7 @@ async fn stop_ends_the_turn_and_frees_the_card() {
 async fn over_the_socket_with_follow_and_recovery() {
     let fx = fx();
     let id = card(&fx, "Socket");
-    let cfg = Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned() };
+    let cfg = Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned(), pit_bin: None };
     let server = tokio::spawn(pitd::serve(cfg));
     let home = fx.home.clone();
     let repo = fx.repo.clone();
@@ -247,4 +250,82 @@ async fn over_the_socket_with_follow_and_recovery() {
     fs::write(fx.home.join("runs").join(&m.id).join("meta.json"), serde_json::to_string(&m).unwrap()).unwrap();
     assert_eq!(s.recover().unwrap(), 1);
     assert_eq!(s.get(&end.id).unwrap().state, RunState::Interrupted);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn approvals_wait_for_a_person_and_remember_rules() {
+    use pit_core::runs::Decision;
+    use serde_json::json;
+    let fx = fx();
+    let id = card(&fx, "Needs commands");
+    let wrapper = fx.fake.with_file_name("fake-slow-2");
+    fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
+    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
+    let run = s.start(fx.repo.clone(), id, None).unwrap().id;
+    for _ in 0..100 {
+        if s.get(&run).unwrap().pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // Asked: it waits, everyone sees it, a person answers "for this run".
+    let ask = |cmd: &str, use_id: &str| {
+        let (s, run, cmd, use_id) = (Arc::clone(&s), run.clone(), cmd.to_owned(), use_id.to_owned());
+        tokio::spawn(async move { s.ask(&run, "Bash", json!({ "command": cmd }), Some(use_id)).await })
+    };
+    let first = ask("npm test -- drift", "t1");
+    for _ in 0..100 {
+        if !s.approvals().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let waiting = s.approvals();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].1.rule, "Bash(npm test:*)");
+    assert_eq!(s.get(&run).unwrap().waiting.len(), 1);
+    assert_eq!(s.decide(&run, None, Decision::Run, None).unwrap(), "t1");
+    assert_eq!(first.await.unwrap()["behavior"], "allow");
+    assert!(s.get(&run).unwrap().waiting.is_empty());
+
+    // The same command again: allowed by the run's rule, nobody asked.
+    let again = s.ask(&run, "Bash", json!({ "command": "npm test -- kart" }), Some("t2".into())).await;
+    assert_eq!(again["behavior"], "allow");
+    assert!(s.approvals().is_empty());
+
+    // Always: saved to flow.toml, which keeps its own content.
+    let py = ask("python3 scripts/check.py", "t3");
+    while s.approvals().is_empty() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    s.decide(&run, Some("t3"), Decision::Always, None).unwrap();
+    assert_eq!(py.await.unwrap()["behavior"], "allow");
+    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap();
+    assert!(flow.contains("Bash(python3:*)"), "{flow}");
+    assert!(flow.contains("[worktree]"), "the rest of the file is kept");
+
+    // Deny with a reason the agent reads.
+    let rm = ask("rm -rf build", "t4");
+    while s.approvals().is_empty() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    s.decide(&run, None, Decision::Deny, Some("Use npm run clean.".into())).unwrap();
+    let a = rm.await.unwrap();
+    assert_eq!((a["behavior"].as_str(), a["message"].as_str()), (Some("deny"), Some("Use npm run clean.")));
+
+    // Still waiting when the run ends: the agent hears no.
+    let late = ask("curl example.com", "t5");
+    while s.approvals().is_empty() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    s.stop(&run).unwrap();
+    assert_eq!(late.await.unwrap()["behavior"], "deny");
+    wait_end(&s, &run).await;
+    assert_eq!(s.ask(&run, "Bash", json!({ "command": "ls" }), None).await["behavior"], "deny");
+
+    let tl = s.subscribe(&run, 0).unwrap().replay;
+    assert_eq!(tl.iter().filter(|(_, e)| matches!(e, RunEvent::Approval { .. })).count(), 4);
+    assert_eq!(tl.iter().filter(|(_, e)| matches!(e, RunEvent::Decided { .. })).count(), 3);
 }

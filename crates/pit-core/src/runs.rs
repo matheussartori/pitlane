@@ -88,6 +88,82 @@ pub struct RunMeta {
     pub denied: Vec<String>,
     #[serde(default)]
     pub resumed_from: Option<String>,
+    /// Tools the agent is waiting on a person to allow, while the run lives.
+    #[serde(default)]
+    pub waiting: Vec<Approval>,
+}
+
+/// A tool the agent wants to use that no rule allows: it waits for a person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Approval {
+    pub id: String,
+    pub tool: String,
+    /// The command, the file or the URL, in one line.
+    pub detail: String,
+    pub input: Value,
+    /// The rule "the same command" would add: `Bash(npm test:*)`, or the tool's name.
+    pub rule: String,
+    pub asked_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Decision {
+    /// This call only.
+    Once,
+    /// The same command until the run ends.
+    Run,
+    /// The same command in this repository from now on (`[run] allow` in flow.toml).
+    Always,
+    Deny,
+}
+
+impl Decision {
+    pub fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "once" => Self::Once,
+            "run" => Self::Run,
+            "always" => Self::Always,
+            "deny" => Self::Deny,
+            _ => bail!("unknown decision {s:?}; one of once, run, always, deny"),
+        })
+    }
+}
+
+/// The rule that allows "the same command": a Bash command by its first one or two words,
+/// any other tool by its name.
+pub fn rule_for(tool: &str, input: &Value) -> String {
+    if tool != "Bash" {
+        return tool.to_owned();
+    }
+    let cmd = input.get("command").and_then(Value::as_str).unwrap_or_default().trim();
+    // Skip grouping marks and VAR=value prefixes: the rule names the program that runs.
+    let words: Vec<&str> = cmd
+        .split_whitespace()
+        .skip_while(|w| w.chars().all(|c| "{(!".contains(c)) || (w.contains('=') && !w.starts_with('-')))
+        .take(2)
+        .collect();
+    let prefix = match words.as_slice() {
+        [a, b] if b.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c)) && !b.starts_with('-') => format!("{a} {b}"),
+        [a, ..] => (*a).to_owned(),
+        [] => String::new(),
+    };
+    format!("Bash({prefix}:*)")
+}
+
+/// Whether `rule` (in Claude Code's syntax) allows this call.
+pub fn rule_allows(rule: &str, tool: &str, input: &Value) -> bool {
+    if let Some(inner) = rule.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')) {
+        if tool != "Bash" {
+            return false;
+        }
+        let cmd = input.get("command").and_then(Value::as_str).unwrap_or_default().trim();
+        return match inner.strip_suffix(":*") {
+            Some(prefix) => cmd == prefix || cmd.strip_prefix(prefix).is_some_and(|rest| rest.starts_with(' ')),
+            None => cmd == inner,
+        };
+    }
+    rule == tool
 }
 
 /// One thing that happened in a run, as people read it.
@@ -103,6 +179,9 @@ pub enum RunEvent {
     Quota { window: String, used: f64, resets_at: u64 },
     Finished { ok: bool, cost_usd: f64, duration_ms: u64, turns: u32, tokens: Tokens, handoff: Option<Value>, denied: Vec<String> },
     Note { text: String },
+    /// The agent waits for a person to allow a tool.
+    Approval { approval: Approval },
+    Decided { id: String, decision: Decision, message: Option<String> },
     Exited { code: Option<i32>, state: RunState },
 }
 
@@ -386,6 +465,24 @@ fn spawn_daemon(bin: &Path, pitlane_home: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rules_for_the_same_command() {
+        let bash = |c: &str| json!({ "command": c });
+        assert_eq!(rule_for("Bash", &bash("npm test -- drift")), "Bash(npm test:*)");
+        assert_eq!(rule_for("Bash", &bash("python3 -c \"print(6*7)\"")), "Bash(python3:*)");
+        assert_eq!(rule_for("Bash", &bash("cargo build --release")), "Bash(cargo build:*)");
+        assert_eq!(rule_for("Bash", &bash("{ python3 --version; } > V.txt")), "Bash(python3:*)");
+        assert_eq!(rule_for("Bash", &bash("CI=1 npm test")), "Bash(npm test:*)");
+        assert_eq!(rule_for("WebFetch", &json!({ "url": "https://x" })), "WebFetch");
+        assert!(rule_allows("Bash(npm test:*)", "Bash", &bash("npm test -- other")));
+        assert!(rule_allows("Bash(npm test:*)", "Bash", &bash("npm test")));
+        assert!(!rule_allows("Bash(npm test:*)", "Bash", &bash("npm testing")));
+        assert!(!rule_allows("Bash(npm test:*)", "Bash", &bash("rm -rf /")));
+        assert!(rule_allows("Bash(pwd)", "Bash", &bash("pwd")));
+        assert!(rule_allows("WebFetch", "WebFetch", &json!({})));
+        assert!(!rule_allows("WebFetch", "Bash", &bash("curl x")));
+    }
 
     #[test]
     fn reads_the_probe_events() {

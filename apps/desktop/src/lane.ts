@@ -231,7 +231,6 @@ export function next(l: Lane, y: Yard): Next | null {
     return { text: `Carries ${plural(l.integration_commits.length, `${integ} commit`)}; rebuild from ${y.production}`, tone: "failed" };
   if (l.sync.kind === "diverged") return { text: "Diverged from the remote", tone: "failed" };
   if (l.sync.kind === "behind") return { text: `Pull ${plural(l.sync.behind, "commit")} first`, tone: "needs" };
-  if (l.tracks_other) return { text: `Tracks ${l.tracks_other}`, tone: "needs" };
   if (l.status === "shipped-dirty") return { text: "Uncommitted changes after shipping", tone: "needs" };
   if (l.status === "needs-production") return null; // the Ship button says it
   if (l.in_production) {

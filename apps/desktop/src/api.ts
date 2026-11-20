@@ -215,7 +215,20 @@ export interface RunMeta {
   error: string | null;
   denied: string[];
   resumed_from: string | null;
+  waiting: Approval[];
 }
+
+export interface Approval {
+  id: string;
+  tool: string;
+  detail: string;
+  input: unknown;
+  /** What "the same command" means: `Bash(npm test:*)`, or the tool's name. */
+  rule: string;
+  asked_at: number;
+}
+
+export type Decision = "once" | "run" | "always" | "deny";
 
 export type RunEvent =
   | { kind: "started"; model: string; session: string }
@@ -226,6 +239,8 @@ export type RunEvent =
   | { kind: "quota"; window: string; used: number; resets_at: number }
   | { kind: "finished"; ok: boolean; cost_usd: number; duration_ms: number; turns: number; tokens: Tokens; handoff: Handoff | null; denied: string[] }
   | { kind: "note"; text: string }
+  | { kind: "approval"; approval: Approval }
+  | { kind: "decided"; id: string; decision: Decision; message: string | null }
   | { kind: "exited"; code: number | null; state: RunState };
 
 export const isLive = (s: RunState) => s === "starting" || s === "running";
@@ -279,6 +294,8 @@ export const api = {
   runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
   runStop: (run: string) => invoke<void>("run_stop", { run }),
+  runDecide: (run: string, approval: string, decision: Decision, message?: string) =>
+    invoke<void>("run_decide", { run, approval, decision, message: message ?? null }),
   runTimeline: (run: string) => invoke<[number, RunEvent][]>("run_timeline", { run }),
   runFollow: (run: string, from: number) => invoke<void>("run_follow", { run, from }),
   quota: () => invoke<Extract<RunEvent, { kind: "quota" }>[]>("quota"),

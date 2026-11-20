@@ -1,6 +1,7 @@
 // Inbox: every open question, answered with one key. Each answer becomes a decision.
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { api, type Card } from "./api";
+import { api, type Approval, type Card, type RunMeta } from "./api";
+import { ApprovalBlock } from "./approvals";
 import { openQuestions, type OpenQuestion } from "./cards";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
@@ -69,6 +70,8 @@ export function InboxView(props: {
   active: boolean;
   onChanged: () => void;
   onOpenCard: (id: number) => void;
+  approvals: { run: RunMeta; approval: Approval }[];
+  onOpenRun: (id: string) => void;
 }) {
   const questions = () => openQuestions(props.cards ?? []);
   const [index, setIndex] = createSignal(0);
@@ -148,10 +151,17 @@ export function InboxView(props: {
     <div class="inbox">
       <header class="screen-head">
         <h1 class="title">Inbox</h1>
-        <Show when={questions().length > 0}>
+        <Show when={questions().length > 0 || props.approvals.length > 0}>
           <p class="summary">
-            {questions().length} {questions().length === 1 ? "question" : "questions"} on {cardsAsking()}{" "}
-            {cardsAsking() === 1 ? "card" : "cards"}.
+            <Show when={props.approvals.length > 0}>
+              <b>
+                {props.approvals.length} {props.approvals.length === 1 ? "agent waits" : "agents wait"} for you.
+              </b>{" "}
+            </Show>
+            <Show when={questions().length > 0}>
+              {questions().length} {questions().length === 1 ? "question" : "questions"} on {cardsAsking()}{" "}
+              {cardsAsking() === 1 ? "card" : "cards"}.
+            </Show>
           </p>
         </Show>
         <span class="spacer" />
@@ -163,8 +173,23 @@ export function InboxView(props: {
         </Show>
       </header>
 
+      <For each={props.approvals}>
+        {(w) => (
+          <section class="inbox-card" aria-label={`Card ${w.run.card}: ${w.run.card_title}`}>
+            <header class="inbox-card-head">
+              <button type="button" class="card-link" onClick={() => props.onOpenRun(w.run.id)}>
+                <span class="card-id">#{w.run.card}</span>
+                {w.run.card_title}
+              </button>
+              <span class="caption">Its agent waits, mid-run</span>
+            </header>
+            <ApprovalBlock run={w.run.id} approval={w.approval} />
+          </section>
+        )}
+      </For>
+
       <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> Reading the cards</div>}>
-        <Show when={questions().length > 0} fallback={<InboxEmpty />}>
+        <Show when={questions().length > 0} fallback={<Show when={props.approvals.length === 0}><InboxEmpty /></Show>}>
           <div class="inbox-list">
             <For each={byCard()}>
               {(g) => (

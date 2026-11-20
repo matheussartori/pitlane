@@ -2,7 +2,8 @@
 //! Speaks JSON, one message per line, on a Unix socket only this user can open.
 //!
 //! Requests: `ping`, `start {repo, card}`, `resume {run}`, `list {repo?}`, `get {run}`,
-//! `say {run, text}`, `stop {run}`, `quota`, and `follow {run, from}`, which streams
+//! `say {run, text}`, `stop {run}`, `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
+//! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
 //! `{i, event}` lines and ends with `{end: <run>}`.
 
 pub mod supervisor;
@@ -107,6 +108,22 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             json!({ "ok": true })
         }
         "quota" => json!({ "quota": sup.quota() }),
+        "ask" => {
+            let tool = req.get("tool").and_then(Value::as_str).context("tool is required")?;
+            let input = req.get("input").cloned().unwrap_or(Value::Null);
+            let use_id = req.get("tool_use_id").and_then(Value::as_str).map(str::to_owned);
+            json!({ "answer": sup.ask(run_arg(req)?, tool, input, use_id).await })
+        }
+        "decide" => {
+            let decision = pit_core::runs::Decision::parse(req.get("decision").and_then(Value::as_str).context("decision is required")?)?;
+            let approval = req.get("approval").and_then(Value::as_str);
+            let message = req.get("message").and_then(Value::as_str).map(str::to_owned);
+            json!({ "approval": sup.decide(run_arg(req)?, approval, decision, message)? })
+        }
+        "approvals" => {
+            let list: Vec<Value> = sup.approvals().into_iter().map(|(m, a)| json!({ "run": m.id, "card": m.card, "card_title": m.card_title, "approval": a })).collect();
+            json!({ "approvals": list })
+        }
         _ => bail!("unknown op {op:?}"),
     })
 }

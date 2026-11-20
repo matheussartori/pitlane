@@ -301,6 +301,15 @@ async fn run_say(run: String, text: String) -> CmdResult<()> {
     blocking(move || call(serde_json::json!({ "op": "say", "run": run, "text": text })).map(drop)).await
 }
 
+/// Answers what a run is waiting on: once, run, always or deny (with a reason the agent reads).
+#[tauri::command]
+async fn run_decide(run: String, approval: Option<String>, decision: String, message: Option<String>) -> CmdResult<()> {
+    blocking(move || {
+        call(serde_json::json!({ "op": "decide", "run": run, "approval": approval, "decision": decision, "message": message })).map(drop)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn run_stop(run: String) -> CmdResult<()> {
     blocking(move || call(serde_json::json!({ "op": "stop", "run": run })).map(drop)).await
@@ -388,6 +397,7 @@ pub fn run() {
     extend_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Following::default())
         .invoke_handler(tauri::generate_handler![
             settings,
@@ -410,6 +420,7 @@ pub fn run() {
             run_resume,
             run_say,
             run_stop,
+            run_decide,
             run_timeline,
             run_follow,
             quota

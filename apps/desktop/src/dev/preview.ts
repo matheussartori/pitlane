@@ -19,8 +19,12 @@ const moved = (branch: string, dir: string) =>
 // A live run made from the first steps of the real one, on card #3's lane.
 const liveRun = () => ({ ...runMeta, id: "3-live", card: 3, card_title: "Strip scripts from SVG avatars", branch: "fix/avatar-svg",
   worktree: "/Users/you/.pitlane/wt/demo/fix-avatar-svg", state: "running", started_at: now() - 95, ended_at: null,
-  cost_usd: null, duration_ms: null, turns: null, handoff: null, tokens: zero, denied: [], error: null });
-const liveTimeline = () => pairs(moved("fix/avatar-svg", "fix-avatar-svg").slice(0, 5));
+  cost_usd: null, duration_ms: null, turns: null, handoff: null, tokens: zero, denied: [], error: null,
+  waiting: [{ id: "toolu_demo", tool: "Bash", detail: "npm test -- avatar", input: { command: "npm test -- avatar" },
+    rule: "Bash(npm test:*)", asked_at: now() - 12 }] });
+const liveTimeline = () =>
+  pairs([...moved("fix/avatar-svg", "fix-avatar-svg").slice(0, 5),
+    { kind: "approval", approval: liveRun().waiting[0] }]);
 
 // A failed run: the agent was refused a command and stopped with an error.
 const failedRun = () => ({ ...runMeta, id: "5-failed", card: 5, card_title: "Kart drift tier 3", branch: "feat/kart-drift",

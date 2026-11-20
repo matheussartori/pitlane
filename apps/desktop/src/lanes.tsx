@@ -217,9 +217,20 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
       <td>
         <span class="lane-name">
           <span class="branch selectable">{l.branch}</span>
-          <span class="subject" title={l.status === "new" ? undefined : l.subject}>
-            {l.status === "new" ? `No commits yet, started from ${p.yard.production}` : l.subject}
-          </span>
+          <Show
+            when={l.tracks_other}
+            fallback={
+              <span class="subject" title={l.status === "new" ? undefined : l.subject}>
+                {l.status === "new" ? `No commits yet, started from ${p.yard.production}` : l.subject}
+              </span>
+            }
+          >
+            {(other) => (
+              <span class="subject subject-warn" title={`git pull and git push on this branch go to ${other()}, another branch`}>
+                Tracks {other()}, not its own branch
+              </span>
+            )}
+          </Show>
         </span>
       </td>
       <td>
@@ -362,7 +373,9 @@ export function Tower(props: {
   onSelect: (branch: string) => void;
   onOpenRun: (id: string) => void;
 }) {
-  const needs = () => props.yard?.lanes.filter((l) => group(l) === "waiting").length ?? 0;
+  // A lane counts once, whether its branch or its running agent is waiting on you.
+  const needs = () =>
+    props.yard?.lanes.filter((l) => group(l) === "waiting" || props.runs.some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0)).length ?? 0;
   return (
     <aside class="tower-pane" aria-label="Tower">
       <div class="panel-head">
@@ -385,7 +398,7 @@ export function Tower(props: {
                 class="tower-row"
                 role="option"
                 tabindex="0"
-                data-state={waiting() ? "needs" : v().chip === "done" ? "done" : undefined}
+                data-state={waiting() || (run()?.waiting.length ?? 0) > 0 ? "needs" : v().chip === "done" ? "done" : undefined}
                 aria-selected={props.selected === l.branch}
                 onClick={() => (run() ? props.onOpenRun(run()!.id) : props.onSelect(l.branch))}
                 onKeyDown={(e) => e.key === "Enter" && (run() ? props.onOpenRun(run()!.id) : props.onSelect(l.branch))}
@@ -417,10 +430,20 @@ export function Tower(props: {
                     }
                   >
                     {(r) => (
-                      <span class="chip" data-state="running">
-                        <Icon name="run" small />
-                        <span class="figure">{clock(elapsed(r(), props.now))}</span>
-                      </span>
+                      <Show
+                        when={r().waiting.length === 0}
+                        fallback={
+                          <span class="chip" data-state="needs">
+                            <Icon name="needs" small />
+                            You
+                          </span>
+                        }
+                      >
+                        <span class="chip" data-state="running">
+                          <Icon name="run" small />
+                          <span class="figure">{clock(elapsed(r(), props.now))}</span>
+                        </span>
+                      </Show>
                     )}
                   </Show>
                 </span>

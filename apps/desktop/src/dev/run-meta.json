@@ -38,5 +38,6 @@
   },
   "error": null,
   "denied": [],
-  "resumed_from": null
+  "resumed_from": null,
+  "waiting": []
 }

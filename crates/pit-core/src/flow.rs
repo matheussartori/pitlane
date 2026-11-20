@@ -141,6 +141,37 @@ impl Default for RunCfg {
     }
 }
 
+/// Adds `rule` to `[run] allow` in the repository's `.pitlane/flow.toml`, keeping its comments
+/// and layout. Creates the file from the template when there is none. Idempotent.
+pub fn add_run_allow(root: &Path, rule: &str) -> Result<()> {
+    let path = root.join(FLOW_PATH);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => TEMPLATE.to_owned(),
+        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
+    };
+    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
+    let run = doc
+        .entry("run")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .context("[run] in flow.toml is not a table")?;
+    let allow = run
+        .entry("allow")
+        .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .context("[run] allow in flow.toml is not an array")?;
+    if !allow.iter().any(|v| v.as_str() == Some(rule)) {
+        allow.push(rule);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
+    // The edited file must still be a valid flow.
+    FlowFile::load(root).map(drop)
+}
+
 /// Tools every run may use: read and edit in its worktree, and git without leaving the branch.
 pub const RUN_BASE_TOOLS: [&str; 16] = [
     "Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "TodoWrite", "NotebookEdit",

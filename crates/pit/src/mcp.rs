@@ -17,6 +17,67 @@ Use add_card for each piece of work. Before work starts, ask every question you 
 each with options and the one you recommend; the user answers them in Pitlane's Inbox and each answer \
 becomes a recorded decision in .pitlane/decisions.md. Read get_card before working on a card.";
 
+/// `pit mcp --approve <run>`: the server Claude Code asks, through `--permission-prompt-tool`,
+/// whenever it wants a tool no rule allows. Each call waits on the daemon for a person's answer.
+pub fn serve_approver(run: String) -> Result<()> {
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
+        let Some(id) = msg.get("id").cloned() else { continue };
+        let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
+        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        let result = match method {
+            "initialize" => {
+                let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
+                let version = VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(VERSIONS[0]);
+                json!({ "protocolVersion": version, "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "pitlane_run", "version": env!("CARGO_PKG_VERSION") } })
+            }
+            "ping" => json!({}),
+            "tools/list" => json!({ "tools": [{
+                "name": "approve",
+                "description": "Asks the person running this Pitlane card whether a tool may run.",
+                "inputSchema": { "type": "object", "properties": {
+                    "tool_name": { "type": "string" }, "input": { "type": "object" }, "tool_use_id": { "type": "string" } },
+                    "required": ["tool_name", "input"] }
+            }] }),
+            "tools/call" => {
+                let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                let answer = ask_daemon(&run, &args).unwrap_or_else(|e| {
+                    json!({ "behavior": "deny", "message": format!("Pitlane could not ask anyone: {e:#}") })
+                });
+                json!({ "content": [{ "type": "text", "text": answer.to_string() }] })
+            }
+            _ => {
+                writeln!(out, "{}", error(id, -32601, &format!("method not found: {method}")))?;
+                out.flush()?;
+                continue;
+            }
+        };
+        writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "result": result }))?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
+fn ask_daemon(run: &str, args: &Value) -> Result<Value> {
+    let (_, home) = pit_core::default_homes();
+    let mut c = pit_core::runs::Client::connect(&home, std::env::current_exe().ok().as_deref())?;
+    let v = c.call(json!({
+        "op": "ask",
+        "run": run,
+        "tool": args.get("tool_name").and_then(Value::as_str).unwrap_or_default(),
+        "input": args.get("input").cloned().unwrap_or(Value::Null),
+        "tool_use_id": args.get("tool_use_id"),
+    }))?;
+    v.get("answer").cloned().context("the daemon gave no answer")
+}
+
 pub fn serve(dir: PathBuf) -> Result<()> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
