@@ -12,7 +12,7 @@ import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
-import { TerminalScreen, openTerminal, startTerminals, terminalList } from "./terminals";
+import { TerminalScreen, openTerminal, startTerminals, terminalTabs, terminalsWanting } from "./terminals";
 import { CodeScreen, openInCode, unsavedCount } from "./code";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
@@ -259,6 +259,16 @@ export default function App() {
     if (ok) setTab("terminal");
   }
 
+  async function say(title: string, body: string) {
+    try {
+      let ok = await isPermissionGranted();
+      if (!ok) ok = (await requestPermission()) === "granted";
+      if (ok) sendNotification({ title, body });
+    } catch {
+      /* the browser preview has no notifications */
+    }
+  }
+
   async function notify(run: string, detail: string) {
     try {
       let ok = await isPermissionGranted();
@@ -357,10 +367,17 @@ export default function App() {
         // Not looking at Pitlane: say so where the person is.
         if (e.kind === "approval" && !document.hasFocus()) void notify(run, e.approval.detail || e.approval.tool);
       },
-      () => {
+      (_run, m) => {
         void loadRuns();
         void loadCards();
         void load(false);
+        // A lane's agent finished or stopped while you were elsewhere: say which, and what now.
+        if (m && !document.hasFocus() && (m.state === "done" || m.state === "failed")) {
+          void say(
+            m.state === "done" ? `#${m.card} ${m.card_title} is ready for review` : `#${m.card} ${m.card_title} stopped`,
+            m.state === "done" ? "The agent finished. Its checks and the review are waiting in Pitlane." : "The run failed. Open it in Pitlane to see why.",
+          );
+        }
       },
     );
     const onHash = () => {
@@ -535,8 +552,10 @@ export default function App() {
           </button>
           <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "terminal" ? "page" : undefined} onClick={() => setTab("terminal")}>
             Terminal
-            <Show when={terminalList().length > 0}>
-              <span class="count">{terminalList().length}</span>
+            <Show when={terminalTabs().length > 0}>
+              <span class={terminalsWanting() > 0 ? "count count-hot" : "count"} title={terminalsWanting() > 0 ? `${terminalsWanting()} waiting for you` : undefined}>
+                {terminalsWanting() > 0 ? terminalsWanting() : terminalTabs().length}
+              </span>
             </Show>
           </button>
         </nav>

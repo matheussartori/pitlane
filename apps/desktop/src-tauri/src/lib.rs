@@ -584,6 +584,62 @@ fn term_open(app: tauri::AppHandle, terms: tauri::State<'_, term::Terms>, cwd: S
     terms.open(term::app_sink(&app), &cwd, &label, cols, rows).map_err(|e| format!("{e:#}"))
 }
 
+/// Opens a web link in the person's browser (links clicked in a terminal). Only http and https.
+#[tauri::command]
+fn open_external(url: String) -> CmdResult<()> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!("{url} is not a web link"));
+    }
+    std::process::Command::new("/usr/bin/open").arg(&url).status().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The app menu. Like the default one, except ⌘W: it belongs to the screen (a terminal pane, a
+/// file), so Close Window moves to ⇧⌘W.
+fn menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem as P, Submenu};
+    let name = app.package_info().name.clone();
+    let close = MenuItem::with_id(app, "close-window", "Close Window", true, Some("CmdOrCtrl+Shift+W"))?;
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                &name,
+                true,
+                &[
+                    &P::about(app, None, Some(AboutMetadata::default()))?,
+                    &P::separator(app)?,
+                    &P::services(app, None)?,
+                    &P::separator(app)?,
+                    &P::hide(app, None)?,
+                    &P::hide_others(app, None)?,
+                    &P::show_all(app, None)?,
+                    &P::separator(app)?,
+                    &P::quit(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(app, "File", true, &[&close])?,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &P::undo(app, None)?,
+                    &P::redo(app, None)?,
+                    &P::separator(app)?,
+                    &P::cut(app, None)?,
+                    &P::copy(app, None)?,
+                    &P::paste(app, None)?,
+                    &P::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(app, "View", true, &[&P::fullscreen(app, None)?])?,
+            &Submenu::with_items(app, "Window", true, &[&P::minimize(app, None)?, &P::maximize(app, None)?])?,
+        ],
+    )
+}
+
 #[tauri::command]
 fn term_write(terms: tauri::State<'_, term::Terms>, id: u32, data: String) -> CmdResult<()> {
     terms.write(id, &data).map_err(|e| format!("{e:#}"))
@@ -631,6 +687,14 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Following::default())
         .manage(term::Terms::default())
+        .menu(menu)
+        .on_menu_event(|app, e| {
+            if e.id().as_ref() == "close-window" {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.close();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             settings,
             add_repo,
@@ -664,6 +728,7 @@ pub fn run() {
             file_read,
             file_write,
             term_open,
+            open_external,
             term_write,
             term_resize,
             term_close,

@@ -7,7 +7,7 @@ const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 /** Tauri in the app; in a plain browser during development, the preview fixture. */
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (inTauri) return tauriInvoke<T>(cmd, args);
-  if (import.meta.env.DEV) return (await import("./dev/preview")).preview<T>(cmd);
+  if (import.meta.env.DEV) return (await import("./dev/preview")).preview<T>(cmd, args);
   throw "Pitlane runs inside its desktop app.";
 }
 
@@ -389,6 +389,15 @@ export const terms = {
   list: () => invoke<TermInfo[]>("term_list"),
   buffer: (id: number) => invoke<string>("term_buffer", { id }),
 };
+
+/** A web link in the person's browser (http and https only). */
+export function openExternal(url: string): Promise<void> {
+  if (!inTauri) {
+    window.open(url, "_blank", "noopener");
+    return Promise.resolve();
+  }
+  return invoke<void>("open_external", { url });
+}
 
 /** Terminal output and exits. Nothing in the browser preview. */
 export async function onTerm(onData: (id: number, data: string) => void, onExit: (id: number, code: number) => void): Promise<() => void> {
