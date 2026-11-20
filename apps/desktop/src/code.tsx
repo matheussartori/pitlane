@@ -297,6 +297,50 @@ function SearchPanel(props: { root: string; onPick: (path: string, line: number,
   );
 }
 
+// ---------------------------------------------------------------- the folder: the repository or a lane
+
+/** The same picker as the top bar's repository switch: a quiet button, a menu of places. */
+function PlacePicker(props: { places: { root: string; label: string }[]; root: string; repo: string; onPick: (root: string) => void }) {
+  const [open, setOpen] = createSignal(false);
+  let box!: HTMLDivElement;
+  const here = () => props.places.find((p) => p.root === props.root) ?? props.places[0];
+  const icon = (root: string) => (root === props.repo ? "folder" : "branch");
+  const away = (e: PointerEvent) => !box.contains(e.target as globalThis.Node) && setOpen(false);
+  createEffect(() => {
+    if (open()) document.addEventListener("pointerdown", away, true);
+    else document.removeEventListener("pointerdown", away, true);
+  });
+  onCleanup(() => document.removeEventListener("pointerdown", away, true));
+  const pick = (r: string) => {
+    props.onPick(r);
+    setOpen(false);
+  };
+  return (
+    <div class="anchor code-place" ref={box}>
+      <button type="button" class="repo code-place-btn" aria-haspopup="menu" aria-expanded={open()} title={here()?.root} onClick={() => setOpen(!open())} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+        <Icon name={icon(props.root)} small />
+        <span class="code-place-name">{here()?.label}</span>
+        <Icon name="chev" small />
+      </button>
+      <Show when={open()}>
+        <div class="pop" role="menu" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+          <For each={props.places}>
+            {(p) => (
+              <div class="menu-item" role="menuitem" tabindex="0" aria-current={p.root === props.root} onClick={() => pick(p.root)} onKeyDown={(e) => e.key === "Enter" && pick(p.root)}>
+                <Icon name={icon(p.root)} small />
+                <span class="repo-entry">
+                  <span class="repo-name">{p.label}</span>
+                  <span class="repo-path">{p.root === props.repo ? "Repository" : "Lane worktree"}</span>
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- the screen
 
 let openerSet = false;
@@ -736,13 +780,11 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
   };
 
   return (
-    <div class="code" data-side={side() ? "" : undefined}>
+    <div class="code-screen" data-side={side() ? "" : undefined}>
       <Show when={side()}>
         <aside class="code-side" aria-label={side() === "search" ? "Search" : "Files"}>
           <div class="code-side-head">
-            <select class="select code-place" aria-label="Folder" value={root()} onChange={(e) => setRootSig(e.currentTarget.value)}>
-              <For each={places()}>{(p) => <option value={p.root}>{p.label}</option>}</For>
-            </select>
+            <PlacePicker places={places()} root={root()} repo={props.repo} onPick={setRootSig} />
             <button type="button" class="btn btn-ghost btn-icon" aria-label="Files" title="Files (⇧⌘E)" aria-pressed={side() === "files"} onClick={() => setSide("files")}>
               <Icon name="folder" small />
             </button>
