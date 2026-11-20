@@ -2,6 +2,7 @@
 //! the `pitd` daemon are thin layers over this crate.
 
 pub mod actions;
+pub mod cards;
 pub mod flow;
 pub mod git;
 pub mod lanes;

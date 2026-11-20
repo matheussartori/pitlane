@@ -27,8 +27,8 @@ Live specimen: `design/index.html`. Research behind it: `docs/research/ux-resear
 ## Product patterns (see the specimen)
 - Shell: top bar (wordmark, repo, Inbox / Board / Lanes / Ledger, ⌘K, quota meters) + the Tower docked right
 - The Tower (signature): stable numbered lanes, live mono figures, only needs-you rows light up. Never reorders on activity
-- Board groups by who acts next (Needs you, Running, To review, Landed); "By stage" is the alternate lens
-- Inbox items say why they wait, offer options with one recommended, answer with a single key, and record a decision
+- Board groups by who acts next (Needs you, Backlog, In progress, Landed); "By stage" is the alternate lens. The column says Needs you, so its cards carry the accent ring and chip, never a second wash. A card linked to a lane carries the track at card size (8px stops) with the one stop that matters in words (next: main, mixed in dev, 1↓)
+- Inbox items say why they wait, offer options with one recommended, answer with a single key, and record a decision. Questions group under one head per card, with that card's decisions so far as context
 - Diff first: per-hunk accept/reject, viewed checkbox, scope = last turn, card or file; pending vs applied is always visible
 - Lanes screen: one table grouped by who acts next (Waiting on you, In progress, Shipped, Parked). Each lane carries the track, four stops (local, remote, integration, production) joined in ink where reached; only the stop your move reaches is accent, a count to settle is an ink ring with its figure, a remote deletion is a dashed stop, contamination is fail. One Next line per lane says the action or the proof (Squashed into main). On this screen the docked Tower folds away: the screen is the Tower at full width
 - Lanes proves merge state (ancestry, squash patch-id, PR) and never offers to delete a live or locked worktree

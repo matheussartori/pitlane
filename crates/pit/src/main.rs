@@ -9,7 +9,10 @@ use clap::{Parser, Subcommand};
 use pit_core::Repo;
 use pit_core::actions::{self, LocalUpdate, NewOptions};
 use pit_core::lanes::{self, Lane, Status, Sync, Yard, YardOptions};
+use pit_core::cards::{self, CardOut, CardPatch, CardState, NewCard, NewQuestion};
 use pit_core::trash;
+
+mod mcp;
 
 #[derive(Parser)]
 #[command(name = "pit", version, about = "Pitlane: every lane in view, only the ones that need you light up")]
@@ -45,9 +48,17 @@ enum Cmd {
         /// Skip the [worktree] setup command.
         #[arg(long)]
         no_setup: bool,
+        /// Link the new lane to this card.
+        #[arg(long, value_name = "ID")]
+        card: Option<u32>,
         #[arg(long)]
         json: bool,
     },
+    /// Cards: the board's work items, kept in .pitlane/cards.
+    #[command(subcommand)]
+    Card(CardCmd),
+    /// Serve the cards over MCP on stdio: claude mcp add pitlane -- pit mcp
+    Mcp,
     /// Move a lane one stage forward: into integration, then into production.
     Ship {
         /// Defaults to the branch checked out here.
@@ -79,6 +90,53 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum CardCmd {
+    /// New card. The body is the spec, in markdown.
+    Add {
+        title: String,
+        #[arg(long)]
+        body: Option<String>,
+        /// Read the body from a file (- for stdin).
+        #[arg(long, value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+    List {
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        id: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set the state: inbox, ready, running, review, in-dev, done, blocked.
+    Move { id: u32, state: String },
+    /// Ask a question about a card, with options; mark the one you recommend.
+    Ask {
+        id: u32,
+        question: String,
+        #[arg(long = "option")]
+        options: Vec<String>,
+        /// The recommended option, counting from 1.
+        #[arg(long, value_name = "N")]
+        recommend: Option<usize>,
+    },
+    /// Answer a question: an option number (from 1), its text, or free text.
+    Answer { id: u32, question: u32, answer: String },
+    /// Link a card to a lane (branch), or unlink it.
+    Link {
+        id: u32,
+        branch: Option<String>,
+        #[arg(long, conflicts_with = "branch")]
+        unlink: bool,
+    },
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -99,6 +157,15 @@ fn open(dir: Option<PathBuf>) -> Result<Repo> {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    if let Cmd::Mcp = cli.cmd {
+        // The agent may start it anywhere; each tool call opens the repository it runs in.
+        let dir = match cli.dir {
+            Some(d) => d,
+            None => std::env::current_dir()?,
+        };
+        mcp::serve(dir)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let repo = open(cli.dir)?;
     match cli.cmd {
         Cmd::Init { force } => {
@@ -117,8 +184,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 print_yard(&y);
             }
         }
-        Cmd::New { branch, no_fetch, no_setup, json } => {
+        Cmd::Mcp => unreachable!("handled above"),
+        Cmd::Card(c) => return card(&repo, c),
+        Cmd::New { branch, no_fetch, no_setup, card, json } => {
+            if let Some(id) = card {
+                cards::get(&repo, id)?; // fail before creating anything
+            }
             let r = actions::new_lane(&repo, &branch, NewOptions { fetch: !no_fetch, setup: !no_setup })?;
+            if let Some(id) = card {
+                cards::update(&repo, id, CardPatch { lane: Some(Some(r.branch.clone())), ..Default::default() })?;
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(ExitCode::SUCCESS);
@@ -166,6 +241,92 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 return Ok(ExitCode::SUCCESS);
             }
             return clean(&repo, yes, dry_run, !no_fetch);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
+    match cmd {
+        CardCmd::Add { title, body, body_file, tags } => {
+            let body = match body_file {
+                Some(p) if p.as_os_str() == "-" => std::io::read_to_string(std::io::stdin())?,
+                Some(p) => std::fs::read_to_string(&p)?,
+                None => body.unwrap_or_default(),
+            };
+            let c = cards::add(repo, NewCard { title, body, tags, questions: Vec::new() })?;
+            println!("{} #{} {}", paint(DONE, "✓"), c.id, c.title);
+            println!("  {}", c.path.display());
+        }
+        CardCmd::List { state, json } => {
+            let state = state.map(|s| CardState::parse(&s)).transpose()?;
+            let (all, problems) = cards::list(repo)?;
+            let shown: Vec<_> = all.into_iter().filter(|c| state.is_none_or(|s| c.state == s)).collect();
+            if json {
+                let out: Vec<CardOut> = shown.into_iter().map(CardOut::from).collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                return Ok(ExitCode::SUCCESS);
+            }
+            if shown.is_empty() {
+                println!("no cards. Add one: pit card add \"<title>\"");
+            }
+            for c in &shown {
+                let open = c.open_questions();
+                let asks = if open > 0 { paint(ACCENT, &format!("  {open} to answer")) } else { String::new() };
+                let lane = c.lane.as_deref().map(|l| paint(MUTED, &format!("  {l}"))).unwrap_or_default();
+                println!("{}  {:<8}  {}{asks}{lane}", paint(MUTED, &format!("#{:04}", c.id)), c.state.as_str(), c.title);
+            }
+            for p in problems {
+                eprintln!("{} {p}", paint(FAIL, "skipped:"));
+            }
+        }
+        CardCmd::Show { id, json } => {
+            let c = cards::get(repo, id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&CardOut::from(c))?);
+                return Ok(ExitCode::SUCCESS);
+            }
+            println!("#{} {}  ({}{})", c.id, c.title, c.state.as_str(), c.lane.as_deref().map(|l| format!(", lane {l}")).unwrap_or_default());
+            if !c.body.is_empty() {
+                println!("\n{}", c.body);
+            }
+            for q in &c.questions {
+                println!("\n{} {}", paint(if q.is_open() { ACCENT } else { MUTED }, &format!("Q{}", q.id)), q.text);
+                for (i, o) in q.options.iter().enumerate() {
+                    let rec = if q.recommended == Some(i) { "  (recommended)" } else { "" };
+                    println!("   {}. {o}{rec}", i + 1);
+                }
+                if let Some(a) = &q.answer {
+                    println!("   {} {a}  {}", paint(DONE, "→"), paint(MUTED, q.decision.as_deref().unwrap_or("")));
+                }
+            }
+        }
+        CardCmd::Move { id, state } => {
+            let c = cards::update(repo, id, CardPatch { state: Some(CardState::parse(&state)?), ..Default::default() })?;
+            println!("{} #{} is {}", paint(DONE, "✓"), c.id, c.state.as_str());
+        }
+        CardCmd::Ask { id, question, options, recommend } => {
+            let recommended = match recommend {
+                Some(0) => bail!("--recommend counts from 1"),
+                Some(n) => Some(n - 1),
+                None => None,
+            };
+            let c = cards::ask(repo, id, vec![NewQuestion { text: question, options, recommended }])?;
+            println!("{} #{} has {} open question(s)", paint(DONE, "✓"), c.id, c.open_questions());
+        }
+        CardCmd::Answer { id, question, answer } => {
+            let a = cards::answer(repo, id, question, &answer)?;
+            println!("{} recorded as {} in {}", paint(DONE, "✓"), a.decision, cards::DECISIONS);
+        }
+        CardCmd::Link { id, branch, unlink } => {
+            if branch.is_none() && !unlink {
+                bail!("name a branch, or pass --unlink");
+            }
+            let c = cards::update(repo, id, CardPatch { lane: Some(branch), ..Default::default() })?;
+            match &c.lane {
+                Some(l) => println!("{} #{} is worked on {l}", paint(DONE, "✓"), c.id),
+                None => println!("{} #{} has no lane", paint(DONE, "✓"), c.id),
+            }
         }
     }
     Ok(ExitCode::SUCCESS)

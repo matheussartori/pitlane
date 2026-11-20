@@ -362,6 +362,9 @@ export function Tower(props: { yard: Yard | null; selected: string | null; onSel
         <span class="panel-meta">{props.yard ? `${props.yard.lanes.length} lanes` : ""}</span>
       </div>
       <div class="tower" role="listbox" aria-label="Lanes">
+        <Show when={props.yard && props.yard.lanes.length === 0}>
+          <p class="tower-empty">No lanes yet. Branches with their own worktree show here, numbered.</p>
+        </Show>
         <For each={props.yard?.lanes ?? []}>
           {(l) => {
             const v = () => laneView(l, props.yard!);
@@ -373,7 +376,7 @@ export function Tower(props: { yard: Yard | null; selected: string | null; onSel
                 class="tower-row"
                 role="option"
                 tabindex="0"
-                data-state={waiting() ? chip() : v().chip === "done" ? "done" : undefined}
+                data-state={waiting() ? "needs" : v().chip === "done" ? "done" : undefined}
                 aria-selected={props.selected === l.branch}
                 onClick={() => props.onSelect(l.branch)}
                 onKeyDown={(e) => e.key === "Enter" && props.onSelect(l.branch)}

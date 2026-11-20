@@ -1,7 +1,10 @@
-// The shell: top bar, the current screen, the Tower. Lanes is live; the other screens arrive with pitd.
+// The shell: top bar, the current screen, the Tower. Inbox, Board and Lanes read the repository; Ledger arrives with runs.
 import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, type Lane, type RepoEntry, type Settings, type Yard } from "./api";
+import { api, type Card, type Lane, type RepoEntry, type Settings, type Yard } from "./api";
+import { BoardView, CardSheet, NewCardSheet } from "./board";
+import { openQuestions } from "./cards";
+import { InboxView } from "./inbox";
 import { Icon } from "./icons";
 import { group } from "./lane";
 import { LanesView, Tower } from "./lanes";
@@ -9,14 +12,45 @@ import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
 
 type Tab = "inbox" | "board" | "lanes" | "ledger";
-type SheetState = { kind: "ship"; lane: Lane; to: string } | { kind: "clean" } | { kind: "new" } | null;
+type SheetState =
+  | { kind: "ship"; lane: Lane; to: string }
+  | { kind: "clean" }
+  | { kind: "new" }
+  | { kind: "card"; id: number }
+  | { kind: "new-card" }
+  | null;
+
+const TAB_KEY = "pitlane.tab";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger";
+/** The screen lives in the URL hash (#board), falling back to the last one used. */
+function savedTab(): Tab {
+  const hash = location.hash.replace(/^#\/?/, "");
+  if (isTab(hash)) return hash;
+  try {
+    const t = localStorage.getItem(TAB_KEY);
+    return isTab(t) ? t : "lanes";
+  } catch {
+    return "lanes";
+  }
+}
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 export default function App() {
   const [settings, setSettings] = createSignal<Settings>({ repos: [], last: null });
   const [repo, setRepo] = createSignal<string | null>(null);
-  const [tab, setTab] = createSignal<Tab>("lanes");
+  const [tab, setTabSignal] = createSignal<Tab>(savedTab());
+  const setTab = (t: Tab) => {
+    setTabSignal(t);
+    history.replaceState(null, "", `#${t}`);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {
+      /* private window: the tab simply is not remembered */
+    }
+  };
+  const [cards, setCards] = createSignal<Card[] | null>(null);
+  const [problems, setProblems] = createSignal<string[]>([]);
   const [yard, setYard] = createSignal<Yard | null>(null);
   const [fetching, setFetching] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -71,17 +105,36 @@ export default function App() {
     }
   }
 
+  // Cards are small files: re-read them often, on their own, without touching git.
+  let cardsGen = 0;
+  async function loadCards() {
+    const path = repo();
+    if (!path) return;
+    const gen = ++cardsGen;
+    try {
+      const r = await api.cards(path);
+      if (gen !== cardsGen || path !== repo()) return;
+      setCards(r.cards);
+      setProblems(r.problems);
+    } catch (e) {
+      if (gen === cardsGen) setProblems([msg(e)]);
+    }
+  }
+
   async function switchTo(path: string) {
     setMenu(false);
     if (path === repo()) return;
     generation++;
     setRepo(path);
     setYard(null);
+    setCards(null);
+    setProblems([]);
     setError(null);
     setFetchedAt(null);
     setSelected(null);
     setFetching(false);
     void api.selectRepo(path);
+    void loadCards();
     await load(false); // local refs first: instant
     await load(true); // then fetch and GitHub
   }
@@ -114,17 +167,25 @@ export default function App() {
     const tick = setInterval(() => setNow(Date.now()), 30_000);
     // Coming back to the window: recheck local state (cheap, no network).
     const onFocus = () => {
+      void loadCards();
       if (!fetching() && !sheet()) void load(false);
     };
+    // Agents write cards through MCP while the app is open: pick them up within a few seconds.
+    const poll = setInterval(() => {
+      if (document.visibilityState === "visible" && (tab() === "inbox" || tab() === "board") && !sheet()) void loadCards();
+    }, 4000);
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (e.metaKey && e.key.toLowerCase() === "r") {
         e.preventDefault();
         if (!fetching()) void load(true);
       } else if (!typing && !e.metaKey && !e.ctrlKey && !sheet() && repo()) {
-        if (e.key === "n" || e.key === "N") {
+        if ((e.key === "n" || e.key === "N") && tab() === "lanes") {
           e.preventDefault();
           setSheet({ kind: "new" });
+        } else if ((e.key === "c" || e.key === "C") && (tab() === "board" || tab() === "inbox")) {
+          e.preventDefault();
+          setSheet({ kind: "new-card" });
         } else if (/^[1-4]$/.test(e.key) && e.altKey) {
           setTab((["inbox", "board", "lanes", "ledger"] as const)[Number(e.key) - 1]!);
         }
@@ -135,6 +196,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     onCleanup(() => {
       clearInterval(tick);
+      clearInterval(poll);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     });
@@ -142,6 +204,11 @@ export default function App() {
 
   const current = (): RepoEntry | undefined => settings().repos.find((r) => r.path === repo());
   const needs = () => yard()?.lanes.filter((l) => group(l) === "waiting").length ?? 0;
+  const asking = () => openQuestions(cards() ?? []).length;
+  const openCard = () => {
+    const s = sheet();
+    return s?.kind === "card" ? (cards() ?? []).find((c) => c.id === s.id) : undefined;
+  };
   const select = (b: string) => {
     setSelected(b);
     setTab("lanes");
@@ -191,6 +258,12 @@ export default function App() {
         <nav class="tabs" aria-label="Screens" data-tauri-drag-region>
           <button type="button" class="tab" aria-current={tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
             Inbox
+            <Show when={asking() > 0}>
+              <span class="count count-hot" title={`${asking()} open ${asking() === 1 ? "question" : "questions"}`}>
+                {asking()}
+                <span class="visually-hidden"> open {asking() === 1 ? "question" : "questions"}</span>
+              </span>
+            </Show>
           </button>
           <button type="button" class="tab" aria-current={tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
             Board
@@ -198,7 +271,10 @@ export default function App() {
           <button type="button" class="tab" aria-current={tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
             Lanes
             <Show when={needs() > 0}>
-              <span class="count count-hot">{needs()}</span>
+              <span class="count count-hot" title={`${needs()} ${needs() === 1 ? "lane waits" : "lanes wait"} on you`}>
+                {needs()}
+                <span class="visually-hidden"> {needs() === 1 ? "lane waits" : "lanes wait"} on you</span>
+              </span>
             </Show>
           </button>
           <button type="button" class="tab" aria-current={tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
@@ -263,15 +339,53 @@ export default function App() {
                   </Switch>
                 </Match>
                 <Match when={tab() === "inbox"}>
-                  <Later title="Inbox" body="Questions from agents land here, each with a recommended answer, once pitd runs them." onBack={() => setTab("lanes")} />
+                  <InboxView
+                    repo={path()}
+                    cards={cards()}
+                    active={tab() === "inbox" && !sheet()}
+                    onChanged={() => void loadCards()}
+                    onOpenCard={(id) => setSheet({ kind: "card", id })}
+                  />
                 </Match>
                 <Match when={tab() === "board"}>
-                  <Later title="Board" body="Cards grouped by who acts next: needs you, running, to review, landed. It arrives with pitd and the card files in .pitlane/cards." onBack={() => setTab("lanes")} />
+                  <BoardView
+                    cards={cards()}
+                    problems={problems()}
+                    yard={yard()}
+                    now={now()}
+                    onOpen={(id) => setSheet({ kind: "card", id })}
+                    onNew={() => setSheet({ kind: "new-card" })}
+                  />
                 </Match>
                 <Match when={tab() === "ledger"}>
                   <Later title="Ledger" body="Tokens, cost and time per card and per agent, read from the agents' own telemetry. It arrives with the first runs." onBack={() => setTab("lanes")} />
                 </Match>
               </Switch>
+            )}
+          </Show>
+          <Show when={repo() ? openCard() : undefined}>
+            {(card) => (
+              <CardSheet
+                repo={repo()!}
+                card={card()}
+                yard={yard()}
+                now={now()}
+                onChanged={() => void loadCards()}
+                onClose={() => setSheet(null)}
+              />
+            )}
+          </Show>
+          <Show when={sheet()?.kind === "new-card" && repo()}>
+            {(path) => (
+              <NewCardSheet
+                repo={path()}
+                onDone={(id) => {
+                  void loadCards();
+                  if (tab() !== "board" && tab() !== "inbox") setTab("board");
+                  void id;
+                }}
+                onClose={() => setSheet(null)}
+              />
             )}
           </Show>
           <Show when={sheet()?.kind === "new" && repo()}>

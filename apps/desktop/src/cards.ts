@@ -1,0 +1,114 @@
+// Where a card sits on the board and why. The card file says what someone set; the lane it is
+// linked to says where the work really is. The board groups by who acts next.
+import type { Card, CardState, Lane, Yard } from "./api";
+import type { IconName } from "./icons";
+import { group, next, type ChipState } from "./lane";
+
+export type Column = "needs" | "backlog" | "progress" | "landed";
+export const columns: Column[] = ["needs", "backlog", "progress", "landed"];
+export const columnTitle: Record<Column, string> = {
+  needs: "Needs you",
+  backlog: "Backlog",
+  progress: "In progress",
+  landed: "Landed",
+};
+export const columnEmpty: Record<Column, string> = {
+  needs: "Cards with open questions or a lane waiting on you show here.",
+  backlog: "New and ready cards wait here.",
+  progress: "Cards being worked on, in a lane or by an agent.",
+  landed: "Cards whose lane reached dev or main.",
+};
+
+export const stateLabel: Record<CardState, string> = {
+  inbox: "New",
+  ready: "Ready",
+  running: "Running",
+  review: "In review",
+  "in-dev": "In dev",
+  done: "Done",
+  blocked: "Blocked",
+};
+
+export interface Placement {
+  column: Column;
+  chip: ChipState;
+  icon: IconName;
+  label: string;
+  /** One line under the title: why it waits, or where it is. */
+  why?: string;
+}
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+export function laneOf(card: Card, yard: Yard | null): Lane | undefined {
+  return card.lane ? yard?.lanes.find((l) => l.branch === card.lane) : undefined;
+}
+
+export function place(card: Card, yard: Yard | null): Placement {
+  const lane = laneOf(card, yard);
+  const open = card.questions?.filter((q) => q.answer == null) ?? [];
+
+  if (open.length > 0)
+    return { column: "needs", chip: "needs", icon: "needs", label: plural(open.length, "question"), why: open[0]!.text };
+  if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: "Blocked", why: firstLine(card.body) };
+  if (lane && yard && group(lane) === "waiting") {
+    const n = next(lane, yard);
+    const label =
+      lane.status === "needs-production"
+        ? `Ready for ${yard.production}`
+        : lane.status === "contaminated"
+          ? `Mixed with ${yard.integration ?? "integration"}`
+          : "Lane needs you";
+    return {
+      column: "needs",
+      chip: lane.status === "contaminated" ? "failed" : "needs",
+      icon: lane.status === "contaminated" ? "fail" : "needs",
+      label,
+      why: n?.text ?? `Tested in ${yard.integration ?? "integration"}, waiting to ship.`,
+    };
+  }
+  if (card.state === "done" || lane?.in_production)
+    return { column: "landed", chip: "done", icon: "done", label: `In ${yard?.production ?? "main"}` };
+  if (card.state === "in-dev" || lane?.in_integration)
+    return { column: "landed", chip: "done", icon: "done", label: `In ${yard?.integration ?? "dev"}` };
+  if (card.state === "running" || card.state === "review" || lane)
+    return {
+      column: "progress",
+      chip: card.state === "review" ? "queued" : "running",
+      icon: card.state === "review" ? "review" : "run",
+      label: card.state === "review" ? "In review" : card.state === "running" ? "Running" : "In a lane",
+    };
+  return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: stateLabel[card.state] };
+}
+
+function firstLine(body: string): string | undefined {
+  const line = body.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean);
+  return line || undefined;
+}
+
+/** Every open question across the cards, oldest card first. */
+export interface OpenQuestion {
+  card: Card;
+  id: number;
+  text: string;
+  options: string[];
+  recommended?: number;
+  /** 1-based position among the card's open questions, and how many are open. */
+  index: number;
+  of: number;
+}
+
+export function openQuestions(cards: Card[]): OpenQuestion[] {
+  return cards.flatMap((card) => {
+    const open = (card.questions ?? []).filter((q) => q.answer == null);
+    return open.map((q, i) => ({
+      card,
+      id: q.id,
+      text: q.text,
+      options: q.options ?? [],
+      recommended: q.recommended,
+      index: i + 1,
+      of: open.length,
+    }));
+  });
+}

@@ -1,0 +1,135 @@
+[
+  {
+    "id": 1,
+    "title": "Rate limit the invites endpoint",
+    "state": "inbox",
+    "lane": "feat/invite-limits",
+    "created": "2026-11-20T18:28:36Z",
+    "updated": "2026-11-20T18:29:51Z",
+    "questions": [
+      {
+        "id": 1,
+        "text": "Limit per IP or per account?",
+        "options": [
+          "Per IP",
+          "Per account"
+        ],
+        "recommended": 1,
+        "answer": "Per account",
+        "answered_at": "2026-11-20T18:28:36Z",
+        "decision": "D-01"
+      },
+      {
+        "id": 2,
+        "text": "Which window?",
+        "options": [
+          "1 minute",
+          "1 hour",
+          "1 day"
+        ],
+        "recommended": 1
+      },
+      {
+        "id": 3,
+        "text": "Should refusals be logged?",
+        "options": [
+          "No",
+          "Yes, at info level"
+        ],
+        "recommended": 1
+      }
+    ],
+    "body": "## Goal\n\nStop invite spam without blocking real hosts.\n\n## Acceptance\n\n- When an account sends more invites than the limit, the API must refuse with 429.",
+    "open_questions": 2,
+    "file": "0001-rate-limit-the-invites-endpoint.md"
+  },
+  {
+    "id": 2,
+    "title": "Retry failed charges",
+    "state": "inbox",
+    "lane": "feat/billing-retry",
+    "created": "2026-11-20T18:28:36Z",
+    "updated": "2026-11-20T18:28:36Z",
+    "body": "",
+    "open_questions": 0,
+    "file": "0002-retry-failed-charges.md"
+  },
+  {
+    "id": 3,
+    "title": "Strip scripts from SVG avatars",
+    "state": "running",
+    "lane": "fix/avatar-svg",
+    "created": "2026-11-20T18:29:51Z",
+    "updated": "2026-11-20T18:29:51Z",
+    "body": "## Goal\n\nAvatars never carry script.\n\n## Acceptance\n\n- When an SVG avatar arrives, the validator must remove script elements and event attributes.",
+    "open_questions": 0,
+    "file": "0003-strip-scripts-from-svg-avatars.md"
+  },
+  {
+    "id": 4,
+    "title": "Landing page refresh",
+    "state": "review",
+    "lane": "feat/landing-refresh",
+    "created": "2026-11-20T18:29:51Z",
+    "updated": "2026-11-20T18:29:52Z",
+    "body": "",
+    "open_questions": 0,
+    "file": "0004-landing-page-refresh.md"
+  },
+  {
+    "id": 5,
+    "title": "Kart drift tier 3",
+    "state": "running",
+    "lane": "feat/kart-drift",
+    "created": "2026-11-20T18:29:52Z",
+    "updated": "2026-11-20T18:29:52Z",
+    "body": "",
+    "open_questions": 0,
+    "file": "0005-kart-drift-tier-3.md"
+  },
+  {
+    "id": 6,
+    "title": "Copy invite link button",
+    "state": "ready",
+    "created": "2026-11-20T18:29:52Z",
+    "updated": "2026-11-20T18:29:52Z",
+    "questions": [
+      {
+        "id": 1,
+        "text": "Show a toast after copying?",
+        "options": [
+          "Yes",
+          "No"
+        ],
+        "recommended": 0,
+        "answer": "Yes",
+        "answered_at": "2026-11-20T18:29:52Z",
+        "decision": "D-02"
+      }
+    ],
+    "body": "## Goal\n\nOne click copies the invite link.",
+    "open_questions": 0,
+    "file": "0006-copy-invite-link-button.md"
+  },
+  {
+    "id": 7,
+    "title": "Onboarding checklist for new hosts",
+    "state": "inbox",
+    "created": "2026-11-20T18:29:52Z",
+    "updated": "2026-11-20T18:29:52Z",
+    "body": "",
+    "open_questions": 0,
+    "file": "0007-onboarding-checklist-for-new-hosts.md"
+  },
+  {
+    "id": 8,
+    "title": "Lobby countdown off by one",
+    "state": "review",
+    "lane": "feat/lobby-timer",
+    "created": "2026-11-20T18:29:52Z",
+    "updated": "2026-11-20T18:29:52Z",
+    "body": "",
+    "open_questions": 0,
+    "file": "0008-lobby-countdown-off-by-one.md"
+  }
+]

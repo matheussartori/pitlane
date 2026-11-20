@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use pit_core::actions::{self, CleanOutcome, CleanPlan, NewOptions, NewReport, ShipPlan, ShipReport, UndoReport};
 use pit_core::lanes::{self, Yard, YardOptions};
+use pit_core::cards::{self, CardOut, CardPatch, CardState, NewCard};
 use pit_core::{Repo, default_homes, trash};
 use serde::{Deserialize, Serialize};
 
@@ -168,6 +169,67 @@ async fn trash_list(path: String) -> CmdResult<Vec<trash::Entry>> {
     blocking(move || trash::list(&open(&path)?)).await
 }
 
+// ---------------------------------------------------------------- cards
+
+#[derive(Debug, Serialize)]
+pub struct CardList {
+    pub cards: Vec<CardOut>,
+    /// Card files that did not parse, with why.
+    pub problems: Vec<String>,
+}
+
+#[tauri::command]
+async fn cards_list(path: String) -> CmdResult<CardList> {
+    blocking(move || {
+        let (all, problems) = cards::list(&open(&path)?)?;
+        Ok(CardList { cards: all.into_iter().map(CardOut::from).collect(), problems })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn card_add(path: String, title: String, body: String) -> CmdResult<CardOut> {
+    blocking(move || Ok(cards::add(&open(&path)?, NewCard { title, body, ..Default::default() })?.into())).await
+}
+
+/// `lane`: a branch to link, an empty string to unlink, absent to leave as is.
+#[tauri::command]
+async fn card_update(
+    path: String,
+    id: u32,
+    title: Option<String>,
+    body: Option<String>,
+    state: Option<String>,
+    lane: Option<String>,
+) -> CmdResult<CardOut> {
+    blocking(move || {
+        let patch = CardPatch {
+            title,
+            body,
+            state: state.map(|s| CardState::parse(&s)).transpose()?,
+            lane: lane.map(|l| Some(l).filter(|l| !l.trim().is_empty())),
+            tags: None,
+        };
+        Ok(cards::update(&open(&path)?, id, patch)?.into())
+    })
+    .await
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnswerOut {
+    pub decision: String,
+    pub card: CardOut,
+}
+
+#[tauri::command]
+async fn card_answer(path: String, id: u32, question: u32, answer: String) -> CmdResult<AnswerOut> {
+    blocking(move || {
+        let a = cards::answer(&open(&path)?, id, question, &answer)?;
+        Ok(AnswerOut { decision: a.decision, card: a.card.into() })
+    })
+    .await
+}
+
 /// Apps opened from Finder get a bare PATH; git, gh and setup commands live in Homebrew.
 fn extend_path() {
     let current = std::env::var("PATH").unwrap_or_default();
@@ -196,7 +258,11 @@ pub fn run() {
             clean_plan,
             clean,
             undo_clean,
-            trash_list
+            trash_list,
+            cards_list,
+            card_add,
+            card_update,
+            card_answer
         ])
         .run(tauri::generate_context!())
         .expect("Pitlane failed to start");

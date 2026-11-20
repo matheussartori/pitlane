@@ -79,6 +79,7 @@
   /* Depth: lightness and an inset hairline on dark; no drop shadows. */
   --ring: inset 0 0 0 1px var(--color-rule);
   --ring-strong: inset 0 0 0 1px var(--color-rule-strong);
+  --ring-field: inset 0 0 0 1px var(--color-muted); /* field edges: 3:1 against the surface */
   --shadow-pop: 0 0 0 1px var(--color-rule-strong);
 
   /* Motion: state, never decoration. */

@@ -7,13 +7,13 @@ export function Spinner() {
 }
 
 /** Native <dialog>: Escape and focus trapping come free. Unmount it to close. */
-export function Sheet(props: { title: string; onClose: () => void; children: JSX.Element; foot: JSX.Element }) {
+export function Sheet(props: { title: string; wide?: boolean; onClose: () => void; children: JSX.Element; foot: JSX.Element }) {
   let ref!: HTMLDialogElement;
   onMount(() => ref.showModal());
   return (
     <dialog
       ref={ref}
-      class="sheet"
+      class={props.wide ? "sheet sheet-wide" : "sheet"}
       aria-label={props.title}
       onCancel={(e) => {
         e.preventDefault();

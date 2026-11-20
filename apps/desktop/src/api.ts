@@ -142,6 +142,38 @@ export interface NewReport {
   setup_ok: boolean | null;
 }
 
+export type CardState = "inbox" | "ready" | "running" | "review" | "in-dev" | "done" | "blocked";
+export const cardStates: CardState[] = ["inbox", "ready", "running", "review", "in-dev", "done", "blocked"];
+
+export interface Question {
+  id: number;
+  text: string;
+  options?: string[];
+  recommended?: number;
+  answer?: string;
+  answered_at?: string;
+  decision?: string;
+}
+
+export interface Card {
+  id: number;
+  title: string;
+  state: CardState;
+  lane?: string;
+  tags?: string[];
+  created: string;
+  updated: string;
+  questions?: Question[];
+  body: string;
+  open_questions: number;
+  file: string;
+}
+
+export interface CardList {
+  cards: Card[];
+  problems: string[];
+}
+
 export interface RepoEntry {
   path: string;
   name: string;
@@ -171,6 +203,15 @@ export const api = {
   cleanPlan: (path: string) => invoke<CleanPlan>("clean_plan", { path }),
   clean: (path: string, branches: string[]) => invoke<CleanOutcome[]>("clean", { path, branches }),
   undoClean: (path: string, branch: string) => invoke<UndoReport>("undo_clean", { path, branch }),
+  cards: (path: string) => invoke<CardList>("cards_list", { path }),
+  cardAdd: (path: string, title: string, body: string) => invoke<Card>("card_add", { path, title, body }),
+  cardUpdate: (
+    path: string,
+    id: number,
+    patch: { title?: string; body?: string; state?: CardState; lane?: string },
+  ) => invoke<Card>("card_update", { path, id, ...patch }),
+  cardAnswer: (path: string, id: number, question: number, answer: string) =>
+    invoke<{ decision: string; card: Card }>("card_answer", { path, id, question, answer }),
 };
 
 export const landedLabel: Record<Landed, string> = {
