@@ -394,7 +394,7 @@ export function openExternal(url: string): Promise<void> {
 
 export const vscode = {
   /** Pitlane's colours for VS Code's dark and light themes, written into its settings. */
-  theme: (t: { dark: Record<string, string>; light: Record<string, string> }) => invoke<void>("vscode_theme", t),
+  theme: (t: { dark: Record<string, string>; light: Record<string, string>; mode: string }) => invoke<void>("vscode_theme", t),
   /** Loads VS Code on `folder` out of sight, so the Code tab opens at once. */
   prewarm: (folder: string, w: number, h: number, bg: string) => invoke<void>("vscode_prewarm", { folder, w, h, bg }),
   /** Puts VS Code on the tab; true when it is already drawn, else it comes in by itself (onVscodeReady). */
@@ -461,10 +461,35 @@ export interface RepoEntry {
 export interface Settings {
   repos: RepoEntry[];
   last: string | null;
+  prefs?: Prefs;
+}
+
+/** The app's own preferences (a repository's flow lives in its .pitlane/flow.toml). */
+export interface Prefs {
+  theme: "system" | "light" | "dark";
+  notify_approvals: boolean;
+  notify_runs: boolean;
+  notify_terminals: boolean;
+  code_prewarm: boolean;
+}
+
+export const DEFAULT_PREFS: Prefs = { theme: "system", notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true };
+
+export interface FlowFile {
+  flow: { base: string; integration: string; production: string; remote: string; naming: string[]; stale_days: number };
+  run: { allow: string[]; max_turns: number; model: string | null; branch_prefix: string; brief: boolean };
+  verify: { commands: string[]; judge: boolean; judge_model: string | null; max_rounds: number };
+  ship?: { check: string | null };
 }
 
 export const api = {
   settings: () => invoke<Settings>("settings"),
+  prefsSet: (prefs: Prefs) => invoke<void>("prefs_set", { prefs }),
+  removeRepo: (path: string) => invoke<Settings>("remove_repo", { path }),
+  flowGet: (root: string) => invoke<{ exists: boolean; path: string; flow: FlowFile }>("flow_get", { root }),
+  flowSet: (root: string, table: string, key: string, value: unknown) => invoke<void>("flow_set", { root, table, key, value }),
+  reveal: (path: string) => invoke<void>("reveal", { path }),
+  pitlaneHome: () => invoke<string>("pitlane_home"),
   addRepo: (path: string) => invoke<RepoEntry>("add_repo", { path }),
   selectRepo: (path: string) => invoke<void>("select_repo", { path }),
   yard: (path: string, fetch: boolean) => invoke<Yard>("yard", { path, fetch }),

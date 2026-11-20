@@ -278,6 +278,27 @@ async function systemNotify(title: string, body: string) {
   }
 }
 
+let notifyOn = true;
+/** Settings: whether a terminal that wants you sends a system notification (the mark stays). */
+export function setTerminalNotify(on: boolean) {
+  notifyOn = on;
+}
+
+/** Settings: the tab list's side and the font size, read and changed. */
+export const terminalPrefs = () => ({ side: st.side, font: st.font });
+export function setTerminalSide(side: "left" | "top") {
+  setSt("side", side);
+  save();
+}
+export function setTerminalFont(size: number) {
+  fontSize(size);
+}
+/** The colours again, after the app's theme changed. */
+export function retheme() {
+  const t = theme();
+  for (const l of live.values()) l.term.options.theme = t;
+}
+
 /** One event, one signal: a mark on the tab, and a notification only when you cannot see it. */
 function attend(term: number, status: "bell" | "waiting", note: string) {
   const m = meta[term];
@@ -285,7 +306,7 @@ function attend(term: number, status: "bell" | "waiting", note: string) {
   if (inView(term) && document.hasFocus()) return;
   if ((m.status === "bell" || m.status === "waiting") && Date.now() - m.at < 3000) return;
   setMeta(term, { status, note, at: Date.now() });
-  if (!document.hasFocus()) {
+  if (!document.hasFocus() && notifyOn) {
     void systemNotify(status === "bell" ? `${placeName(term)} needs you` : `${placeName(term)} is waiting`, note || "The program stopped and may be waiting for you.");
   }
 }

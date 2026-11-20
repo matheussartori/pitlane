@@ -2,6 +2,7 @@
 // worktree. Files opened elsewhere in Pitlane (a terminal path, Review, a run) open here at their line.
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { onVscodeReady, vscode, type Lane } from "./api";
+import { prefs } from "./prefs";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
 
@@ -129,14 +130,19 @@ function theme(): { dark: Record<string, string>; light: Record<string, string> 
 }
 
 let warmed: string | null = null;
+
+/** The app's theme changed: VS Code follows. */
+export function rethemeCode() {
+  void vscode.theme({ ...theme(), mode: prefs().theme }).catch(() => {});
+}
 /** Starts VS Code on the repository in the background, once Pitlane is open: the Code tab then
  *  shows a VS Code that is already loaded. */
 export function prewarmCode(repo: string) {
-  if (warmed === repo) return;
+  if (warmed === repo || !prefs().code_prewarm) return;
   warmed = repo;
   setTimeout(() => {
     void vscode
-      .theme(theme())
+      .theme({ ...theme(), mode: prefs().theme })
       .then(() => vscode.prewarm(repo, window.innerWidth, Math.max(300, window.innerHeight - 76), ground()))
       .catch(() => {
         warmed = null; // it says why when the tab opens
@@ -237,7 +243,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
   onMount(() => {
     // VS Code takes Pitlane's colours (it follows the system between dark and light by itself).
     void vscode
-      .theme(theme())
+      .theme({ ...theme(), mode: prefs().theme })
       .catch(() => {})
       .then(place)
       .then(openPending);

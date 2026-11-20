@@ -194,6 +194,56 @@ pub fn add_run_allow(root: &Path, rule: &str) -> Result<()> {
     FlowFile::load(root).map(drop)
 }
 
+/// Sets `[table] key = value` in the repository's `.pitlane/flow.toml`, keeping its comments and
+/// layout (the file is made from the template when there is none). The flow must still read after
+/// the change, or nothing is written.
+pub fn set_value(root: &Path, table: &str, key: &str, value: toml_edit::Value) -> Result<()> {
+    let path = root.join(FLOW_PATH);
+    let before = std::fs::read_to_string(&path).ok();
+    let text = before.clone().unwrap_or_else(|| TEMPLATE.to_owned());
+    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
+    let t = doc
+        .entry(table)
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .with_context(|| format!("[{table}] in flow.toml is not a table"))?;
+    match t.get_mut(key).and_then(|i| i.as_value_mut()) {
+        // Keep the comment after the value.
+        Some(old) => {
+            let decor = old.decor().clone();
+            *old = value;
+            *old.decor_mut() = decor;
+        }
+        None => {
+            t.insert(key, toml_edit::Item::Value(value));
+        }
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
+    if let Err(e) = FlowFile::load(root) {
+        match before {
+            Some(b) => std::fs::write(&path, b)?,
+            None => std::fs::remove_file(&path)?,
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// `set_value` from JSON (true, 12, "sonnet", ["npm test"]): what the app's Settings sends.
+pub fn set_json(root: &Path, table: &str, key: &str, value: &serde_json::Value) -> Result<()> {
+    let v: toml_edit::Value = match value {
+        serde_json::Value::Bool(b) => (*b).into(),
+        serde_json::Value::Number(n) if n.is_i64() => n.as_i64().unwrap_or_default().into(),
+        serde_json::Value::String(s) => s.as_str().into(),
+        serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect::<toml_edit::Array>().into(),
+        other => anyhow::bail!("{other} cannot go in flow.toml"),
+    };
+    set_value(root, table, key, v)
+}
+
 /// Tools every run may use: read and edit in its worktree, and git without leaving the branch.
 pub const RUN_BASE_TOOLS: [&str; 16] = [
     "Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "TodoWrite", "NotebookEdit",
@@ -303,6 +353,21 @@ mod tests {
         assert!(!f.flow.name_allowed("random"));
         let d = FlowFile::default();
         assert!(d.flow.name_allowed("random"));
+    }
+
+    #[test]
+    fn sets_a_value_keeping_comments_and_refuses_a_bad_one() {
+        let root = std::env::temp_dir().join(format!("pit-flow-set-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        set_value(&root, "run", "max_turns", 12.into()).unwrap();
+        let text = std::fs::read_to_string(root.join(FLOW_PATH)).unwrap();
+        assert!(text.contains("# every new branch starts here"), "the template's comments stay");
+        assert_eq!(FlowFile::load(&root).unwrap().run.max_turns, 12);
+        set_value(&root, "flow", "stale_days", 30.into()).unwrap();
+        assert!(std::fs::read_to_string(root.join(FLOW_PATH)).unwrap().contains("stale_days  = 30 # a clean lane") || FlowFile::load(&root).unwrap().flow.stale_days == 30);
+        assert!(set_value(&root, "run", "max_turns", "lots".into()).is_err());
+        assert_eq!(FlowFile::load(&root).unwrap().run.max_turns, 12, "a bad value leaves the file as it was");
     }
 
     #[test]

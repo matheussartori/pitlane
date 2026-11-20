@@ -50,6 +50,28 @@ pub struct RepoEntry {
 pub struct Settings {
     pub repos: Vec<RepoEntry>,
     pub last: Option<PathBuf>,
+    #[serde(default)]
+    pub prefs: Prefs,
+}
+
+/// The app's own preferences (a repository's flow lives in its .pitlane/flow.toml).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Prefs {
+    /// "system", "light" or "dark".
+    pub theme: String,
+    /// System notifications, each when Pitlane is not in front.
+    pub notify_approvals: bool,
+    pub notify_runs: bool,
+    pub notify_terminals: bool,
+    /// Load VS Code in the background when a repository opens.
+    pub code_prewarm: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self { theme: "system".into(), notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true }
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -76,6 +98,70 @@ fn save_settings(s: &Settings) -> Result<()> {
 #[tauri::command]
 async fn settings() -> CmdResult<Settings> {
     blocking(|| Ok(load_settings())).await
+}
+
+#[tauri::command]
+async fn prefs_set(prefs: Prefs) -> CmdResult<()> {
+    blocking(move || {
+        let mut s = load_settings();
+        s.prefs = prefs;
+        save_settings(&s)
+    })
+    .await
+}
+
+/// Takes a repository off Pitlane's list. Nothing on disk changes.
+#[tauri::command]
+async fn remove_repo(path: String) -> CmdResult<Settings> {
+    blocking(move || {
+        let mut s = load_settings();
+        s.repos.retain(|r| r.path != Path::new(&path));
+        if s.last.as_deref() == Some(Path::new(&path)) {
+            s.last = s.repos.first().map(|r| r.path.clone());
+        }
+        save_settings(&s)?;
+        Ok(s)
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct FlowOut {
+    /// Whether .pitlane/flow.toml exists (else these are the defaults).
+    exists: bool,
+    path: PathBuf,
+    flow: pit_core::flow::FlowFile,
+}
+
+#[tauri::command]
+async fn flow_get(root: String) -> CmdResult<FlowOut> {
+    blocking(move || {
+        let r = Path::new(&root);
+        Ok(FlowOut { exists: r.join(pit_core::flow::FLOW_PATH).exists(), path: r.join(pit_core::flow::FLOW_PATH), flow: pit_core::flow::FlowFile::load(r)? })
+    })
+    .await
+}
+
+/// One value of the repository's flow.toml, from Settings. Comments and layout stay.
+#[tauri::command]
+async fn flow_set(root: String, table: String, key: String, value: serde_json::Value) -> CmdResult<()> {
+    blocking(move || {
+        pit_core::flow::set_json(Path::new(&root), &table, &key, &value)
+    })
+    .await
+}
+
+/// Where Pitlane keeps its own files (~/.pitlane, or $PITLANE_HOME).
+#[tauri::command]
+fn pitlane_home() -> String {
+    default_homes().1.to_string_lossy().into_owned()
+}
+
+/// Shows a file or folder in the Finder.
+#[tauri::command]
+fn reveal(path: String) -> CmdResult<()> {
+    std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).status().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Adds a repository (any folder inside it) and makes it the current one.
@@ -599,8 +685,8 @@ fn code_server(app: &tauri::AppHandle) -> Result<PathBuf> {
 
 /// Pitlane's colours for VS Code's dark and light themes.
 #[tauri::command]
-async fn vscode_theme(dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>) -> CmdResult<()> {
-    blocking(move || vscode::write_theme(&default_homes().1, dark, light)).await
+async fn vscode_theme(dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>, mode: Option<String>) -> CmdResult<()> {
+    blocking(move || vscode::write_theme(&default_homes().1, dark, light, mode.as_deref().unwrap_or("system"))).await
 }
 
 async fn code_server_running(app: &tauri::AppHandle) -> CmdResult<vscode::Running> {
@@ -886,6 +972,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings,
+            prefs_set,
+            remove_repo,
+            flow_get,
+            flow_set,
+            reveal,
+            pitlane_home,
             add_repo,
             select_repo,
             yard,

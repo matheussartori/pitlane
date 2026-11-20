@@ -13,11 +13,13 @@ import { InboxView } from "./inbox";
 import { Icon } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalTabs, terminalsWanting } from "./terminals";
-import { CodeScreen, openInCode, prewarmCode } from "./code";
+import { CodeScreen, openInCode, prewarmCode, rethemeCode } from "./code";
+import { SettingsScreen } from "./settings";
+import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
 
-type Tab = "inbox" | "board" | "lanes" | "ledger" | "code" | "terminal";
+type Tab = "inbox" | "board" | "lanes" | "ledger" | "code" | "terminal" | "settings";
 type SheetState =
   | { kind: "ship"; lane: Lane; to: string }
   | { kind: "clean" }
@@ -28,7 +30,7 @@ type SheetState =
   | null;
 
 const TAB_KEY = "pitlane.tab";
-const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "code" || t === "terminal";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "code" || t === "terminal" || t === "settings";
 /** The screen lives in the URL hash (#board), falling back to the last one used. */
 function savedTab(): Tab {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -273,6 +275,7 @@ export default function App() {
   }
 
   async function notify(run: string, detail: string) {
+    if (!prefs().notify_approvals) return;
     try {
       let ok = await isPermissionGranted();
       if (!ok) ok = (await requestPermission()) === "granted";
@@ -351,6 +354,7 @@ export default function App() {
     try {
       const s = await api.settings();
       setSettings(s);
+      loadPrefs(s.prefs);
       const start = s.last ?? s.repos[0]?.path;
       if (start) await switchTo(start);
     } catch (e) {
@@ -375,7 +379,7 @@ export default function App() {
         void loadCards();
         void load(false);
         // A lane's agent finished or stopped while you were elsewhere: say which, and what now.
-        if (m && !document.hasFocus() && (m.state === "done" || m.state === "failed")) {
+        if (m && prefs().notify_runs && !document.hasFocus() && (m.state === "done" || m.state === "failed")) {
           void say(
             m.state === "done" ? `#${m.card} ${m.card_title} is ready for review` : `#${m.card} ${m.card_title} stopped`,
             m.state === "done" ? "The agent finished. Its checks and the review are waiting in Pitlane." : "The run failed. Open it in Pitlane to see why.",
@@ -401,6 +405,8 @@ export default function App() {
       setTab("code");
     };
     window.addEventListener("pitlane-show-code", onShowCode);
+    const onTheme = () => rethemeCode();
+    window.addEventListener("pitlane-theme", onTheme);
     // Coming back to the window: recheck local state (cheap, no network).
     const onFocus = () => {
       void loadCards();
@@ -416,7 +422,10 @@ export default function App() {
     }, 4000);
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      if (e.metaKey && e.key.toLowerCase() === "r") {
+      if (e.metaKey && e.key === ",") {
+        e.preventDefault();
+        setTab("settings");
+      } else if (e.metaKey && e.key.toLowerCase() === "r") {
         e.preventDefault();
         if (!fetching()) void load(true);
       } else if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "t" && repo()) {
@@ -444,6 +453,7 @@ export default function App() {
       offRun();
       window.removeEventListener("hashchange", onHash);
       window.removeEventListener("pitlane-show-code", onShowCode);
+      window.removeEventListener("pitlane-theme", onTheme);
       clearInterval(poll);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
@@ -598,8 +608,28 @@ export default function App() {
       </header>
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
-      <div class="body" data-tower={!["lanes", "terminal", "code"].includes(tab()) ? "" : undefined}>
-        <main class="main" data-flush={(tab() === "terminal" || tab() === "code") && !runView() && reviewView() == null ? "" : undefined}>
+      <div class="body" data-tower={!["lanes", "terminal", "code", "settings"].includes(tab()) ? "" : undefined}>
+        <main class="main" data-flush={(tab() === "terminal" || tab() === "code" || tab() === "settings") && !runView() && reviewView() == null ? "" : undefined}>
+          <Show
+            when={tab() !== "settings"}
+            fallback={
+              <SettingsScreen
+                repo={repo()}
+                repoName={current()?.name ?? "repository"}
+                repos={settings().repos}
+                onAddRepo={addRepo}
+                onReposChanged={async () => {
+                  const s = await api.settings();
+                  setSettings(s);
+                  if (repo() && !s.repos.some((r) => r.path === repo())) {
+                    const next = s.last ?? s.repos[0]?.path;
+                    if (next) await switchTo(next);
+                  }
+                }}
+                onAccounts={() => setSheet({ kind: "accounts" })}
+              />
+            }
+          >
           <Show
             when={repo()}
             fallback={
@@ -733,6 +763,7 @@ export default function App() {
               </Switch>
             )}
           </Show>
+          </Show>
           <Show when={repo() ? openCard() : undefined}>
             {(card) => (
               <CardSheet
@@ -785,7 +816,7 @@ export default function App() {
             )}
           </Show>
         </main>
-        <Show when={!["lanes", "terminal", "code"].includes(tab())}>
+        <Show when={!["lanes", "terminal", "code", "settings"].includes(tab())}>
           <Tower
             yard={yard()}
             runs={runs() ?? []}

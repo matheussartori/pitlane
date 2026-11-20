@@ -120,6 +120,24 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       return "a1b2c3d4" as T;
     case "files_list":
       return ["README.md", "package.json", "src/app.ts", "src/kart/drift.ts", "src/kart/drift.test.ts", "src/kart/physics.ts", "src/lobby/timer.ts", "src/ui/avatar.tsx"] as T;
+    case "prefs_set":
+    case "reveal":
+    case "flow_set":
+      return null as T;
+    case "pitlane_home":
+      return "/Users/you/.pitlane" as T;
+    case "remove_repo":
+      return { repos: [repo], last: repo.path } as T;
+    case "flow_get":
+      return {
+        exists: true,
+        path: "/Users/you/Projects/demo/.pitlane/flow.toml",
+        flow: {
+          flow: { base: "main", integration: "dev", production: "main", remote: "origin", naming: ["feat/*", "fix/*", "chore/*"], stale_days: 14 },
+          run: { allow: [], max_turns: 40, model: null, branch_prefix: "feat/", brief: true },
+          verify: { commands: ["npm test", "npm run lint"], judge: true, judge_model: "sonnet", max_rounds: 3 },
+        },
+      } as T;
     case "vscode_show":
       return true as T;
     case "vscode_theme":

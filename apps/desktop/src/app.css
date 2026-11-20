@@ -545,3 +545,42 @@ body[data-resizing] .pane { pointer-events: none; }
 .hunk-bar .btn { height: 22px; }
 .hunk-bar[data-kept] { color: var(--color-done); }
 .hunk-kept { color: var(--color-done); }
+
+/* Settings: sections at the side, one section at a time, every change saved as it is made. */
+.settings { display: grid; grid-template-columns: 220px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--color-paper-sunk); }
+.settings-nav { display: grid; align-content: start; gap: 1px; padding: var(--space-sm) var(--space-xs); border-right: 1px solid var(--color-rule); background: var(--color-paper); overflow: auto; }
+.settings-nav-title { padding: var(--space-2xs) var(--space-xs) var(--space-sm); font-weight: var(--weight-strong); color: var(--color-ink); }
+.settings-nav-item { display: flex; align-items: center; gap: var(--space-xs); height: 30px; padding-inline: var(--space-xs); border: 0; border-radius: var(--radius-md); background: none; color: var(--color-ink-2); font: inherit; text-align: left; cursor: pointer; }
+.settings-nav-item .icon { color: var(--color-muted); }
+.settings-nav-item:hover { background: var(--color-paper-2); color: var(--color-ink); }
+.settings-nav-item[aria-current="page"] { background: var(--color-paper-3); color: var(--color-ink); }
+.settings-nav-item[aria-current="page"] .icon { color: var(--color-ink-2); }
+.settings-nav-item:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.settings-page { min-width: 0; overflow: auto; padding: var(--space-xl) var(--space-xl) var(--space-3xl); }
+.settings-page > * { max-width: 680px; }
+.set-title { margin: 0 0 var(--space-lg); font: var(--weight-display) var(--text-2xl)/1.3 var(--font-body); color: var(--color-ink); }
+.set-lead { margin: calc(var(--space-sm) * -1) 0 var(--space-lg); color: var(--color-muted); }
+.set-group { margin-bottom: var(--space-xl); }
+.set-group-title { margin: 0 0 var(--space-2xs); font: var(--weight-strong) var(--text-md)/1.3 var(--font-body); color: var(--color-ink); }
+.set-note { margin: 0 0 var(--space-xs); font-size: var(--text-sm); color: var(--color-muted); max-width: 60ch; }
+.set-rows { border-radius: var(--radius-lg); background: var(--color-paper); box-shadow: 0 0 0 1px var(--color-rule); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); min-height: 52px; padding: var(--space-sm) var(--space-md); }
+.set-row + .set-row { border-top: 1px solid var(--color-rule); }
+.set-row-tight { min-height: 38px; padding-block: var(--space-xs); }
+.set-text { display: grid; gap: var(--space-3xs); min-width: 0; }
+.set-label { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--color-ink); }
+.set-help { font-size: var(--text-sm); color: var(--color-muted); max-width: 52ch; }
+.set-mono, .set-value.set-mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+.set-control { display: flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
+.set-value { color: var(--color-ink-2); font-family: var(--font-mono); font-size: var(--text-sm); }
+.set-input { width: 220px; }
+.set-num { width: 72px; text-align: right; }
+.set-area { width: 280px; height: auto; min-height: 72px; padding-block: var(--space-xs); line-height: 1.5; resize: vertical; }
+.set-tag { padding: 1px var(--space-2xs); border-radius: var(--radius-sm); background: var(--color-paper-3); font-size: var(--text-xs); color: var(--color-ink-2); }
+.set-code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-ink-2); }
+.set-kbd { min-width: auto; height: 20px; padding-inline: var(--space-xs); font-size: var(--text-xs); }
+.set-empty { color: var(--color-muted); }
+.stepper { display: inline-flex; align-items: center; gap: var(--space-2xs); }
+.stepper-value { min-width: 3ch; text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink); }
+.link-btn { padding: 0; border: 0; background: none; color: var(--color-accent-text); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.link-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 2px; }

@@ -77,12 +77,22 @@ pub fn ensure(resources: Option<&Path>, pitlane_home: &Path) -> Result<PathBuf> 
 
 /// Pitlane's colours, under VS Code's own dark and light themes, merged into the settings. A
 /// settings file Pitlane cannot read (comments, a typo) is left alone.
-pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>) -> Result<()> {
+pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>, mode: &str) -> Result<()> {
     first_settings(pitlane_home)?;
     let file = data(pitlane_home).join("User/settings.json");
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&file)?) else { return Ok(()) };
     let Some(obj) = v.as_object_mut() else { return Ok(()) };
     look(obj);
+    // Pitlane's appearance: VS Code follows the system, or holds the scheme Pitlane holds.
+    match mode {
+        "light" | "dark" => {
+            obj.insert("window.autoDetectColorScheme".into(), false.into());
+            obj.insert("workbench.colorTheme".into(), (if mode == "light" { "Light Modern" } else { "Dark Modern" }).into());
+        }
+        _ => {
+            obj.insert("window.autoDetectColorScheme".into(), true.into());
+        }
+    }
     let custom = obj.entry("workbench.colorCustomizations").or_insert_with(|| serde_json::json!({}));
     if let Some(c) = custom.as_object_mut() {
         c.remove("[Default Dark Modern]");
@@ -349,20 +359,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         let mut dark = serde_json::Map::new();
         dark.insert("editor.background".into(), "#111111".into());
-        write_theme(&home, dark.clone(), serde_json::Map::new()).unwrap();
+        write_theme(&home, dark.clone(), serde_json::Map::new(), "system").unwrap();
         let file = data(&home).join("User/settings.json");
         let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(v["telemetry.telemetryLevel"], "off");
         v["editor.fontSize"] = 16.into();
         std::fs::write(&file, v.to_string()).unwrap();
         dark.insert("editor.background".into(), "#222222".into());
-        write_theme(&home, dark, serde_json::Map::new()).unwrap();
+        write_theme(&home, dark, serde_json::Map::new(), "system").unwrap();
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(v["editor.fontSize"], 16, "your own settings stay");
         assert_eq!(v["workbench.colorCustomizations"]["[Dark Modern]"]["editor.background"], "#222222");
         assert_eq!(v["workbench.iconTheme"], "symbols");
         std::fs::write(&file, "// a comment\n{}").unwrap();
-        write_theme(&home, serde_json::Map::new(), serde_json::Map::new()).unwrap();
+        write_theme(&home, serde_json::Map::new(), serde_json::Map::new(), "system").unwrap();
         assert!(std::fs::read_to_string(&file).unwrap().starts_with("// a comment"), "a file it cannot read is left alone");
     }
 
