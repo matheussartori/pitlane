@@ -41,6 +41,7 @@ const failedTimeline = () => {
 };
 
 let nextTerm = 3;
+let fakeInstall = 0;
 
 export async function preview<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((r) => setTimeout(r, 250));
@@ -129,8 +130,15 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
     case "vscode_status":
       return { installed: false, version: null, running: false } as T;
     case "vscode_install":
-      await new Promise((r) => setTimeout(r, 1500));
+      fakeInstall = Date.now();
+      await new Promise((r) => setTimeout(r, 6000));
+      fakeInstall = 0;
       return "4.146.0" as T;
+    case "vscode_progress": {
+      const t = fakeInstall ? (Date.now() - fakeInstall) / 5000 : 0;
+      const total = 118_000_000;
+      return (fakeInstall ? (t < 1 ? { phase: "download", done: Math.round(total * t), total, version: "4.146.0" } : { phase: "unpack", done: total, total, version: "4.146.0" }) : { phase: "", done: 0, total: 0, version: "" }) as T;
+    }
     case "vscode_show":
     case "vscode_hide":
     case "vscode_open":

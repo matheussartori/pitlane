@@ -677,8 +677,13 @@ fn vscode_status(v: tauri::State<'_, vscode::Vscode>) -> vscode::Status {
 
 /// Downloads code-server, on the person's click.
 #[tauri::command]
-async fn vscode_install() -> CmdResult<String> {
-    blocking(|| vscode::install(&default_homes().1)).await
+async fn vscode_install(app: tauri::AppHandle) -> CmdResult<String> {
+    blocking(move || vscode::install(&default_homes().1, &app.state::<vscode::Vscode>().progress)).await
+}
+
+#[tauri::command]
+fn vscode_progress(v: tauri::State<'_, vscode::Vscode>) -> vscode::Progress {
+    v.progress.lock().unwrap().clone()
 }
 
 /// Shows VS Code over the Code tab's area (logical pixels of the window), on `folder`.
@@ -891,6 +896,7 @@ pub fn run() {
             lsp_start,
             vscode_status,
             vscode_install,
+            vscode_progress,
             vscode_show,
             vscode_hide,
             vscode_open,

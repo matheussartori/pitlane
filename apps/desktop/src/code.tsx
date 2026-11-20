@@ -962,18 +962,36 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
 function VscodeInstall(props: { onDone: () => void; onLight: () => void }) {
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
+  const [prog, setProg] = createSignal<{ phase: string; done: number; total: number; left: number | null }>({ phase: "", done: 0, total: 0, left: null });
   const install = async () => {
     setBusy(true);
     setErr(null);
+    // The speed is smoothed over the last seconds, so the time left does not jump around.
+    let rate = 0;
+    let last = { t: performance.now(), done: 0 };
+    const poll = setInterval(async () => {
+      const p = await vscode.progress().catch(() => null);
+      if (!p || !p.phase) return;
+      const now = performance.now();
+      const inst = ((p.done - last.done) / Math.max(1, now - last.t)) * 1000;
+      if (p.done > last.done) rate = rate ? rate * 0.8 + inst * 0.2 : inst;
+      last = { t: now, done: p.done };
+      const left = p.phase === "download" && rate > 0 && p.total > 0 ? (p.total - p.done) / rate : null;
+      setProg({ phase: p.phase, done: p.done, total: p.total, left });
+    }, 400);
     try {
       await vscode.install();
       props.onDone();
     } catch (e) {
       setErr(msg(e));
     } finally {
+      clearInterval(poll);
       setBusy(false);
     }
   };
+  const mb = (n: number) => `${Math.round(n / 1_000_000)} MB`;
+  const eta = (s: number | null) => (s == null ? "" : s < 10 ? "a few seconds left" : s < 60 ? `about ${Math.round(s / 5) * 5} s left` : `about ${Math.round(s / 60)} min left`);
+  const pct = () => (prog().total ? Math.min(100, (prog().done / prog().total) * 100) : 0);
   return (
     <div class="code-empty vs-install">
       <div class="code-empty-title">VS Code, inside Pitlane</div>
@@ -981,17 +999,30 @@ function VscodeInstall(props: { onDone: () => void; onLight: () => void }) {
         The full editor, with extensions, on the repository or any lane’s worktree. It runs code-server, the open-source VS Code by Coder: about 235 MB, downloaded once into
         ~/.pitlane/code-server. Extensions come from Open VSX.
       </p>
-      <div class="vs-actions">
-        <button type="button" class="btn btn-primary" disabled={busy()} aria-busy={busy()} onClick={() => void install()}>
-          <Show when={busy()} fallback={<Icon name="code" small />}>
-            <Spinner />
-          </Show>
-          {busy() ? "Downloading code-server" : "Install VS Code"}
-        </button>
-        <button type="button" class="btn btn-ghost" onClick={props.onLight}>
-          Use the light editor
-        </button>
-      </div>
+      <Show
+        when={busy()}
+        fallback={
+          <div class="vs-actions">
+            <button type="button" class="btn btn-primary" onClick={() => void install()}>
+              <Icon name="code" small />
+              Install VS Code
+            </button>
+            <button type="button" class="btn btn-ghost" onClick={props.onLight}>
+              Use the light editor
+            </button>
+          </div>
+        }
+      >
+        <div class="vs-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct())} aria-label="Downloading code-server">
+          <div class="vs-track">
+            <div class="vs-fill" data-phase={prog().phase || "start"} style={{ transform: `scaleX(${prog().phase === "unpack" ? 1 : pct() / 100})` }} />
+          </div>
+          <div class="vs-progress-line">
+            <span>{prog().phase === "unpack" ? "Unpacking" : prog().total ? `${mb(prog().done)} of ${mb(prog().total)}` : "Finding the latest release"}</span>
+            <span class="vs-eta">{prog().phase === "download" ? eta(prog().left) : ""}</span>
+          </div>
+        </div>
+      </Show>
       <Show when={err()}>
         <p class="vs-error">{err()}</p>
       </Show>

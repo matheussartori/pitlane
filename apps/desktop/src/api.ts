@@ -431,6 +431,7 @@ export interface VscodeStatus {
 export const vscode = {
   status: () => invoke<VscodeStatus>("vscode_status"),
   install: () => invoke<string>("vscode_install"),
+  progress: () => invoke<{ phase: "" | "download" | "unpack"; done: number; total: number; version: string }>("vscode_progress"),
   show: (folder: string, r: { x: number; y: number; w: number; h: number }) => invoke<void>("vscode_show", { folder, ...r }),
   hide: () => invoke<void>("vscode_hide"),
   open: (path: string, line?: number, col?: number) => invoke<void>("vscode_open", { path, line: line ?? null, col: col ?? null }),

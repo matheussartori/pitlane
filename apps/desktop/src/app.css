@@ -588,6 +588,14 @@ body[data-resizing] .pane { pointer-events: none; }
 .vs-host { position: relative; min-height: 0; display: grid; }
 .vs-install { height: 100%; }
 .vs-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-top: var(--space-xs); }
+.vs-progress { display: grid; gap: var(--space-xs); width: 100%; margin-top: var(--space-xs); }
+.vs-track { height: 4px; border-radius: 2px; background: var(--color-rule); overflow: hidden; }
+.vs-fill { height: 100%; background: var(--color-accent); transform-origin: left; transition: transform 400ms linear; }
+.vs-fill[data-phase="unpack"] { animation: vs-pulse 1.2s ease-in-out infinite; }
+@keyframes vs-pulse { 50% { opacity: 0.5; } }
+.vs-progress-line { display: flex; justify-content: space-between; gap: var(--space-sm); font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
+.vs-eta { color: var(--color-muted); }
+@media (prefers-reduced-motion: reduce) { .vs-fill { transition: none; } .vs-fill[data-phase="unpack"] { animation: none; } }
 .vs-error { margin: 0; color: var(--color-fail); font-size: var(--text-sm); }
 /* The lane's changes in the margin: a 3px bar, green new, blue changed, a red notch where lines went. */
 .gut { margin-left: var(--space-2xs); }

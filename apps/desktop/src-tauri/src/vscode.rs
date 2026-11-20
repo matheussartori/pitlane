@@ -16,6 +16,16 @@ use serde::Serialize;
 #[derive(Default)]
 pub struct Vscode {
     running: Mutex<Option<Running>>,
+    pub progress: Mutex<Progress>,
+}
+
+/// Where an install is: "download" (bytes so far of the total), "unpack", or "" when idle.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Progress {
+    pub phase: String,
+    pub done: u64,
+    pub total: u64,
+    pub version: String,
 }
 
 #[derive(Clone)]
@@ -57,8 +67,8 @@ pub fn status(v: &Vscode, pitlane_home: &Path) -> Status {
     Status { installed: find(pitlane_home).is_some(), version: version(pitlane_home), running: v.running.lock().unwrap().is_some() }
 }
 
-/// The latest release for this Mac, from GitHub: (version, tarball URL).
-fn latest() -> Result<(String, String)> {
+/// The latest release for this Mac, from GitHub: (version, tarball URL, size in bytes).
+fn latest() -> Result<(String, String, u64)> {
     let arch = match std::env::consts::ARCH {
         "aarch64" => "arm64",
         "x86_64" => "amd64",
@@ -74,24 +84,50 @@ fn latest() -> Result<(String, String)> {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
     let tag = v["tag_name"].as_str().context("no release")?.trim_start_matches('v').to_owned();
     let want = format!("macos-{arch}.tar.gz");
-    let url = v["assets"]
+    let asset = v["assets"]
         .as_array()
-        .and_then(|a| a.iter().find_map(|x| x["browser_download_url"].as_str().filter(|u| u.ends_with(&want))))
-        .with_context(|| format!("release {tag} has no {want}"))?
-        .to_owned();
-    Ok((tag, url))
+        .and_then(|a| a.iter().find(|x| x["browser_download_url"].as_str().is_some_and(|u| u.ends_with(&want))))
+        .with_context(|| format!("release {tag} has no {want}"))?;
+    let url = asset["browser_download_url"].as_str().unwrap_or_default().to_owned();
+    Ok((tag, url, asset["size"].as_u64().unwrap_or(0)))
 }
 
 /// Downloads and unpacks code-server; the person clicked for it.
-pub fn install(pitlane_home: &Path) -> Result<String> {
-    let (ver, url) = latest()?;
+/// Progress is the size of the file so far against the release's own size, read as it grows.
+pub fn install(pitlane_home: &Path, progress: &Mutex<Progress>) -> Result<String> {
+    let set = |phase: &str, done: u64, total: u64, version: &str| *progress.lock().unwrap() = Progress { phase: phase.into(), done, total, version: version.into() };
+    set("download", 0, 0, "");
+    let r = install_steps(pitlane_home, &set);
+    set("", 0, 0, "");
+    r
+}
+
+fn install_steps(pitlane_home: &Path, set: &dyn Fn(&str, u64, u64, &str)) -> Result<String> {
+    let (ver, url, size) = latest()?;
     let root = dir(pitlane_home);
     std::fs::create_dir_all(&root)?;
     let tarball = root.join(format!("code-server-{ver}.tar.gz"));
-    let ok = Command::new("curl").args(["-fL", "--retry", "2", "-o"]).arg(&tarball).arg(&url).status().context("could not run curl")?;
-    if !ok.success() {
+    set("download", 0, size, &ver);
+    let mut curl = Command::new("curl")
+        .args(["-fsSL", "--retry", "2", "-o"])
+        .arg(&tarball)
+        .arg(&url)
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not run curl")?;
+    let status = loop {
+        if let Some(st) = curl.try_wait()? {
+            break st;
+        }
+        let done = std::fs::metadata(&tarball).map(|m| m.len()).unwrap_or(0);
+        set("download", done, size, &ver);
+        std::thread::sleep(Duration::from_millis(250));
+    };
+    if !status.success() {
+        let _ = std::fs::remove_file(&tarball);
         bail!("the download of code-server {ver} failed");
     }
+    set("unpack", size, size, &ver);
     let unpack = root.join(format!("v{ver}"));
     let _ = std::fs::remove_dir_all(&unpack);
     std::fs::create_dir_all(&unpack)?;
