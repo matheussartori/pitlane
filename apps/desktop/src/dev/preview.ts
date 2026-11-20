@@ -107,6 +107,19 @@ export async function preview<T>(cmd: string): Promise<T> {
         patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
         truncated: false,
       } as T;
+    case "term_list":
+      return [
+        { id: 1, cwd: "/Users/you/demo", label: "demo", exited: null },
+        { id: 2, cwd: "/Users/you/.pitlane/wt/demo/fix-avatar-svg", label: "fix/avatar-svg", exited: null },
+      ] as T;
+    case "term_buffer":
+      return "\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m git status --short\r\n M src/kart/drift.ts\r\n?? notes.md\r\n\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m npm test\r\n\r\n> demo@0.1.0 test\r\n> vitest run\r\n\r\n \x1b[32m✓\x1b[0m src/kart/drift.test.ts (4 tests) 12ms\r\n\r\n Test Files  \x1b[32m1 passed\x1b[0m (1)\r\n      Tests  \x1b[32m4 passed\x1b[0m (4)\r\n\r\n\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m " as T;
+    case "term_open":
+      return { id: 3, cwd: "/Users/you/demo", label: "demo", exited: null } as T;
+    case "term_write":
+    case "term_resize":
+    case "term_close":
+      return null as T;
     case "queue_list":
       return [
         { id: "q1", repo: "/demo", branch: "feat/billing-retry", target: "main", state: "shipping", queued_at: now() - 40, finished_at: null, merge_sha: null, conflicts: [], error: null, card: null },

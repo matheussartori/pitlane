@@ -12,10 +12,11 @@ import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
+import { TerminalScreen, openTerminal, startTerminals, terminalList } from "./terminals";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
 
-type Tab = "inbox" | "board" | "lanes" | "ledger";
+type Tab = "inbox" | "board" | "lanes" | "ledger" | "terminal";
 type SheetState =
   | { kind: "ship"; lane: Lane; to: string }
   | { kind: "clean" }
@@ -26,7 +27,7 @@ type SheetState =
   | null;
 
 const TAB_KEY = "pitlane.tab";
-const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "terminal";
 /** The screen lives in the URL hash (#board), falling back to the last one used. */
 function savedTab(): Tab {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -228,6 +229,15 @@ export default function App() {
     void loadQueue();
   }
 
+  async function terminalIn(lane: Lane | undefined) {
+    const path = repo();
+    if (!path) return;
+    const ok = lane?.worktree
+      ? await openTerminal(lane.worktree.path, lane.branch)
+      : await openTerminal(path, current()?.name ?? "repository");
+    if (ok) setTab("terminal");
+  }
+
   async function notify(run: string, detail: string) {
     try {
       let ok = await isPermissionGranted();
@@ -303,6 +313,7 @@ export default function App() {
   }
 
   onMount(async () => {
+    void startTerminals();
     try {
       const s = await api.settings();
       setSettings(s);
@@ -360,6 +371,11 @@ export default function App() {
       if (e.metaKey && e.key.toLowerCase() === "r") {
         e.preventDefault();
         if (!fetching()) void load(true);
+      } else if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "t" && repo()) {
+        // A terminal where you are: the selected lane's worktree on Lanes, else the repository.
+        e.preventDefault();
+        const lane = tab() === "lanes" ? yard()?.lanes.find((l) => l.branch === selected() && l.worktree) : undefined;
+        void terminalIn(lane);
       } else if (!typing && !e.metaKey && !e.ctrlKey && !sheet() && repo()) {
         if ((e.key === "n" || e.key === "N") && tab() === "lanes") {
           e.preventDefault();
@@ -490,6 +506,12 @@ export default function App() {
           <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
             Ledger
           </button>
+          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "terminal" ? "page" : undefined} onClick={() => setTab("terminal")}>
+            Terminal
+            <Show when={terminalList().length > 0}>
+              <span class="count">{terminalList().length}</span>
+            </Show>
+          </button>
         </nav>
         <Show when={quota() && quota()!.events.length > 0 ? quota() : null}>
           {(qa) => (
@@ -522,8 +544,8 @@ export default function App() {
       </header>
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
-      <div class="body" data-tower={tab() !== "lanes" ? "" : undefined}>
-        <main class="main">
+      <div class="body" data-tower={tab() !== "lanes" && tab() !== "terminal" ? "" : undefined}>
+        <main class="main" data-flush={tab() === "terminal" && !runView() && reviewView() == null ? "" : undefined}>
           <Show
             when={repo()}
             fallback={
@@ -589,6 +611,7 @@ export default function App() {
                     onRefresh={() => void load(true)}
                     onShip={(lane, to) => setSheet({ kind: "ship", lane, to })}
                     onCheckout={checkout}
+                    onTerminal={(l) => void terminalIn(l)}
                     checkingOut={checkingOut()}
                     onClean={() => setSheet({ kind: "clean" })}
                     onNew={() => setSheet({ kind: "new" })}
@@ -643,6 +666,9 @@ export default function App() {
                 </Match>
                 <Match when={tab() === "ledger"}>
                   <LedgerView runs={runs()} now={now()} onOpen={openRun} />
+                </Match>
+                <Match when={tab() === "terminal"}>
+                  <TerminalScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />
                 </Match>
               </Switch>
             )}
@@ -699,7 +725,7 @@ export default function App() {
             )}
           </Show>
         </main>
-        <Show when={tab() !== "lanes"}>
+        <Show when={tab() !== "lanes" && tab() !== "terminal"}>
           <Tower
             yard={yard()}
             runs={runs() ?? []}

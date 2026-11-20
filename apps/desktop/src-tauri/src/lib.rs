@@ -14,6 +14,8 @@ use pit_core::{Repo, default_homes, trash};
 use std::collections::HashSet;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
+
+mod term;
 use serde::{Deserialize, Serialize};
 
 type CmdResult<T> = Result<T, String>;
@@ -545,6 +547,38 @@ fn run_follow(app: tauri::AppHandle, state: tauri::State<'_, Following>, run: St
     Ok(())
 }
 
+// ---------------------------------------------------------------- free terminals
+
+#[tauri::command]
+fn term_open(app: tauri::AppHandle, terms: tauri::State<'_, term::Terms>, cwd: String, label: String, cols: u16, rows: u16) -> CmdResult<term::TermInfo> {
+    terms.open(term::app_sink(&app), &cwd, &label, cols, rows).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn term_write(terms: tauri::State<'_, term::Terms>, id: u32, data: String) -> CmdResult<()> {
+    terms.write(id, &data).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn term_resize(terms: tauri::State<'_, term::Terms>, id: u32, cols: u16, rows: u16) -> CmdResult<()> {
+    terms.resize(id, cols, rows).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn term_close(terms: tauri::State<'_, term::Terms>, id: u32) -> CmdResult<()> {
+    terms.close(id).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn term_list(terms: tauri::State<'_, term::Terms>) -> Vec<term::TermInfo> {
+    terms.list()
+}
+
+#[tauri::command]
+fn term_buffer(terms: tauri::State<'_, term::Terms>, id: u32) -> CmdResult<String> {
+    terms.buffer(id).map_err(|e| format!("{e:#}"))
+}
+
 /// Apps opened from Finder get a bare PATH; git, gh and setup commands live in Homebrew.
 fn extend_path() {
     let current = std::env::var("PATH").unwrap_or_default();
@@ -566,6 +600,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(Following::default())
+        .manage(term::Terms::default())
         .invoke_handler(tauri::generate_handler![
             settings,
             add_repo,
@@ -593,6 +628,12 @@ pub fn run() {
             lane_diff,
             card_review,
             queue_list,
+            term_open,
+            term_write,
+            term_resize,
+            term_close,
+            term_list,
+            term_buffer,
             queue_add,
             queue_remove,
             accounts_list,
@@ -601,6 +642,12 @@ pub fn run() {
             run_follow,
             quota
         ])
-        .run(tauri::generate_context!())
-        .expect("Pitlane failed to start");
+        .build(tauri::generate_context!())
+        .expect("Pitlane failed to start")
+        .run(|app, event| {
+            // No shell outlives the app.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<term::Terms>().close_all();
+            }
+        });
 }

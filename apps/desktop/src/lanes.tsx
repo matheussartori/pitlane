@@ -19,6 +19,8 @@ export interface LanesProps {
   onShip: (lane: Lane, to: string) => void;
   /** Remote-only lane: create a local worktree tracking it. */
   onCheckout: (lane: Lane) => void;
+  /** Opens your shell in this lane's worktree. */
+  onTerminal: (lane: Lane) => void;
   /** Branch being checked out right now. */
   checkingOut: string | null;
   onClean: () => void;
@@ -298,8 +300,22 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
       </td>
       <td>
         <Show when={wt()}>
-          <span class="wt" title={l.worktree!.path} data-dirty={l.worktree!.dirty > 0 ? "" : undefined}>
-            {l.worktree!.dirty > 0 ? `${l.worktree!.dirty} changed` : "Clean"}
+          <span class="wt-cell">
+            <span class="wt" title={l.worktree!.path} data-dirty={l.worktree!.dirty > 0 ? "" : undefined}>
+              {l.worktree!.dirty > 0 ? `${l.worktree!.dirty} changed` : "Clean"}
+            </span>
+            <button
+              type="button"
+              class="btn btn-ghost btn-icon wt-term"
+              aria-label={`Open a terminal in ${l.branch}`}
+              title="Open a terminal here"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onTerminal(l);
+              }}
+            >
+              <Icon name="term" small />
+            </button>
           </span>
         </Show>
       </td>

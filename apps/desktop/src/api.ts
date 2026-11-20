@@ -335,6 +335,35 @@ export type RunEvent =
 
 export const isLive = (s: RunState) => s === "starting" || s === "running" || s === "verifying";
 
+// ---------------------------------------------------------------- free terminals
+
+export interface TermInfo {
+  id: number;
+  cwd: string;
+  label: string;
+  exited: number | null;
+}
+
+export const terms = {
+  open: (cwd: string, label: string, cols: number, rows: number) => invoke<TermInfo>("term_open", { cwd, label, cols, rows }),
+  write: (id: number, data: string) => invoke<void>("term_write", { id, data }),
+  resize: (id: number, cols: number, rows: number) => invoke<void>("term_resize", { id, cols, rows }),
+  close: (id: number) => invoke<void>("term_close", { id }),
+  list: () => invoke<TermInfo[]>("term_list"),
+  buffer: (id: number) => invoke<string>("term_buffer", { id }),
+};
+
+/** Terminal output and exits. Nothing in the browser preview. */
+export async function onTerm(onData: (id: number, data: string) => void, onExit: (id: number, code: number) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  const a = await listen<{ id: number; data: string }>("term-data", (e) => onData(e.payload.id, e.payload.data));
+  const b = await listen<{ id: number; code: number }>("term-exit", (e) => onExit(e.payload.id, e.payload.code));
+  return () => {
+    a();
+    b();
+  };
+}
+
 /** Live events from the daemon, pushed by the Tauri backend. Nothing in the browser preview. */
 export async function onRun(
   onEvent: (run: string, i: number, event: RunEvent) => void,
