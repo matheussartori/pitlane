@@ -577,6 +577,39 @@ async fn file_write(root: String, path: String, text: String) -> CmdResult<()> {
     blocking(move || files::write(Path::new(&root), &path, &text)).await
 }
 
+#[tauri::command]
+async fn files_ignored(root: String) -> CmdResult<Vec<String>> {
+    blocking(move || files::ignored(Path::new(&root))).await
+}
+
+#[tauri::command]
+async fn dir_list(root: String, path: String) -> CmdResult<Vec<String>> {
+    blocking(move || files::dir(Path::new(&root), &path)).await
+}
+
+#[tauri::command]
+async fn files_search(root: String, query: String) -> CmdResult<Vec<files::Hit>> {
+    blocking(move || files::search(Path::new(&root), &query, 400)).await
+}
+
+/// How a file differs from where its lane left production (the merge-base with it), or from
+/// HEAD outside a lane.
+#[tauri::command]
+async fn file_changes(root: String, path: String) -> CmdResult<files::Changes> {
+    blocking(move || {
+        let dir = Path::new(&root);
+        let base = Repo::open_default(dir)
+            .ok()
+            .and_then(|repo| {
+                let prod = lanes::Target::resolve(&repo, &repo.flow.flow.production).ok().flatten()?;
+                repo.git.run(&["merge-base", "HEAD", &prod.sha]).ok()
+            })
+            .unwrap_or_else(|| "HEAD".into());
+        files::changes(dir, &path, &base)
+    })
+    .await
+}
+
 // ---------------------------------------------------------------- free terminals
 
 #[tauri::command]
@@ -727,6 +760,10 @@ pub fn run() {
             files_list,
             file_read,
             file_write,
+            files_search,
+            files_ignored,
+            dir_list,
+            file_changes,
             term_open,
             open_external,
             term_write,

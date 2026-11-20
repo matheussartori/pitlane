@@ -370,7 +370,28 @@ export const files = {
   list: (root: string) => invoke<string[]>("files_list", { root }),
   read: (root: string, path: string) => invoke<FileText>("file_read", { root, path }),
   write: (root: string, path: string, text: string) => invoke<void>("file_write", { root, path, text }),
+  /** What git ignores; folders end with "/" and open on demand through `dir`. */
+  ignored: (root: string) => invoke<string[]>("files_ignored", { root }),
+  dir: (root: string, path: string) => invoke<string[]>("dir_list", { root, path }),
+  search: (root: string, query: string) => invoke<SearchHit[]>("files_search", { root, query }),
+  changes: (root: string, path: string) => invoke<FileChanges>("file_changes", { root, path }),
 };
+
+export interface SearchHit {
+  path: string;
+  line: number;
+  col: number;
+  text: string;
+}
+
+/** How a file differs from its lane's base: line ranges on disk, and the base's text. */
+export interface FileChanges {
+  base: string | null;
+  original: string | null;
+  added: [number, number][];
+  changed: [number, number][];
+  removed: number[];
+}
 
 // ---------------------------------------------------------------- free terminals
 

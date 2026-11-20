@@ -126,6 +126,28 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
         text: "import { integrate } from \"./physics\";\n\n/** The drift angle a kart reaches at each tier, in degrees. */\nexport function driftAngle(tier: number): number {\n  if (tier < 1) return 0;\n  return Math.min(12 + tier * 6, 36);\n}\n\nexport function applyDrift(kart: Kart, dt: number) {\n  const angle = driftAngle(kart.tier);\n  kart.heading += angle * dt;\n  integrate(kart, dt);\n}\n\ninterface Kart {\n  tier: number;\n  heading: number;\n}\n",
         refused: null,
       } as T;
+    case "files_ignored":
+      return [".env", "dist/", "node_modules/"] as T;
+    case "dir_list":
+      return ["chunks/", "index.js", "index.js.map"] as T;
+    case "files_search": {
+      const q = String((args as { query: string }).query).toLowerCase();
+      const lines: [string, number, string][] = [
+        ["src/kart/drift.ts", 4, "export function driftAngle(tier: number): number {"],
+        ["src/kart/drift.ts", 10, "  const angle = driftAngle(kart.tier);"],
+        ["src/kart/drift.test.ts", 3, "import { driftAngle } from \"./drift\";"],
+        ["src/kart/physics.ts", 1, "export function integrate(kart: Kart, dt: number) {"],
+      ];
+      return lines.filter(([, , t]) => t.toLowerCase().includes(q)).map(([path, line, text]) => ({ path, line, col: text.toLowerCase().indexOf(q) + 1, text })) as T;
+    }
+    case "file_changes":
+      return {
+        base: "a1b2c3d4",
+        original: "import { integrate } from \"./physics\";\n\nexport function driftAngle(tier: number): number {\n  if (tier < 1) return 0;\n  return 12 + tier * 6;\n}\n\nexport function applyDrift(kart: Kart, dt: number) {\n  kart.heading += driftAngle(kart.tier) * dt;\n  integrate(kart, dt);\n}\n\ninterface Kart {\n  tier: number;\n  heading: number;\n}\n",
+        added: [[2, 2], [10, 10]],
+        changed: [[6, 6]],
+        removed: [],
+      } as T;
     case "file_write":
       return null as T;
     case "term_list":
