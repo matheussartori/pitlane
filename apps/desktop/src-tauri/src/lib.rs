@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+mod files;
 mod term;
 use serde::{Deserialize, Serialize};
 
@@ -547,6 +548,23 @@ fn run_follow(app: tauri::AppHandle, state: tauri::State<'_, Following>, run: St
     Ok(())
 }
 
+// ---------------------------------------------------------------- files for the editor
+
+#[tauri::command]
+async fn files_list(root: String) -> CmdResult<Vec<String>> {
+    blocking(move || files::list(Path::new(&root))).await
+}
+
+#[tauri::command]
+async fn file_read(root: String, path: String) -> CmdResult<files::FileText> {
+    blocking(move || files::read(Path::new(&root), &path)).await
+}
+
+#[tauri::command]
+async fn file_write(root: String, path: String, text: String) -> CmdResult<()> {
+    blocking(move || files::write(Path::new(&root), &path, &text)).await
+}
+
 // ---------------------------------------------------------------- free terminals
 
 #[tauri::command]
@@ -628,6 +646,9 @@ pub fn run() {
             lane_diff,
             card_review,
             queue_list,
+            files_list,
+            file_read,
+            file_write,
             term_open,
             term_write,
             term_resize,

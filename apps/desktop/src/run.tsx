@@ -37,7 +37,14 @@ export function elapsed(m: RunMeta, nowMs: number): number {
 export const money = (n: number | null | undefined) => (n == null ? "" : `$${n.toFixed(2)}`);
 export const kTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
 
-export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null; now: number; onBack: () => void; onChanged: () => void }) {
+export function RunScreen(props: {
+  meta: RunMeta | undefined;
+  yard: Yard | null;
+  now: number;
+  onBack: () => void;
+  onChanged: () => void;
+  onOpenFile: (branch: string | null | undefined, path: string) => void;
+}) {
   const [events, setEvents] = createSignal<Map<number, RunEvent>>(new Map());
   const [text, setText] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -392,7 +399,15 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                     <Show when={(h().files_changed?.length ?? 0) > 0}>
                       <h3 class="side-sub">Changed</h3>
                       <ul class="side-list mono">
-                        <For each={h().files_changed}>{(f) => <li class="selectable">{f}</li>}</For>
+                        <For each={h().files_changed}>
+                          {(f) => (
+                            <li>
+                              <button type="button" class="link-btn mono-link" title="Open in Code" onClick={() => props.onOpenFile(m().branch, f)}>
+                                {f}
+                              </button>
+                            </li>
+                          )}
+                        </For>
                       </ul>
                     </Show>
                     <Show when={h().tests?.command}>

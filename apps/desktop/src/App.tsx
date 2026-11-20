@@ -13,10 +13,11 @@ import { InboxView } from "./inbox";
 import { Icon } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalList } from "./terminals";
+import { CodeScreen, openInCode, unsavedCount } from "./code";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
 
-type Tab = "inbox" | "board" | "lanes" | "ledger" | "terminal";
+type Tab = "inbox" | "board" | "lanes" | "ledger" | "code" | "terminal";
 type SheetState =
   | { kind: "ship"; lane: Lane; to: string }
   | { kind: "clean" }
@@ -27,7 +28,7 @@ type SheetState =
   | null;
 
 const TAB_KEY = "pitlane.tab";
-const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "terminal";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "code" || t === "terminal";
 /** The screen lives in the URL hash (#board), falling back to the last one used. */
 function savedTab(): Tab {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -227,6 +228,17 @@ export default function App() {
       toast({ tone: "fail", title: "Not cleared", body: msg(e) });
     }
     void loadQueue();
+  }
+
+  /** A file of a lane (its worktree) or of the repository, in the Code screen. */
+  function codeFile(branch: string | null | undefined, file: string) {
+    const path = repo();
+    if (!path) return;
+    const wt = yard()?.lanes.find((l) => l.branch === branch)?.worktree?.path;
+    openInCode(wt ?? path, file);
+    setRunView(null);
+    setReviewView(null);
+    setTab("code");
   }
 
   async function terminalIn(lane: Lane | undefined) {
@@ -506,6 +518,12 @@ export default function App() {
           <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
             Ledger
           </button>
+          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "code" ? "page" : undefined} onClick={() => setTab("code")}>
+            Code
+            <Show when={unsavedCount() > 0}>
+              <span class="count count-hot" title="Files with unsaved changes">{unsavedCount()}</span>
+            </Show>
+          </button>
           <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "terminal" ? "page" : undefined} onClick={() => setTab("terminal")}>
             Terminal
             <Show when={terminalList().length > 0}>
@@ -544,8 +562,8 @@ export default function App() {
       </header>
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
-      <div class="body" data-tower={tab() !== "lanes" && tab() !== "terminal" ? "" : undefined}>
-        <main class="main" data-flush={tab() === "terminal" && !runView() && reviewView() == null ? "" : undefined}>
+      <div class="body" data-tower={!["lanes", "terminal", "code"].includes(tab()) ? "" : undefined}>
+        <main class="main" data-flush={(tab() === "terminal" || tab() === "code") && !runView() && reviewView() == null ? "" : undefined}>
           <Show
             when={repo()}
             fallback={
@@ -575,6 +593,7 @@ export default function App() {
                       integration={yard()?.integration ?? null}
                       onBack={() => setTab("board")}
                       onOpenRun={openRun}
+                      onOpenFile={(branch, file) => codeFile(branch, file)}
                       onChanged={() => {
                         void loadQueue();
                         void loadRuns();
@@ -590,6 +609,7 @@ export default function App() {
                       meta={(runs() ?? []).find((r) => r.id === id())}
                       yard={yard()}
                       now={now()}
+                      onOpenFile={(branch, file) => codeFile(branch, file)}
                       onBack={() => setTab(tab() === "lanes" ? "board" : tab())}
                       onChanged={() => {
                         void loadQueue();
@@ -667,6 +687,9 @@ export default function App() {
                 <Match when={tab() === "ledger"}>
                   <LedgerView runs={runs()} now={now()} onOpen={openRun} />
                 </Match>
+                <Match when={tab() === "code"}>
+                  <CodeScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />
+                </Match>
                 <Match when={tab() === "terminal"}>
                   <TerminalScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />
                 </Match>
@@ -725,7 +748,7 @@ export default function App() {
             )}
           </Show>
         </main>
-        <Show when={tab() !== "lanes" && tab() !== "terminal"}>
+        <Show when={!["lanes", "terminal", "code"].includes(tab())}>
           <Tower
             yard={yard()}
             runs={runs() ?? []}

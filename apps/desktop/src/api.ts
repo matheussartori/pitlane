@@ -335,6 +335,21 @@ export type RunEvent =
 
 export const isLive = (s: RunState) => s === "starting" || s === "running" || s === "verifying";
 
+// ---------------------------------------------------------------- files for the editor
+
+export interface FileText {
+  path: string;
+  text: string;
+  /** Why it is not shown: binary, too large, not UTF-8. */
+  refused: string | null;
+}
+
+export const files = {
+  list: (root: string) => invoke<string[]>("files_list", { root }),
+  read: (root: string, path: string) => invoke<FileText>("file_read", { root, path }),
+  write: (root: string, path: string, text: string) => invoke<void>("file_write", { root, path, text }),
+};
+
 // ---------------------------------------------------------------- free terminals
 
 export interface TermInfo {

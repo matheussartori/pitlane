@@ -106,6 +106,7 @@ function DiffView(props: {
   picked: Set<number>;
   onPick: (i: number, on: boolean) => void;
   viewedKey: string;
+  onOpen: (path: string) => void;
 }) {
   const files = createMemo(() => parsePatch(props.diff.patch));
   const stat = (path: string) => props.diff.files.find((f) => f.path === path);
@@ -139,6 +140,9 @@ function DiffView(props: {
                     {count()} {count() === 1 ? "finding" : "findings"}
                   </span>
                 </Show>
+                <button type="button" class="link-btn diff-open" title="Open this file in Code" onClick={() => props.onOpen(f.path)}>
+                  Open
+                </button>
                 <label class="diff-viewed">
                   <input
                     type="checkbox"
@@ -211,6 +215,7 @@ export function ReviewScreen(props: {
   onBack: () => void;
   onChanged: () => void;
   onOpenRun: (id: string) => void;
+  onOpenFile: (branch: string | null | undefined, path: string) => void;
 }) {
   const [verification] = createResource(() => props.run?.id, (id) => api.runVerification(id));
   const round = () => props.run?.round ?? 0;
@@ -370,6 +375,7 @@ export function ReviewScreen(props: {
                       picked={picked()}
                       onPick={pick}
                       viewedKey={`${c().id}.${d().head.slice(0, 12)}`}
+                      onOpen={(p) => props.onOpenFile(c().lane, p)}
                     />
                   )}
                 </Show>

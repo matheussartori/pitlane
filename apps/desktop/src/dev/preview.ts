@@ -107,6 +107,16 @@ export async function preview<T>(cmd: string): Promise<T> {
         patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
         truncated: false,
       } as T;
+    case "files_list":
+      return ["README.md", "package.json", "src/app.ts", "src/kart/drift.ts", "src/kart/drift.test.ts", "src/kart/physics.ts", "src/lobby/timer.ts", "src/ui/avatar.tsx"] as T;
+    case "file_read":
+      return {
+        path: "src/kart/drift.ts",
+        text: "import { integrate } from \"./physics\";\n\n/** The drift angle a kart reaches at each tier, in degrees. */\nexport function driftAngle(tier: number): number {\n  if (tier < 1) return 0;\n  return Math.min(12 + tier * 6, 36);\n}\n\nexport function applyDrift(kart: Kart, dt: number) {\n  const angle = driftAngle(kart.tier);\n  kart.heading += angle * dt;\n  integrate(kart, dt);\n}\n\ninterface Kart {\n  tier: number;\n  heading: number;\n}\n",
+        refused: null,
+      } as T;
+    case "file_write":
+      return null as T;
     case "term_list":
       return [
         { id: 1, cwd: "/Users/you/demo", label: "demo", exited: null },

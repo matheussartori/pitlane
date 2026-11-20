@@ -8,6 +8,7 @@
 /* Hallmark · waive 72 · .tower-title clips a long branch name with text-overflow: ellipsis inside its row · the text range only runs past the Tower as the hidden tail behind the ellipsis */
 /* Hallmark · dismissed recommended-option · an approval offers no recommended answer and ↵ does nothing on it: allowing a command is the person's call, never a default */
 /* Hallmark · dismissed F25 · the desktop window has a 900px minimum width (minWidth in tauri.conf.json), so no phone width exists to fit */
+/* Hallmark · Code (build) · finish-review: self, recaptured dark and light with a file open · Monaco themed from the tokens, loaded only when Code opens · gap: per-hunk accept and reject in Review still read-only, next */
 /* Hallmark · Terminal (build) · finish-review: self, recaptured dark and light · the xterm surface takes the tokens and lifts any program colour to 4.5:1 · gap: none */
 /* Hallmark · Density redesign (restyle + Tower recomposed) · the person found the UI childish next to Warp: 13px UI, small titles, no pills or orange washes, the Tower a compact list whose only light is a mark · counts changed by design: "Needs you 7" is 6 and "Landed 0" is 1 because a lane ready for main is a calm release, not your move · run clocks tick · finish-review: subagent · fix · 8 findings · 8 resolved (one count of waiting lanes everywhere, Tower rows of one height with the remote state in words, one left edge, quiet approval options, actions in ink and statuses muted, the Needs you stripe dropped) · gap: none */
 /* Hallmark · Merge queue (build) · finish-review: self, Lanes recaptured in dark and light · queued lanes leave Waiting on you, conflicts return to it with the file named · gap: none */
@@ -435,3 +436,30 @@ dialog.sheet-wide { width: min(720px, calc(100% - 48px)); }
 .wt-term { width: 22px; height: 22px; opacity: 0; transition: opacity var(--dur-micro) var(--ease-out); }
 .yard tr:is(:hover, :focus-within, [aria-selected="true"]) .wt-term, .wt-term:focus-visible { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .term-tab-close, .wt-term { transition: none; } }
+
+/* ---------- Code: files on the left, Monaco on the right, edge to edge ---------- */
+.code { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: 100%; min-height: 0; }
+.code-side { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-2xs); min-height: 0; border-right: 1px solid var(--color-rule); background: var(--color-paper); padding: var(--space-2xs) 0 0; }
+.code-side-head { display: flex; align-items: center; gap: var(--space-3xs); padding-inline: var(--space-xs) var(--space-2xs); }
+.code-place { flex: 1; min-width: 0; font-weight: var(--weight-strong); }
+.code-filter { margin-inline: var(--space-xs); width: auto; }
+.code-tree { overflow: auto; padding-block: var(--space-2xs) var(--space-md); }
+.tree-row { display: flex; align-items: center; gap: var(--space-2xs); width: 100%; height: 24px; padding-inline-end: var(--space-xs); border: 0; background: none; color: var(--color-ink-2); font: var(--weight-regular) var(--text-sm)/1 var(--font-body); text-align: left; cursor: pointer; white-space: nowrap; }
+.tree-row:hover { background: var(--color-paper-2); color: var(--color-ink); }
+.tree-row[data-current] { background: var(--color-paper-3); color: var(--color-ink); }
+.tree-row:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.tree-row .icon { color: var(--color-muted); }
+.tree-gap { width: 13px; flex-shrink: 0; }
+.tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tree-found { padding-inline-start: var(--space-sm); gap: var(--space-xs); }
+.tree-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--text-xs); color: var(--color-muted); }
+.code-none { padding: var(--space-xs) var(--space-sm); }
+.code-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--color-paper-sunk); }
+.code-tabs { min-height: 35px; }
+.code-path { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; padding-inline-end: var(--space-xs); }
+.code-unsaved { font-family: var(--font-body); font-size: var(--text-xs); color: var(--color-accent-text); }
+.code-editor { min-height: 0; }
+.code-editor[hidden] { display: none; }
+.code-empty { padding: var(--space-lg) var(--gutter); align-content: start; }
+.diff-open { font-size: var(--text-xs); flex-shrink: 0; }
+.mono-link { font-family: var(--font-mono); font-size: var(--text-xs); text-align: left; }
