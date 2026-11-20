@@ -200,6 +200,14 @@ fn tools() -> Value {
                 "question_id": { "type": "integer" },
                 "answer": { "type": "string" }
             }, "required": ["id", "question_id", "answer"] }
+        },
+        {
+            "name": "brief",
+            "description": "Where to look in this repository for a card or a task: the most relevant files with their symbols (line and signature) and the tests nearby, from Pitlane's tree-sitter index. Give a card id, or a text describing the task.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "integer", "description": "A card number." },
+                "text": { "type": "string", "description": "The task in a sentence or two, when there is no card." }
+            } }
         }
     ])
 }
@@ -221,6 +229,16 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
         }
     };
     Ok(match name {
+        "brief" => {
+            let card = match (args.get("id").and_then(Value::as_u64), str_arg("text")) {
+                (Some(_), _) => cards::get(&repo, id()?)?,
+                (None, Some(text)) => cards::Card { title: text, ..Default::default() },
+                (None, None) => anyhow::bail!("give id or text"),
+            };
+            let b = pit_core::brief::compile(&repo, &pit_core::default_homes().1, &card, pit_core::brief::DEFAULT_BUDGET)?;
+            let text = if b.text.is_empty() { "Nothing in the index matches; search the repository directly.".to_owned() } else { b.text };
+            json!({ "brief": text, "files": b.files.iter().map(|f| &f.path).collect::<Vec<_>>(), "tests": b.tests })
+        }
         "add_card" => {
             let title = str_arg("title").context("title is required")?;
             card_json(&cards::add(
@@ -293,7 +311,7 @@ mod tests {
 
         let list = rpc(&dir, 2, "tools/list", json!({}));
         let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "ask", "answer"]);
+        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "ask", "answer", "brief"]);
 
         let added = rpc(&dir, 3, "tools/call", json!({ "name": "add_card", "arguments": {
             "title": "Rate limit invites",

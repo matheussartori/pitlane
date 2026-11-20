@@ -124,6 +124,9 @@ pub struct RunMeta {
     /// The lane's commit when the agent started: the diff of this round starts here.
     #[serde(default)]
     pub base_sha: Option<String>,
+    /// The map of where to look that the first message carried, if any.
+    #[serde(default)]
+    pub brief: Option<crate::brief::BriefStats>,
 }
 
 fn default_account() -> String {

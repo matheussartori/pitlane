@@ -413,6 +413,32 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                   </section>
                 )}
               </Show>
+              <Show when={m().brief}>
+                {(b) => {
+                  const changed = () => new Set(m().handoff?.files_changed ?? []);
+                  return (
+                    <section class="handoff">
+                      <h2 class="side-title">Map</h2>
+                      <p class="side-hint">
+                        Pitlane pointed the agent to {b().files} {b().files === 1 ? "file" : "files"} from its index, about{" "}
+                        {kTokens(Math.round(b().chars / 4))} tokens.
+                      </p>
+                      <ul class="side-list mono">
+                        <For each={b().paths}>
+                          {(p) => (
+                            <li class="selectable map-path" data-hit={changed().has(p) ? "" : undefined}>
+                              {p}
+                              <Show when={changed().has(p)}>
+                                <span class="map-hit">changed</span>
+                              </Show>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </section>
+                  );
+                }}
+              </Show>
               <Show when={m().denied.length > 0}>
                 <section class="handoff">
                   <h2 class="side-title">Not allowed</h2>

@@ -84,7 +84,7 @@ impl Question {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Card {
     pub id: u32,
     pub title: String,

@@ -557,3 +557,37 @@ async fn the_merge_queue_ships_one_lane_at_a_time() {
     assert_eq!(wait_job(&s, &main_job.id).await.state, JobState::Done);
     assert_eq!(card_state(&fx, c.id).0, CardState::Done);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_message_carries_a_map_of_where_to_look() {
+    let fx = fx();
+    fs::create_dir_all(fx.repo.join("src")).unwrap();
+    fs::write(fx.repo.join("src/kart.ts"), "export function driftAngle(tier: number): number {\n  return tier * 3;\n}\n").unwrap();
+    git(&fx.repo, &["add", "-A"]);
+    git(&fx.repo, &["commit", "-qm", "kart"]);
+    let s = sup(&fx);
+
+    let id = card(&fx, "Raise the drift angle for tier 3");
+    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let end = wait_end(&s, &run.id).await;
+    let b = end.brief.expect("briefed");
+    assert_eq!(b.files, 1);
+    let notes: Vec<String> = s
+        .read_timeline(&run.id, 0)
+        .into_iter()
+        .filter_map(|(_, e)| match e {
+            RunEvent::Note { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert!(notes.iter().any(|n| n.starts_with("Briefed with 1 file from")), "{notes:?}");
+
+    let other = card(&fx, "Drift angle again, without the map");
+    let opts = pit_supervisor_opts_no_brief();
+    let run = s.start(fx.repo.clone(), other, None, opts).unwrap();
+    assert!(wait_end(&s, &run.id).await.brief.is_none());
+}
+
+fn pit_supervisor_opts_no_brief() -> pitd::supervisor::StartOpts {
+    pitd::supervisor::StartOpts { no_brief: true, ..Default::default() }
+}

@@ -50,6 +50,8 @@ pub struct StartOpts {
     pub message: Option<String>,
     /// Review round this run belongs to.
     pub round: u32,
+    /// Leave Pitlane's map out of the first message (to compare runs with and without it).
+    pub no_brief: bool,
 }
 
 /// What a person decides about a card in review.
@@ -197,7 +199,7 @@ impl Supervisor {
         let _ = l.tx.send((i, ev));
     }
 
-    fn read_timeline(&self, id: &str, from: usize) -> Vec<(usize, RunEvent)> {
+    pub fn read_timeline(&self, id: &str, from: usize) -> Vec<(usize, RunEvent)> {
         fs::read_to_string(self.dir(id).join("timeline.jsonl"))
             .unwrap_or_default()
             .lines()
@@ -357,6 +359,7 @@ impl Supervisor {
             verdict: None,
             proofs_ok: None,
             base_sha: None,
+            brief: None,
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -408,7 +411,7 @@ impl Supervisor {
         choice: Choice,
         opts: StartOpts,
     ) -> Result<()> {
-        let StartOpts { handoff_from, message, .. } = opts;
+        let StartOpts { handoff_from, message, no_brief, .. } = opts;
         // Worktree and branch: blocking git work, off the async threads.
         let home = self.cfg.home.clone();
         let me = Arc::clone(&self);
@@ -417,7 +420,7 @@ impl Supervisor {
         let prev_texts = handoff_from.as_deref().map(|p| last_words(&self.read_timeline(p, 0))).unwrap_or_default();
         let repo_for_prep = repo.clone();
         let prep = tokio::task::spawn_blocking(move || {
-            prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), |t| me.emit(&rid, RunEvent::Note { text: t }))
+            prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), !no_brief, |t| me.emit(&rid, RunEvent::Note { text: t }))
         })
         .await??;
         let base_sha = pit_core::git::Git::new(&prep.worktree).run(&["rev-parse", "HEAD"]).ok();
@@ -425,6 +428,7 @@ impl Supervisor {
             m.branch = prep.branch.clone();
             m.worktree = prep.worktree.clone();
             m.base_sha = base_sha;
+            m.brief = prep.brief.clone();
         });
 
         let session = self.get(&id)?.session_id;
@@ -1166,6 +1170,7 @@ struct Prepared {
     branch: String,
     worktree: PathBuf,
     briefing: String,
+    brief: Option<pit_core::brief::BriefStats>,
     tools: Vec<String>,
     max_turns: u32,
     model: Option<String>,
@@ -1201,7 +1206,7 @@ fn last_words(timeline: &[(usize, RunEvent)]) -> String {
     texts.iter().rev().take(2).rev().cloned().collect::<Vec<_>>().join("\n\n")
 }
 
-fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &str)>, note: impl Fn(String)) -> Result<Prepared> {
+fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &str)>, brief: bool, note: impl Fn(String)) -> Result<Prepared> {
     let r = Repo::open(repo, &home_dir(), home)?;
     let c = cards::get(&r, card)?;
     let branch = match &c.lane {
@@ -1223,11 +1228,37 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
     note(format!("Working in {}", worktree.display()));
     let mut tools: Vec<String> = RUN_BASE_TOOLS.iter().map(|s| s.to_string()).collect();
     tools.extend(r.flow.run.allow.iter().cloned());
+    let the_card = cards::get(&r, card)?;
+    // Where to look, from the index. A failure here never stops the run; it runs without the map.
+    let map = if brief && r.flow.run.brief {
+        match pit_core::brief::compile(&r, home, &the_card, pit_core::brief::DEFAULT_BUDGET) {
+            Ok(b) if !b.text.is_empty() => {
+                note(format!("Briefed with {} from the index (~{} tokens)", plural(b.stats.files, "file"), b.stats.chars / 4));
+                Some(b)
+            }
+            Ok(_) => {
+                note("Nothing in the index matches this card; running without a map".into());
+                None
+            }
+            Err(e) => {
+                note(format!("Could not compile the map ({e:#}); running without it"));
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(Prepared {
         branch,
         worktree: worktree.clone(),
+        brief: map.as_ref().map(|b| b.stats.clone()),
         briefing: {
-            let mut b = runs::briefing(&r, &cards::get(&r, card)?);
+            let mut b = runs::briefing(&r, &the_card);
+            if let Some(m) = &map {
+                let end = "\nWhen you finish, end with the handoff.\n";
+                let at = b.rfind(end).unwrap_or(b.len());
+                b.insert_str(at, &format!("\n{}", m.text));
+            }
             if let Some((prev, words)) = continues {
                 let g = pit_core::git::Git::new(&worktree);
                 // Production as the yard resolves it: the remote branch, or the local one without a remote.
@@ -1283,4 +1314,8 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
     };
     cards::update(&r, m.card, CardPatch { state: Some(next), ..Default::default() })?;
     Ok(())
+}
+
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }

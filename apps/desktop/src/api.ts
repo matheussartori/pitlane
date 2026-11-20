@@ -272,6 +272,8 @@ export interface RunMeta {
   proofs_ok?: boolean | null;
   /** The lane's commit when this run started: where this round's diff begins. */
   base_sha?: string | null;
+  /** The map of where to look that the run's first message carried. */
+  brief?: { files: number; chars: number; ms: number; indexed: number; paths: string[] } | null;
 }
 
 export interface Quota {

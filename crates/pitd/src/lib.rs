@@ -89,7 +89,8 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
             let card = req.get("card").and_then(Value::as_u64).context("card is required")?;
             let allow_api_key = req.get("allow_api_key").and_then(Value::as_bool).unwrap_or(false);
-            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, ..Default::default() })? })
+            let no_brief = req.get("no_brief").and_then(Value::as_bool).unwrap_or(false);
+            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, ..Default::default() })? })
         }
         "resume" => {
             let prev = sup.get(run_arg(req)?)?;

@@ -153,11 +153,13 @@ pub struct RunCfg {
     pub model: Option<String>,
     /// Prefix of the branch made for a card that has no lane: `feat/` gives `feat/41-avatar-limit`.
     pub branch_prefix: String,
+    /// Add Pitlane's map of where to look (from the repository index) to each run's first message.
+    pub brief: bool,
 }
 
 impl Default for RunCfg {
     fn default() -> Self {
-        Self { allow: Vec::new(), max_turns: 60, model: None, branch_prefix: "feat/".into() }
+        Self { allow: Vec::new(), max_turns: 60, model: None, branch_prefix: "feat/".into(), brief: true }
     }
 }
 
@@ -250,6 +252,7 @@ max_rounds  = 3             # "ask for changes" rounds before the card comes bac
 allow       = []            # extra tools for agents, e.g. ["Bash(npm test:*)", "Bash(npm run lint:*)"]
 max_turns   = 60
 branch_prefix = "feat/"     # a card without a lane runs on feat/<id>-<slug>
+brief = true                # tell the agent where to look, from Pitlane's index of the repository
 # model     = "sonnet"
 "#;
 

@@ -39,5 +39,16 @@
   "error": null,
   "denied": [],
   "resumed_from": null,
-  "waiting": []
+  "waiting": [],
+  "brief": {
+    "files": 3,
+    "chars": 2840,
+    "ms": 61,
+    "indexed": 39,
+    "paths": [
+      "README.md",
+      "docs/intro.ts",
+      "src/app.ts"
+    ]
+  }
 }

@@ -98,6 +98,9 @@ enum Cmd {
         /// Yes to an API key account if the route reaches one (paid per token).
         #[arg(long)]
         allow_api_key: bool,
+        /// Leave Pitlane's map of where to look out of the first message.
+        #[arg(long)]
+        no_brief: bool,
     },
     /// Continue a run that hit its usage limit with the route's next option.
     Continue {
@@ -119,6 +122,17 @@ enum Cmd {
     },
     /// Put a card in review back to ready; its lane stays.
     Discard { card: u32 },
+    /// Index the repository's symbols (tree-sitter), for briefings. Incremental.
+    Index,
+    /// The briefing a run would get: where to look for a card (or for a text with --text).
+    Brief {
+        card: Option<u32>,
+        #[arg(long)]
+        text: Option<String>,
+        /// Print JSON (files, scores, why).
+        #[arg(long)]
+        json: bool,
+    },
     /// The merge queue: lanes shipping into dev or main, one at a time.
     Queue,
     /// Put a lane in the merge queue (default: its next stage).
@@ -337,10 +351,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": "deny", "message": message }))?;
             println!("{} denied {}", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
         }
-        Cmd::Run { card, detach, allow_api_key } => {
+        Cmd::Run { card, detach, allow_api_key, no_brief } => {
             let mut c = daemon()?;
             let v = c
-                .call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card, "allow_api_key": allow_api_key }))
+                .call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card, "allow_api_key": allow_api_key, "no_brief": no_brief }))
                 .map_err(api_key_hint)?;
             let m: RunMeta = serde_json::from_value(v["run"].clone())?;
             println!("{} run {} for #{} {}", paint(DONE, "✓"), m.id, m.card, m.card_title);
@@ -417,6 +431,38 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Discard { card } => {
             daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "discard" }))?;
             println!("{} #{card} is ready again; its lane stays", paint(DONE, "✓"));
+        }
+        Cmd::Index => {
+            let (_, st) = pit_core::index::update(&repo, &pit_core::default_homes().1)?;
+            println!(
+                "{} {} files, {} symbols ({} parsed, {} unchanged, {} skipped) in {}ms",
+                paint(DONE, "✓"),
+                st.files,
+                st.symbols,
+                st.parsed,
+                st.reused,
+                st.skipped,
+                st.ms
+            );
+        }
+        Cmd::Brief { card, text, json } => {
+            let c = match (card, text) {
+                (Some(id), None) => cards::get(&repo, id)?,
+                (None, Some(t)) => cards::Card { title: t, ..Default::default() },
+                _ => anyhow::bail!("give a card number or --text"),
+            };
+            let b = pit_core::brief::compile(&repo, &pit_core::default_homes().1, &c, pit_core::brief::DEFAULT_BUDGET)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&b)?);
+            } else if b.text.is_empty() {
+                println!("nothing in the index matches this card ({} files indexed)", b.stats.indexed);
+            } else {
+                println!("{}", b.text);
+                eprintln!(
+                    "{}",
+                    paint(MUTED, &format!("{} files, {} chars (~{} tokens), {}ms, index {} files", b.stats.files, b.stats.chars, b.stats.chars / 4, b.stats.ms, b.stats.indexed))
+                );
+            }
         }
         Cmd::Queue => {
             let v = daemon()?.call(serde_json::json!({ "op": "queue", "repo": repo.root }))?;

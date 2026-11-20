@@ -397,3 +397,7 @@ dialog.sheet-wide { width: min(720px, calc(100% - 48px)); }
 @media (prefers-reduced-motion: reduce) {
   .repo, .yard tbody tr:not(.group-row) td, .yard tr .next .btn { transition: none; }
 }
+
+/* Run: the map Pitlane gave the agent; files it went on to change say so, quietly. */
+.map-path { display: flex; gap: var(--space-xs); justify-content: space-between; }
+.map-hit { font-family: var(--font-body); font-size: var(--text-xs); color: var(--color-muted); flex-shrink: 0; }
