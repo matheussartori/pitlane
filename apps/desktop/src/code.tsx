@@ -7,6 +7,7 @@ import type * as M from "monaco-editor";
 import { files, type FileChanges, type Lane, type SearchHit } from "./api";
 import { Icon } from "./icons";
 import { loadMonaco, themeName } from "./monaco";
+import { ensureLsp, familyName, familyOf, installLsp, lspStateFor } from "./lsp";
 import { Spinner, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -349,6 +350,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
   let baseModel: M.editor.ITextModel | null = null;
   let marks: M.editor.IEditorDecorationsCollection | null = null;
   const [ready, setReady] = createSignal(false);
+  let markersSub: { dispose(): void } | null = null;
 
   const cur = () => opened().find((o) => key(o.root, o.path) === current()) ?? null;
   const tabs = () => opened().filter((o) => o.root === root());
@@ -418,6 +420,8 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     }
     remember();
     void loadChanges();
+    if (monaco && o?.model) void ensureLsp(monaco, o.root, o.path);
+    countProblems();
   }
 
   function close(o: Open) {
@@ -455,6 +459,27 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     } catch (e) {
       toast({ tone: "fail", title: `${o.path} was not saved`, body: msg(e) });
     }
+  }
+
+  // ------------------------------------------------ language servers and problems
+
+  const [problems, setProblems] = createSignal({ errors: 0, warnings: 0 });
+  function countProblems() {
+    const o = cur();
+    if (!monaco || !o?.model) return setProblems({ errors: 0, warnings: 0 });
+    const ms = monaco.editor.getModelMarkers({ resource: o.model.uri });
+    setProblems({ errors: ms.filter((x) => x.severity === monaco!.MarkerSeverity.Error).length, warnings: ms.filter((x) => x.severity === monaco!.MarkerSeverity.Warning).length });
+  }
+  const lsp = () => {
+    const o = cur();
+    return o ? lspStateFor(o.root, o.path) : undefined;
+  };
+  async function install() {
+    const o = cur();
+    const st = lsp();
+    if (!monaco || !o || st?.s !== "missing") return;
+    if (!window.confirm(`${st.hint}\n\nInstall it now?`)) return;
+    await installLsp(monaco, o.root, o.path);
   }
 
   // ------------------------------------------------ changes against the lane's base
@@ -581,6 +606,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       "semanticHighlighting.enabled": true,
     });
     editor.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => void save());
+    markersSub = m.editor.onDidChangeMarkers(() => countProblems());
     editor.addCommand(m.KeyCode.F7, () => nextChange(false));
     editor.addCommand(m.KeyMod.Shift | m.KeyCode.F7, () => nextChange(true));
     // Go to definition (and peek, references) into another file opens it here, like a tab.
@@ -622,6 +648,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     if (o && editor && !diff()) o.view = editor.saveViewState();
     openHere = null;
     marks = null;
+    markersSub?.dispose();
     editor?.dispose(); // the models stay: they hold your edits
     diffEditor?.dispose();
     baseModel?.dispose();
@@ -771,6 +798,40 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
                 <span class="code-path selectable" title={`${o().root}/${o().path}`}>
                   {o().path}
                 </span>
+                <Show when={problems().errors + problems().warnings > 0}>
+                  <button
+                    type="button"
+                    class="btn btn-ghost code-problems"
+                    data-errors={problems().errors > 0 ? "" : undefined}
+                    title="Go to the next problem (F8)"
+                    onClick={() => (editor?.focus(), editor?.trigger("pitlane", "editor.action.marker.next", null))}
+                  >
+                    <Icon name={problems().errors ? "fail" : "needs"} small />
+                    {problems().errors + problems().warnings} {problems().errors + problems().warnings === 1 ? "problem" : "problems"}
+                  </button>
+                </Show>
+                <Show when={lsp()}>
+                  {(st) => {
+                    const lang = () => familyName(familyOf(o().path) ?? "");
+                    return (
+                      <Show
+                        when={st().s === "missing"}
+                        fallback={
+                          <span class="code-lsp" data-s={st().s} title={st().s === "failed" ? (st() as { why: string }).why : st().s === "ready" ? `${lang()} through ${(st() as { name: string }).name}: definitions, references, types and problems across the project` : undefined}>
+                            <Show when={st().s === "starting" || st().s === "installing"}>
+                              <Spinner />
+                            </Show>
+                            {st().s === "ready" ? (st() as { name: string }).name : st().s === "starting" ? `Starting ${lang()}` : st().s === "installing" ? `Installing ${lang()} support` : `${lang()} support off`}
+                          </span>
+                        }
+                      >
+                        <button type="button" class="btn btn-ghost code-lsp-add" title={(st() as { hint: string }).hint} onClick={() => void install()}>
+                          Add {lang()} support
+                        </button>
+                      </Show>
+                    );
+                  }}
+                </Show>
                 <Show when={changeCount() > 0}>
                   <button
                     type="button"

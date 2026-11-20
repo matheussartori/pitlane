@@ -16,6 +16,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 mod files;
+mod lsp;
 mod term;
 use serde::{Deserialize, Serialize};
 
@@ -610,6 +611,57 @@ async fn file_changes(root: String, path: String) -> CmdResult<files::Changes> {
     .await
 }
 
+// ---------------------------------------------------------------- language servers
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum LspStart {
+    Started(lsp::Started),
+    Missing(lsp::Missing),
+    /// A language with no server Pitlane knows (Markdown, CSS…): Monaco's own support only.
+    None,
+}
+
+#[tauri::command]
+async fn lsp_start(app: tauri::AppHandle, root: String, lang: String) -> CmdResult<LspStart> {
+    let Some(family) = lsp::family(&lang) else { return Ok(LspStart::None) };
+    blocking(move || {
+        let dir = Path::new(&root);
+        match lsp::find(dir, family, &default_homes().1) {
+            Err(m) => Ok(LspStart::Missing(m)),
+            Ok((name, program, args)) => {
+                let lsps = app.state::<lsp::Lsps>();
+                Ok(LspStart::Started(lsps.start(lsp::app_sink(&app), dir, family, &program, &args, &name)?))
+            }
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+fn lsp_send(lsps: tauri::State<'_, lsp::Lsps>, id: u32, msg: String) -> CmdResult<()> {
+    lsps.send(id, &msg).map_err(|e| format!("{e:#}"))
+}
+
+/// Installs the server for a language, on the person's click. Only the command `find` names.
+#[tauri::command]
+async fn lsp_install(root: String, lang: String) -> CmdResult<()> {
+    let Some(family) = lsp::family(&lang) else { return Err(format!("no language server for {lang}")) };
+    blocking(move || {
+        let home = default_homes().1;
+        let Err(missing) = lsp::find(Path::new(&root), family, &home) else { return Ok(()) };
+        let Some(cmd) = missing.install else { bail!("{}", missing.hint) };
+        std::fs::create_dir_all(lsp::own_dir(&home))?;
+        let out = std::process::Command::new(&cmd[0]).args(&cmd[1..]).current_dir(lsp::own_dir(&home)).output().with_context(|| format!("could not run {}", cmd[0]))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            bail!("{} failed: {}", cmd.join(" "), err.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"));
+        }
+        Ok(())
+    })
+    .await
+}
+
 // ---------------------------------------------------------------- free terminals
 
 #[tauri::command]
@@ -720,6 +772,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Following::default())
         .manage(term::Terms::default())
+        .manage(lsp::Lsps::default())
         .menu(menu)
         .on_menu_event(|app, e| {
             if e.id().as_ref() == "close-window" {
@@ -765,6 +818,9 @@ pub fn run() {
             dir_list,
             file_changes,
             term_open,
+            lsp_start,
+            lsp_send,
+            lsp_install,
             open_external,
             term_write,
             term_resize,
@@ -785,6 +841,7 @@ pub fn run() {
             // No shell outlives the app.
             if let tauri::RunEvent::Exit = event {
                 app.state::<term::Terms>().close_all();
+                app.state::<lsp::Lsps>().close_all();
             }
         });
 }

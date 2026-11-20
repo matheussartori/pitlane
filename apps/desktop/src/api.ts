@@ -420,6 +420,30 @@ export function openExternal(url: string): Promise<void> {
   return invoke<void>("open_external", { url });
 }
 
+// ---------------------------------------------------------------- language servers
+
+export type LspStart =
+  | { kind: "started"; id: number; name: string }
+  | { kind: "missing"; family: string; hint: string; install: string[] | null }
+  | { kind: "none" };
+
+export const lspApi = {
+  start: (root: string, lang: string) => invoke<LspStart>("lsp_start", { root, lang }),
+  send: (id: number, msg: string) => invoke<void>("lsp_send", { id, msg }),
+  install: (root: string, lang: string) => invoke<void>("lsp_install", { root, lang }),
+};
+
+/** Messages from language servers, and their exits. Nothing in the browser preview. */
+export async function onLsp(onMsg: (id: number, msg: string) => void, onExit: (id: number) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  const a = await listen<{ id: number; msg: string }>("lsp-msg", (e) => onMsg(e.payload.id, e.payload.msg));
+  const b = await listen<number>("lsp-exit", (e) => onExit(e.payload));
+  return () => {
+    a();
+    b();
+  };
+}
+
 /** Terminal output and exits. Nothing in the browser preview. */
 export async function onTerm(onData: (id: number, data: string) => void, onExit: (id: number, code: number) => void): Promise<() => void> {
   if (!inTauri) return () => {};
