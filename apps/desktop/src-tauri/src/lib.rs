@@ -663,6 +663,8 @@ async fn files_list(root: String) -> CmdResult<Vec<String>> {
 #[derive(Default)]
 struct CodeView {
     views: Mutex<Vec<View>>,
+    /// The folders VS Code's picker offers: [{root, label, kind}].
+    places: Mutex<serde_json::Value>,
     /// The folder the tab wants shown, and where (logical pixels).
     shown: Mutex<Option<(String, (f64, f64, f64, f64))>>,
     next: std::sync::atomic::AtomicU32,
@@ -772,7 +774,22 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let window = app.get_window("main").ok_or("no main window")?;
     let (rr, ff) = (ready.clone(), folder.to_owned());
-    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(url)).focused(false).initialization_script(vscode::look_script()).on_page_load(move |wv, p| {
+    let places = state.places.lock().unwrap().clone();
+    let nav_app = app.clone();
+    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
+        .focused(false)
+        .initialization_script(vscode::look_script(&places))
+        // The folder picker inside VS Code asks for another folder with a pitlane:// address.
+        .on_navigation(move |u| {
+            if u.scheme() != "pitlane" {
+                return true;
+            }
+            if let Some((_, root)) = u.query_pairs().find(|(k, _)| k == "root") {
+                let _ = nav_app.emit("vscode-place", root.into_owned());
+            }
+            false
+        })
+        .on_page_load(move |wv, p| {
         if p.event() != PageLoadEvent::Finished {
             return;
         }
@@ -808,6 +825,19 @@ fn hex_colour(s: &str) -> Option<(u8, u8, u8)> {
     }
     let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
     Some((p(0)?, p(2)?, p(4)?))
+}
+
+/// The folders VS Code's picker offers (the repository and the lanes' worktrees), now and in
+/// every view already loaded.
+#[tauri::command]
+fn vscode_places(app: tauri::AppHandle, places: serde_json::Value) {
+    let state = app.state::<CodeView>();
+    *state.places.lock().unwrap() = places.clone();
+    for v in state.views.lock().unwrap().iter() {
+        if let Some(wv) = app.get_webview(&v.label) {
+            let _ = wv.eval(vscode::places_script(&places));
+        }
+    }
 }
 
 /// Starts VS Code on `folder` out of sight, so the Code tab opens at once.
@@ -1009,6 +1039,7 @@ pub fn run() {
             term_open,
             vscode_theme,
             vscode_prewarm,
+            vscode_places,
             vscode_show,
             vscode_hide,
             vscode_open,

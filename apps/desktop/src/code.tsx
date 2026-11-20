@@ -1,9 +1,8 @@
 // Code: VS Code (code-server, bundled with Pitlane) over the tab, on the repository or a lane's
 // worktree. Files opened elsewhere in Pitlane (a terminal path, Review, a run) open here at their line.
-import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
-import { onVscodeReady, vscode, type Lane } from "./api";
+import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { onVscodePlace, onVscodeReady, vscode, type Lane } from "./api";
 import { prefs } from "./prefs";
-import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -153,56 +152,21 @@ export function prewarmCode(repo: string) {
 /** The editor's ground, painted under VS Code while it loads, so nothing flashes white. */
 const ground = () => hex(getComputedStyle(document.documentElement).getPropertyValue("--color-paper-sunk").trim());
 
-// ---------------------------------------------------------------- the folder: the repository or a lane
-function PlacePicker(props: { places: { root: string; label: string }[]; root: string; repo: string; onPick: (root: string) => void }) {
-  const [open, setOpen] = createSignal(false);
-  let box!: HTMLDivElement;
-  const here = () => props.places.find((p) => p.root === props.root) ?? props.places[0];
-  const icon = (root: string) => (root === props.repo ? "folder" : "branch");
-  const away = (e: PointerEvent) => !box.contains(e.target as globalThis.Node) && setOpen(false);
-  createEffect(() => {
-    if (open()) document.addEventListener("pointerdown", away, true);
-    else document.removeEventListener("pointerdown", away, true);
-  });
-  onCleanup(() => document.removeEventListener("pointerdown", away, true));
-  const pick = (r: string) => {
-    props.onPick(r);
-    setOpen(false);
-  };
-  return (
-    <div class="anchor code-place" ref={box}>
-      <button type="button" class="repo code-place-btn" aria-haspopup="menu" aria-expanded={open()} title={here()?.root} onClick={() => setOpen(!open())} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
-        <Icon name={icon(props.root)} small />
-        <span class="code-place-name">{here()?.label}</span>
-        <Icon name="chev" small />
-      </button>
-      <Show when={open()}>
-        <div class="pop" role="menu" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
-          <For each={props.places}>
-            {(p) => (
-              <div class="menu-item" role="menuitem" tabindex="0" aria-current={p.root === props.root} onClick={() => pick(p.root)} onKeyDown={(e) => e.key === "Enter" && pick(p.root)}>
-                <Icon name={icon(p.root)} small />
-                <span class="repo-entry">
-                  <span class="repo-name">{p.label}</span>
-                  <span class="repo-path">{p.root === props.repo ? "Repository" : "Lane worktree"}</span>
-                </span>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </div>
-  );
+// ---------------------------------------------------------------- the folders VS Code offers
+
+/** The repository and the lanes' worktrees, for the folder picker inside VS Code's side bar. */
+export function setCodePlaces(repo: string, repoName: string, lanes: Lane[]) {
+  const places = [
+    { root: repo, label: repoName, kind: "repo" as const },
+    ...lanes.filter((l) => l.worktree && !l.worktree.is_main).map((l) => ({ root: l.worktree!.path, label: l.branch, kind: "lane" as const })),
+  ];
+  void vscode.places(places).catch(() => {});
 }
 
 // ---------------------------------------------------------------- the tab
 
 export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[] }) {
   let host!: HTMLDivElement;
-  const places = () => [
-    { root: props.repo, label: props.repoName },
-    ...props.lanes.filter((l) => l.worktree && !l.worktree.is_main).map((l) => ({ root: l.worktree!.path, label: l.branch })),
-  ];
   const root = () => rootSig() ?? props.repo;
   const [state, setState] = createSignal<"starting" | "ready" | "failed">("starting");
   // "Opening VS Code" only when it takes long enough to notice.
@@ -260,12 +224,16 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     });
     mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
     let offReady: (() => void) | null = null;
+    let offPlace: (() => void) | null = null;
     void onVscodeReady((folder) => folder === root() && setState("ready")).then((off) => (alive ? (offReady = off) : off()));
+    // The picker inside VS Code chose another folder.
+    void onVscodePlace((r) => setRootSig(r)).then((off) => (alive ? (offPlace = off) : off()));
     const onRequest = () => void openPending();
     window.addEventListener("pitlane-code-open", onRequest);
     onCleanup(() => {
       alive = false;
       offReady?.();
+      offPlace?.();
       ro.disconnect();
       mo.disconnect();
       window.removeEventListener("pitlane-code-open", onRequest);
@@ -276,11 +244,6 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
 
   return (
     <div class="vs-screen">
-      <div class="vs-bar">
-        <PlacePicker places={places()} root={root()} repo={props.repo} onPick={setRootSig} />
-        <span class="spacer" />
-
-      </div>
       <div class="vs-host" ref={host}>
         <Show when={state() === "starting" && slow()}>
           <div class="vs-opening" role="status">

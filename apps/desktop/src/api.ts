@@ -400,8 +400,16 @@ export const vscode = {
   /** Puts VS Code on the tab; true when it is already drawn, else it comes in by itself (onVscodeReady). */
   show: (folder: string, r: { x: number; y: number; w: number; h: number }, bg: string) => invoke<boolean>("vscode_show", { folder, ...r, bg }),
   hide: () => invoke<void>("vscode_hide"),
+  /** The folders VS Code's own picker offers. */
+  places: (places: { root: string; label: string; kind: "repo" | "lane" }[]) => invoke<void>("vscode_places", { places }),
   open: (path: string, line?: number, col?: number) => invoke<void>("vscode_open", { path, line: line ?? null, col: col ?? null }),
 };
+
+/** The folder picker inside VS Code chose a folder. Nothing in the browser preview. */
+export async function onVscodePlace(cb: (root: string) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  return listen<string>("vscode-place", (e) => cb(e.payload));
+}
 
 /** VS Code finished drawing on a folder. Nothing in the browser preview. */
 export async function onVscodeReady(cb: (folder: string) => void): Promise<() => void> {

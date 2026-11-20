@@ -155,7 +155,9 @@ fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
         ("window.menuBarVisibility", json!("hidden"), vec![json!("compact")]),
         ("window.title", json!("${activeEditorShort}"), vec![]),
         ("window.density.editorTabHeight", json!("compact"), vec![]),
-        ("workbench.activity.showAccounts", json!(false), vec![]),
+        ("workbench.activity.showAccounts", json!(true), vec![json!(false)]),
+        // Flat, so Pitlane's own shapes apply (the modern UI floats rounded panels on a backdrop).
+        ("workbench.experimental.modernUI", json!(false), vec![]),
         ("workbench.productIconTheme", json!("fluent-icons"), vec![]),
         ("workbench.iconTheme", json!("symbols"), vec![]),
         ("workbench.tree.indent", json!(12), vec![]),
@@ -309,15 +311,20 @@ fn base64(b: &[u8]) -> String {
     out
 }
 
-/// Pitlane's type and shapes on VS Code's page: Geist and Geist Mono, and vscode-look.css, added
-/// before VS Code draws.
-pub fn look_script() -> String {
-    let font = |fam: &str, b: &[u8]| format!("@font-face{{font-family:\"{fam}\";src:url(data:font/woff2;base64,{}) format(\"woff2\");font-weight:100 900;font-display:block;}}", base64(b));
-    let css = format!("{}{}{}", font("Geist", GEIST), font("Geist Mono", GEIST_MONO), LOOK_CSS);
-    format!(
-        "(function(){{var add=function(){{if(document.getElementById('pitlane-look'))return;var s=document.createElement('style');s.id='pitlane-look';s.textContent={};(document.head||document.documentElement).appendChild(s);}};if(document.documentElement)add();else document.addEventListener('DOMContentLoaded',add);}})();",
-        serde_json::to_string(&css).unwrap_or_default()
-    )
+const LOOK_JS: &str = include_str!("vscode-look.js");
+const PLACE_JS: &str = include_str!("vscode-place.js");
+
+/// Pitlane's type and shapes on VS Code's page (vscode-look.css, Geist and Geist Mono), and the
+/// folder picker in its side bar, given the places it offers. Run before VS Code draws.
+pub fn look_script(places: &serde_json::Value) -> String {
+    let fonts = serde_json::json!([["Geist", base64(GEIST)], ["Geist Mono", base64(GEIST_MONO)]]);
+    let look = LOOK_JS.replace("__CSS__", &serde_json::to_string(LOOK_CSS).unwrap_or_default()).replace("__FONTS__", &fonts.to_string());
+    format!("window.__pitlanePlaces={};\n{look}\n{PLACE_JS}", places)
+}
+
+/// Updates the places the picker offers, in a page already loaded.
+pub fn places_script(places: &serde_json::Value) -> String {
+    format!("window.__pitlanePlaces={places};if(window.__pitlaneSetPlaces)window.__pitlaneSetPlaces(window.__pitlanePlaces);")
 }
 
 /// The page that types the password into code-server's login form, once, in its own webview.
@@ -387,7 +394,7 @@ mod tests {
         look(&mut o);
         assert_eq!(o["workbench.iconTheme"], "material-icon-theme", "a choice stays");
         assert_eq!(o["editor.fontFamily"], "'Geist Mono', Menlo, monospace", "an earlier Pitlane default moves on");
-        assert!(look_script().contains("pitlane-look"));
+        assert!(look_script(&serde_json::json!([])).contains("adoptedStyleSheets"));
     }
 
     #[test]

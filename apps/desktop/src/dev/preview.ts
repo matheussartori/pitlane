@@ -142,6 +142,7 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       return true as T;
     case "vscode_theme":
     case "vscode_prewarm":
+    case "vscode_places":
     case "vscode_hide":
     case "vscode_open":
       return null as T;

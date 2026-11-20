@@ -13,7 +13,7 @@ import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalsWanting } from "./terminals";
-import { CodeScreen, openInCode, prewarmCode, rethemeCode } from "./code";
+import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
 import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
@@ -245,6 +245,11 @@ export default function App() {
 
   // VS Code loads in the background on the repository, so the Code tab opens at once.
   createEffect(on(repo, (r) => r && prewarmCode(r)));
+  // VS Code's own folder picker offers the repository and the lanes' worktrees.
+  createEffect(() => {
+    const r = repo();
+    if (r) setCodePlaces(r, current()?.name ?? "repository", yard()?.lanes ?? []);
+  });
 
   // The planner, read again when the cards change: which open cards should wait, and for what.
   const [plan, setPlan] = createSignal<Plan | null>(null);
