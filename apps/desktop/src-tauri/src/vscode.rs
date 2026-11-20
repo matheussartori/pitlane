@@ -126,7 +126,7 @@ fn first_settings(pitlane_home: &Path) -> Result<()> {
         "workbench.startupEditor": "none",
         "workbench.tips.enabled": false,
         "workbench.layoutControl.enabled": false,
-        "window.commandCenter": false,
+        "window.commandCenter": true,
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "workbench.editor.enablePreview": false,
         "workbench.welcomePage.walkthroughs.openOnInstall": false,
@@ -151,7 +151,9 @@ fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
     use serde_json::{Value, json};
     let mono = "'Geist Mono', Menlo, monospace";
     let keys: Vec<(&str, Value, Vec<Value>)> = vec![
-        ("workbench.activityBar.location", json!("default"), vec![json!("top")]),
+        // Cursor's layout: the views as a row of icons atop the side bar, one title bar with search.
+        ("workbench.activityBar.location", json!("top"), vec![json!("default")]),
+        ("window.commandCenter", json!(true), vec![json!(false)]),
         ("window.menuBarVisibility", json!("hidden"), vec![json!("compact")]),
         ("window.title", json!("${activeEditorShort}"), vec![]),
         ("window.density.editorTabHeight", json!("compact"), vec![]),

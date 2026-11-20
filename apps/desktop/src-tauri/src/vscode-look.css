@@ -130,16 +130,13 @@
 .monaco-workbench .monaco-button,
 .monaco-workbench .monaco-select-box { border-radius: 5px !important; }
 
-/* Pitlane's folder picker takes the side bar's title (the view's name is the rail's icon). */
-.monaco-workbench .part.sidebar > .title > .title-label { flex: 1; min-width: 0; padding-left: 0 !important; }
-.monaco-workbench .part.sidebar > .title > .title-label:has(#pitlane-place) h2 { display: none !important; }
-/* Pitlane's folder picker, placed by the app at the top of the side bar. */
+/* Pitlane's folder picker, at the left of VS Code's title bar. */
 #pitlane-place {
   display: flex;
   align-items: center;
   gap: 6px;
   height: 26px;
-  margin: 0 4px 0 8px;
+  margin: 0 0 0 8px;
   padding: 0 8px;
   border: 0;
   border-radius: 6px;
@@ -148,8 +145,10 @@
   font: 500 13px/1 "Geist", -apple-system, sans-serif;
   cursor: pointer;
   text-align: left;
-  width: calc(100% - 12px);
+  max-width: 280px;
   box-sizing: border-box;
+  background: transparent;
+  -webkit-app-region: no-drag;
 }
 #pitlane-place:hover { background: var(--pl-active); }
 #pitlane-place:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: -1px; }
@@ -201,3 +200,68 @@ body:has(.monaco-workbench.vs) { background: oklch(95.2% 0.004 255) !important; 
 /* An empty editor is just the ground: no VS Code letterpress. The keyboard layout item goes. */
 .monaco-workbench .letterpress { display: none !important; }
 .monaco-workbench .part.statusbar > .items-container > .statusbar-item[id="status.workbench.keyboardLayout"] { display: none !important; }
+
+/* ---------- Cursor's layout: one title bar, the views as a row of icons atop the side bar ---------- */
+
+/* The title bar: Pitlane's 36px strip, the folder on the left, search in the middle, you on the right. */
+.monaco-workbench .part.titlebar { background-color: var(--vscode-sideBar-background) !important; border-bottom: 1px solid var(--pl-rule) !important; }
+.monaco-workbench .part.titlebar > .titlebar-container > .titlebar-left { padding-left: 4px; }
+.monaco-workbench .part.titlebar .window-title { font-size: 12.5px !important; }
+.monaco-workbench .part.titlebar .command-center .agent-status-container,
+.monaco-workbench .part.titlebar .command-center-center { border-radius: 6px !important; }
+.monaco-workbench .part.titlebar .command-center .action-item.command-center-center {
+  height: 26px !important;
+  min-width: 280px;
+  max-width: 440px;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background-color: var(--pl-hover) !important;
+  color: var(--pl-muted) !important;
+}
+.monaco-workbench .part.titlebar .command-center .action-item.command-center-center:hover { background-color: var(--pl-active) !important; color: var(--vscode-foreground) !important; }
+.monaco-workbench .part.titlebar .command-center .action-item.command-center-center .search-label { font-size: 12.5px; }
+.monaco-workbench .part.titlebar .action-toolbar-container .action-label,
+.monaco-workbench .part.titlebar .command-center .action-item:not(.command-center-center) .action-label {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+}
+.monaco-workbench .part.titlebar .action-toolbar-container { margin-right: 6px; }
+
+/* The views, as a row of icons at the top of the side bar: 28px rounded targets, no underline. */
+.monaco-workbench .part.sidebar .composite-bar-container,
+.monaco-workbench .part.sidebar > .header-or-footer { padding-inline: 6px !important; }
+.monaco-workbench .part.sidebar .composite-bar .action-item .active-item-indicator,
+.monaco-workbench .part.sidebar > .header-or-footer .active-item-indicator { display: none !important; }
+.monaco-workbench .part.sidebar > .header-or-footer .composite-bar .monaco-action-bar .action-item,
+.monaco-workbench .part.sidebar .title .composite-bar .monaco-action-bar .action-item { margin-right: 2px; }
+.monaco-workbench .part.sidebar > .header-or-footer .composite-bar .monaco-action-bar .action-label,
+.monaco-workbench .part.sidebar .title .composite-bar .monaco-action-bar .action-label {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 16px !important;
+  color: var(--pl-muted) !important;
+}
+.monaco-workbench .part.sidebar > .header-or-footer .composite-bar .action-item:hover .action-label,
+.monaco-workbench .part.sidebar .title .composite-bar .action-item:hover .action-label { background-color: var(--pl-hover); color: var(--vscode-foreground) !important; }
+.monaco-workbench .part.sidebar > .header-or-footer .composite-bar .action-item.checked .action-label,
+.monaco-workbench .part.sidebar .title .composite-bar .action-item.checked .action-label { background-color: var(--pl-active); color: var(--vscode-foreground) !important; }
+.monaco-workbench .part.sidebar > .header-or-footer { border-bottom: 1px solid var(--pl-rule); }
+
+/* Section headers inside the side bar: Pitlane's group heads, muted, 12px from the edge. */
+.monaco-workbench .part.sidebar .monaco-pane-view .pane > .pane-header { padding-left: 6px !important; }
+.monaco-workbench .part.sidebar > .title { padding-inline: 6px 4px; }
+.monaco-workbench .part.sidebar > .title > .title-label h2 { color: var(--pl-muted) !important; font-size: 12px !important; }
+
+/* Status bar: 6px more room at its sides, nothing touching the panel's edge. */
+.monaco-workbench .part.statusbar > .items-container { padding-inline: 6px; }

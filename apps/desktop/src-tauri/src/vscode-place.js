@@ -32,7 +32,7 @@
     m.style.top = r.bottom + 4 + "px";
     m.innerHTML = places
       .map(function (p) {
-        return '<button type="button" role="menuitem" data-root="' + esc(p.root) + '" aria-current="' + (p.root === here) + '">' + (p.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-label">' + esc(p.label) + '</span><span class="pl-sub">' + (p.kind === "lane" ? "Lane worktree" : "Repository") + "</span></button>";
+        return '<button type="button" role="menuitem" data-root="' + esc(p.root) + '" aria-current="' + (p.root === here) + '">' + (p.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-label">' + esc(p.label) + '</span><span class="pl-sub">' + (p.kind === "lane" ? "Lane worktree" : "Main checkout") + "</span></button>";
       })
       .join("");
     m.addEventListener("click", function (e) {
@@ -46,7 +46,7 @@
     if (first) first.focus();
   }
   function render() {
-    var title = document.querySelector(".part.sidebar > .title > .title-label");
+    var title = document.querySelector(".part.titlebar .titlebar-left");
     if (!title) return;
     var btn = document.getElementById("pitlane-place");
     if (!btn) {
@@ -58,7 +58,7 @@
         e.stopPropagation();
         open(btn);
       });
-      title.appendChild(btn);
+      title.insertBefore(btn, title.firstChild);
     }
     var c = current();
     var html = (c.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-name">' + esc(c.label) + "</span>" + icons.chev;
