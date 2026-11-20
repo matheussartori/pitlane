@@ -155,9 +155,9 @@ const ground = () => hex(getComputedStyle(document.documentElement).getPropertyV
 // ---------------------------------------------------------------- the folders VS Code offers
 
 /** The repository and the lanes' worktrees, for the folder picker inside VS Code's side bar. */
-export function setCodePlaces(repo: string, repoName: string, lanes: Lane[]) {
+export function setCodePlaces(repo: string, repoName: string, lanes: Lane[], head?: string | null) {
   // The repository's own checkout is named by the branch it has out (its name is already on top).
-  const main = lanes.find((l) => l.worktree?.is_main)?.branch ?? repoName;
+  const main = head ?? lanes.find((l) => l.worktree?.is_main)?.branch ?? repoName;
   const places = [
     { root: repo, label: main, kind: "repo" as const },
     ...lanes.filter((l) => l.worktree && !l.worktree.is_main).map((l) => ({ root: l.worktree!.path, label: l.branch, kind: "lane" as const })),

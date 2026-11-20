@@ -75,6 +75,8 @@ export interface Yard {
   fetched: boolean;
   github: boolean;
   lanes: Lane[];
+  /** The branch the repository's own checkout has out. */
+  head?: string | null;
   only_in_integration: Commit[];
 }
 

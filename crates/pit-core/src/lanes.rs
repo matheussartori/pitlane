@@ -142,6 +142,9 @@ pub struct Yard {
     pub fetched: bool,
     pub github: bool,
     pub lanes: Vec<Lane>,
+    /// The branch the repository's own checkout has out (None when detached).
+    #[serde(default)]
+    pub head: Option<String>,
     /// Direct commits on integration that no branch brings and production lacks.
     /// The flow will never take them to production.
     pub only_in_integration: Vec<Commit>,
@@ -393,6 +396,7 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
         fetched: opts.fetch,
         github: prs.is_some(),
         lanes,
+        head: repo.git.run(&["rev-parse", "--abbrev-ref", "HEAD"]).ok().filter(|h| h != "HEAD" && !h.is_empty()),
         only_in_integration,
     })
 }

@@ -95,7 +95,8 @@
     tries++;
     var aux = document.querySelector(".part.auxiliarybar");
     var text = aux ? aux.innerText.trim() : "";
-    if (aux && aux.offsetWidth > 0 && (text === "" || /^Drag a view here/.test(text))) {
+    // Empty, or only the chat Pitlane turned off.
+    if (aux && aux.offsetWidth > 0 && (text === "" || text === "Chat" || /^Drag a view here/.test(text))) {
       var close = aux.querySelector('.codicon-auxiliarybar-close, [aria-label*="Hide Secondary Side Bar"]');
       if (close) {
         close.click();

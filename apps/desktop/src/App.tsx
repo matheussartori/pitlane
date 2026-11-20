@@ -253,7 +253,7 @@ export default function App() {
   // VS Code's own folder picker offers the repository and the lanes' worktrees.
   createEffect(() => {
     const r = repo();
-    if (r) setCodePlaces(r, current()?.name ?? "repository", yard()?.lanes ?? []);
+    if (r) setCodePlaces(r, current()?.name ?? "repository", yard()?.lanes ?? [], yard()?.head);
   });
 
   // The planner, read again when the cards change: which open cards should wait, and for what.
