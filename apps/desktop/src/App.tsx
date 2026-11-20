@@ -391,6 +391,13 @@ export default function App() {
       }
     };
     window.addEventListener("hashchange", onHash);
+    // A file opened from a terminal (or elsewhere) shows the Code screen.
+    const onShowCode = () => {
+      setRunView(null);
+      setReviewView(null);
+      setTab("code");
+    };
+    window.addEventListener("pitlane-show-code", onShowCode);
     // Coming back to the window: recheck local state (cheap, no network).
     const onFocus = () => {
       void loadCards();
@@ -433,6 +440,7 @@ export default function App() {
       clearInterval(tick);
       offRun();
       window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("pitlane-show-code", onShowCode);
       clearInterval(poll);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);

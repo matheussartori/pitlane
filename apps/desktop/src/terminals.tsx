@@ -10,7 +10,8 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { onTerm, openExternal, terms, type Lane, type TermInfo } from "./api";
+import { files, onTerm, openExternal, terms, type Lane, type TermInfo } from "./api";
+import { openInCode } from "./code";
 import { Icon } from "./icons";
 import { toast } from "./ui";
 
@@ -320,6 +321,75 @@ function output(id: number) {
   if (s !== "busy" && s !== "exited" && now - l.first > 3000) setMeta(id, { status: "busy" });
 }
 
+// ---------------------------------------------------------------- paths that open in Code
+
+/** The folders Code can open: the repository and every lane's worktree (set by the screen). */
+let roots: string[] = [];
+const fileSets = new Map<string, { at: number; files: Promise<Set<string>> }>();
+
+function filesOf(root: string): Promise<Set<string>> {
+  const c = fileSets.get(root);
+  if (c && Date.now() - c.at < 20_000) return c.files;
+  const f = files.list(root).then((l) => new Set(l), () => new Set<string>());
+  fileSets.set(root, { at: Date.now(), files: f });
+  return f;
+}
+
+function normalise(path: string): string {
+  const out: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "..") out.pop();
+    else if (part && part !== ".") out.push(part);
+  }
+  return "/" + out.join("/");
+}
+
+/** `src/a.ts:12:5`, `./x.py`, `/abs/path/y.rs:3`: a file of a known folder, with its line. */
+const PATH = /(?:\.{0,2}\/)?(?:[\w.@~+-]+\/)*[\w.@+-]+\.[A-Za-z][A-Za-z0-9]{0,9}(?::(\d+)(?::(\d+))?|\((\d+),(\d+)\))?/g;
+
+async function resolvePath(text: string, cwd: string): Promise<{ root: string; rel: string } | null> {
+  const bare = text.replace(/(?::\d+(?::\d+)?|\(\d+,\d+\))$/, "");
+  const sorted = [...roots].sort((a, b) => b.length - a.length);
+  const tries = bare.startsWith("/") ? [normalise(bare)] : [normalise(`${cwd}/${bare}`), ...sorted.map((r) => normalise(`${r}/${bare}`))];
+  for (const abs of tries) {
+    const root = sorted.find((r) => abs.startsWith(r + "/"));
+    if (!root) continue;
+    const rel = abs.slice(root.length + 1);
+    if ((await filesOf(root)).has(rel)) return { root, rel };
+  }
+  return null;
+}
+
+function linkFiles(term: Terminal, id: number) {
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const line = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
+      const cwd = meta[id]?.cwd ?? "";
+      const found = [...line.matchAll(PATH)].slice(0, 24);
+      if (!found.length || !roots.length) return callback(undefined);
+      void Promise.all(
+        found.map(async (m) => {
+          const hit = await resolvePath(m[0], cwd);
+          if (!hit) return null;
+          const ln = Number(m[1] ?? m[3]) || undefined;
+          const col = Number(m[2] ?? m[4]) || undefined;
+          const start = (m.index ?? 0) + 1;
+          return {
+            range: { start: { x: start, y }, end: { x: start + m[0].length - 1, y } },
+            text: m[0],
+            decorations: { pointerCursor: true, underline: true },
+            activate: (e: MouseEvent) => {
+              if (e.metaKey) openInCode(hit.root, hit.rel, ln, col, true);
+            },
+            hover: (e: MouseEvent) => e.target instanceof HTMLElement && (e.target.title = "⌘-click to open in Code"),
+            leave: (e: MouseEvent) => e.target instanceof HTMLElement && e.target.removeAttribute("title"),
+          };
+        }),
+      ).then((links) => callback(links.filter((l) => l != null)));
+    },
+  });
+}
+
 // ---------------------------------------------------------------- terminals
 
 function make(info: TermInfo): Live {
@@ -338,7 +408,9 @@ function make(info: TermInfo): Live {
   const search = new SearchAddon();
   term.loadAddon(fit);
   term.loadAddon(search);
-  term.loadAddon(new WebLinksAddon((_e, uri) => void openExternal(uri).catch(() => {})));
+  // ⌘-click, as in iTerm2 and VS Code: a plain click selects text.
+  term.loadAddon(new WebLinksAddon((e, uri) => e.metaKey && void openExternal(uri).catch(() => {})));
+  linkFiles(term, info.id);
   const l: Live = { term, fit, search, el: document.createElement("div"), opened: false, first: 0, last: 0, typed: 0 };
   l.el.className = "term-surface";
   term.onData((d) => {
@@ -1001,6 +1073,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
       .map((l) => ({ cwd: l.worktree!.path, label: l.branch, sub: "Lane worktree", icon: "branch" })),
   ];
   const tab = activeTab;
+  createEffect(() => (roots = places().map((p) => p.cwd)));
   const open = async (cwd: string, label: string) => {
     setMenu(false);
     await openTerminal(cwd, label);

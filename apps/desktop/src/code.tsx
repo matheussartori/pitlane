@@ -25,13 +25,15 @@ const [current, setCurrent] = createSignal<string | null>(null); // key = root +
 const [dirty, setDirty] = createSignal<Set<string>>(new Set());
 const [rootSig, setRootSig] = createSignal<string | null>(null);
 const key = (root: string, path: string) => `${root}\0${path}`;
-let pending: { root: string; path: string } | null = null;
+let pending: { root: string; path: string; line?: number; col?: number } | null = null;
 
-/** Opens `path` under `root` in the Code screen (from Review, Run or elsewhere). */
-export function openInCode(root: string, path: string) {
+/** Opens `path` under `root` in the Code screen (from Review, Run, a terminal…), at a line when
+ *  one is given. The app shows the Code screen when `show` is set. */
+export function openInCode(root: string, path: string, line?: number, col?: number, show = false) {
   setRootSig(root);
-  pending = { root, path };
+  pending = { root, path, line, col };
   window.dispatchEvent(new CustomEvent("pitlane-code-open"));
+  if (show) window.dispatchEvent(new CustomEvent("pitlane-show-code"));
 }
 
 export const unsavedCount = () => dirty().size;
@@ -125,7 +127,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
   const cur = () => opened().find((o) => key(o.root, o.path) === current()) ?? null;
   const tabs = () => opened().filter((o) => o.root === root());
 
-  async function open(path: string, at = root()) {
+  async function open(path: string, at = root(), line?: number, col?: number) {
     const k = key(at, path);
     if (!opened().some((o) => key(o.root, o.path) === k)) {
       try {
@@ -147,6 +149,11 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       }
     }
     select(k);
+    if (line && editor) {
+      const pos = { lineNumber: line, column: col ?? 1 };
+      editor.setPosition(pos);
+      editor.revealPositionInCenter(pos);
+    }
   }
 
   function select(k: string) {
@@ -228,7 +235,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     if (pending) {
       const p = pending;
       pending = null;
-      void open(p.path, p.root);
+      void open(p.path, p.root, p.line, p.col);
     }
   });
   onCleanup(() => {
@@ -242,7 +249,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     if (pending && monaco) {
       const p = pending;
       pending = null;
-      void open(p.path, p.root);
+      void open(p.path, p.root, p.line, p.col);
     }
   };
   window.addEventListener("pitlane-code-open", onRequest);
