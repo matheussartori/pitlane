@@ -4,7 +4,7 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use pit_core::Repo;
 use pit_core::actions::{self, LocalUpdate, NewOptions};
@@ -95,7 +95,23 @@ enum Cmd {
         /// Start it and return; follow later with pit log.
         #[arg(short, long)]
         detach: bool,
+        /// Yes to an API key account if the route reaches one (paid per token).
+        #[arg(long)]
+        allow_api_key: bool,
     },
+    /// Continue a run that hit its usage limit with the route's next option.
+    Continue {
+        run: String,
+        #[arg(long)]
+        allow_api_key: bool,
+        #[arg(short, long)]
+        detach: bool,
+    },
+    /// Your accounts: signed in or not, their last usage, and this repository's.
+    Accounts,
+    /// Add an account, sign in to it, or choose this repository's.
+    #[command(subcommand)]
+    Account(AccountCmd),
     /// Runs of this repository, newest first.
     Runs {
         #[arg(long)]
@@ -146,6 +162,24 @@ enum Cmd {
         #[arg(long)]
         no_fetch: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum AccountCmd {
+    /// Add an account. You sign in yourself with the official CLI: pit account login <id>.
+    Add {
+        id: String,
+        /// subscription, team or api-key.
+        #[arg(long, default_value = "subscription")]
+        kind: String,
+        /// For api-key accounts: a command of yours that prints the key (Claude Code runs it).
+        #[arg(long, value_name = "COMMAND")]
+        api_key_helper: Option<String>,
+    },
+    /// Open the official Claude Code sign-in for this account's profile.
+    Login { id: String },
+    /// Use this account for this repository's next runs (your choice, never automatic).
+    Use { id: String },
 }
 
 #[derive(Subcommand)]
@@ -281,12 +315,90 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": "deny", "message": message }))?;
             println!("{} denied {}", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
         }
-        Cmd::Run { card, detach } => {
+        Cmd::Run { card, detach, allow_api_key } => {
             let mut c = daemon()?;
-            let v = c.call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card }))?;
+            let v = c
+                .call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card, "allow_api_key": allow_api_key }))
+                .map_err(api_key_hint)?;
             let m: RunMeta = serde_json::from_value(v["run"].clone())?;
             println!("{} run {} for #{} {}", paint(DONE, "✓"), m.id, m.card, m.card_title);
+            println!("  {}", paint(MUTED, m.reason.as_deref().unwrap_or_default()));
             return follow_or_detach(&m.id, detach);
+        }
+        Cmd::Continue { run, allow_api_key, detach } => {
+            let v = daemon()?
+                .call(serde_json::json!({ "op": "continue", "run": run, "allow_api_key": allow_api_key }))
+                .map_err(api_key_hint)?;
+            let m: RunMeta = serde_json::from_value(v["run"].clone())?;
+            println!("{} run {} continues {run}", paint(DONE, "✓"), m.id);
+            println!("  {}", paint(MUTED, m.reason.as_deref().unwrap_or_default()));
+            return follow_or_detach(&m.id, detach);
+        }
+        Cmd::Accounts => {
+            let (home, pitlane_home) = pit_core::default_homes();
+            let routing = pit_core::accounts::Routing::load(&pitlane_home)?;
+            let mine = routing.repo_account(&repo.root, &home);
+            let quota = daemon_quota();
+            let claude = std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
+            for a in &routing.accounts {
+                let st = pit_core::accounts::status(a, &pitlane_home, &claude);
+                let signed = if st.logged_in {
+                    paint(DONE, "signed in")
+                } else if st.problem.is_some() {
+                    paint(MUTED, "unknown")
+                } else {
+                    paint(ACCENT, &format!("not signed in: pit account login {}", a.id))
+                };
+                let usage = quota
+                    .get(&a.id)
+                    .map(|u| {
+                        let f = |v: Option<f64>| v.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "?".into());
+                        format!("5h {} 7d {}", f(u.five_hour), f(u.seven_day))
+                    })
+                    .unwrap_or_default();
+                let here = if a.id == mine { paint(ACCENT, "this repo") } else { String::new() };
+                println!("{:<14} {:<13} {signed}  {}  {here}", a.id, format!("{:?}", a.kind).to_lowercase(), paint(MUTED, &usage));
+            }
+            println!("{}", paint(MUTED, &format!("route: {}", routing.route.run.prefer.join(" → "))));
+        }
+        Cmd::Account(AccountCmd::Add { id, kind, api_key_helper }) => {
+            let (_, pitlane_home) = pit_core::default_homes();
+            let kind = match kind.as_str() {
+                "subscription" => pit_core::accounts::Kind::Subscription,
+                "team" => pit_core::accounts::Kind::Team,
+                "api-key" => pit_core::accounts::Kind::ApiKey,
+                k => bail!("unknown kind {k}; subscription, team or api-key"),
+            };
+            let dir = pit_core::accounts::add_account(&pitlane_home, &id, kind, api_key_helper.as_deref())?;
+            println!("{} account {id} added to {}", paint(DONE, "✓"), pit_core::accounts::Routing::path(&pitlane_home).display());
+            if let Some(d) = dir
+                && kind != pit_core::accounts::Kind::ApiKey
+            {
+                println!("  its Claude Code profile is {}", d.display());
+                println!("  sign in with: pit account login {id}");
+            }
+        }
+        Cmd::Account(AccountCmd::Login { id }) => {
+            let (_, pitlane_home) = pit_core::default_homes();
+            let routing = pit_core::accounts::Routing::load(&pitlane_home)?;
+            let a = routing.account(&id).with_context(|| format!("no account {id}; add it with pit account add {id}"))?;
+            if a.kind.is_api_key() {
+                bail!("{id} is an api-key account: it signs in through its api_key_helper");
+            }
+            let mut cmd = std::process::Command::new("claude");
+            cmd.args(["auth", "login"]).env_remove("CLAUDECODE");
+            if let Some(dir) = pit_core::accounts::profile_dir(&id, &pitlane_home) {
+                std::fs::create_dir_all(&dir)?;
+                cmd.env("CLAUDE_CONFIG_DIR", dir);
+            }
+            // The official CLI signs you in; Pitlane never sees the result.
+            let st = cmd.status().context("could not run claude auth login")?;
+            return Ok(if st.success() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+        }
+        Cmd::Account(AccountCmd::Use { id }) => {
+            let (_, pitlane_home) = pit_core::default_homes();
+            pit_core::accounts::set_repo_account(&pitlane_home, &repo.root, &id)?;
+            println!("{} {} uses {id} from its next run", paint(DONE, "✓"), repo.name);
         }
         Cmd::Resume { run, detach } => {
             let v = daemon()?.call(serde_json::json!({ "op": "resume", "run": run }))?;
@@ -398,6 +510,38 @@ fn run(cli: Cli) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// A start refused because the next option is an API key: say how to say yes.
+fn api_key_hint(e: anyhow::Error) -> anyhow::Error {
+    let s = format!("{e:#}");
+    match s.strip_prefix(pitd::supervisor::NEEDS_API_KEY) {
+        Some(reason) => anyhow::anyhow!("the route reached an API key ({reason}). It is paid per token; run again with --allow-api-key if you agree"),
+        None => e,
+    }
+}
+
+/// Usage per account from the daemon, if it is running.
+fn daemon_quota() -> std::collections::HashMap<String, pit_core::accounts::Usage> {
+    let (_, home) = pit_core::default_homes();
+    let Ok(mut c) = Client::connect(&home, None) else { return Default::default() };
+    let Ok(v) = c.call(serde_json::json!({ "op": "quota" })) else { return Default::default() };
+    let all: std::collections::HashMap<String, Vec<RunEvent>> = serde_json::from_value(v["quota"].clone()).unwrap_or_default();
+    all.into_iter()
+        .map(|(acct, evs)| {
+            let mut u = pit_core::accounts::Usage::default();
+            for e in evs {
+                if let RunEvent::Quota { window, used, .. } = e {
+                    match window.as_str() {
+                        "five_hour" => u.five_hour = Some(used * 100.0),
+                        "seven_day" => u.seven_day = Some(used * 100.0),
+                        _ => {}
+                    }
+                }
+            }
+            (acct, u)
+        })
+        .collect()
+}
+
 fn daemon() -> Result<Client> {
     let (_, home) = pit_core::default_homes();
     Client::connect(&home, std::env::current_exe().ok().as_deref())
@@ -460,6 +604,7 @@ fn print_event(e: &RunEvent) {
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
         RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
         RunEvent::Note { text } => println!("{}", paint(MUTED, text)),
+        RunEvent::Limited { window, .. } => println!("{} hit the {} usage limit", paint(ACCENT, "!"), window.replace('_', "-")),
         RunEvent::Approval { approval } => println!(
             "{} waiting for you: {} {}  {}",
             paint(ACCENT, "?"),

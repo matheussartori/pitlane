@@ -87,11 +87,12 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
         "start" => {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
             let card = req.get("card").and_then(Value::as_u64).context("card is required")?;
-            json!({ "run": sup.start(repo, u32::try_from(card)?, None)? })
+            let allow_api_key = req.get("allow_api_key").and_then(Value::as_bool).unwrap_or(false);
+            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, handoff_from: None })? })
         }
         "resume" => {
             let prev = sup.get(run_arg(req)?)?;
-            json!({ "run": sup.start(prev.repo.clone(), prev.card, Some(prev.id))? })
+            json!({ "run": sup.start(prev.repo.clone(), prev.card, Some(prev.id), Default::default())? })
         }
         "list" => {
             let repo = req.get("repo").and_then(Value::as_str).map(PathBuf::from);
@@ -108,6 +109,10 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             json!({ "ok": true })
         }
         "quota" => json!({ "quota": sup.quota() }),
+        "continue" => {
+            let allow_api_key = req.get("allow_api_key").and_then(Value::as_bool).unwrap_or(false);
+            json!({ "run": sup.continue_run(run_arg(req)?, allow_api_key)? })
+        }
         "ask" => {
             let tool = req.get("tool").and_then(Value::as_str).context("tool is required")?;
             let input = req.get("input").cloned().unwrap_or(Value::Null);

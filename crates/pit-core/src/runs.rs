@@ -91,6 +91,29 @@ pub struct RunMeta {
     /// Tools the agent is waiting on a person to allow, while the run lives.
     #[serde(default)]
     pub waiting: Vec<Approval>,
+    /// The account the route chose (`default` is your normal login).
+    #[serde(default = "default_account")]
+    pub account: String,
+    /// Why the route chose this account and model.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// The run this one continues after it hit a usage limit.
+    #[serde(default)]
+    pub handoff_from: Option<String>,
+    /// Accounts that hit their limit on this card's attempt; the route will not take them again.
+    #[serde(default)]
+    pub exhausted: Vec<String>,
+    /// Set when the run hit a usage limit and the next option needs your yes (an API key): the
+    /// option, e.g. `opus on anthropic-api`.
+    #[serde(default)]
+    pub next: Option<String>,
+    /// When the limit it hit resets (unix seconds), if the agent said.
+    #[serde(default)]
+    pub resets_at: Option<u64>,
+}
+
+fn default_account() -> String {
+    crate::accounts::DEFAULT_ACCOUNT.into()
 }
 
 /// A tool the agent wants to use that no rule allows: it waits for a person.
@@ -177,7 +200,20 @@ pub enum RunEvent {
     /// A message from the person, sent while the agent works.
     Said { text: String },
     Quota { window: String, used: f64, resets_at: u64 },
-    Finished { ok: bool, cost_usd: f64, duration_ms: u64, turns: u32, tokens: Tokens, handoff: Option<Value>, denied: Vec<String> },
+    /// The account refused more work until `resets_at`.
+    Limited { window: String, resets_at: u64 },
+    Finished {
+        ok: bool,
+        cost_usd: f64,
+        duration_ms: u64,
+        turns: u32,
+        tokens: Tokens,
+        handoff: Option<Value>,
+        denied: Vec<String>,
+        /// It ended because of a usage limit.
+        #[serde(default)]
+        limited: bool,
+    },
     Note { text: String },
     /// The agent waits for a person to allow a tool.
     Approval { approval: Approval },
@@ -230,19 +266,29 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
                     .collect()
             })
             .unwrap_or_default(),
-        ("rate_limit_event", _) => v
-            .pointer("/rate_limit_info/unifiedWindows")
-            .and_then(Value::as_object)
-            .map(|w| {
-                w.iter()
-                    .map(|(name, info)| RunEvent::Quota {
-                        window: name.clone(),
-                        used: info.get("utilization").and_then(Value::as_f64).unwrap_or(0.0),
-                        resets_at: info.get("resetsAt").and_then(Value::as_u64).unwrap_or(0),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        ("rate_limit_event", _) => {
+            let info = v.get("rate_limit_info").cloned().unwrap_or(Value::Null);
+            let mut out: Vec<RunEvent> = info
+                .get("unifiedWindows")
+                .and_then(Value::as_object)
+                .map(|w| {
+                    w.iter()
+                        .map(|(name, i)| RunEvent::Quota {
+                            window: name.clone(),
+                            used: i.get("utilization").and_then(Value::as_f64).unwrap_or(0.0),
+                            resets_at: i.get("resetsAt").and_then(Value::as_u64).unwrap_or(0),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if info.get("status").and_then(Value::as_str) == Some("rejected") {
+                out.push(RunEvent::Limited {
+                    window: s(&info, "rateLimitType"),
+                    resets_at: info.get("resetsAt").and_then(Value::as_u64).unwrap_or(0),
+                });
+            }
+            out
+        }
         ("result", _) => {
             let u = v.get("usage").cloned().unwrap_or(Value::Null);
             let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
@@ -271,6 +317,10 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                limited: v.get("is_error").and_then(Value::as_bool).unwrap_or(false) && {
+                    let text = v.get("result").map(|r| r.to_string().to_lowercase()).unwrap_or_default();
+                    ["usage limit", "rate limit", "limit reached", "hit your limit", "limit will reset"].iter().any(|k| text.contains(k))
+                },
             }]
         }
         _ => Vec::new(),
@@ -518,6 +568,10 @@ mod tests {
 
         let q = json!({"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.14,"resetsAt":1795210200}}}});
         assert_eq!(read_claude_line(&q), vec![RunEvent::Quota { window: "five_hour".into(), used: 0.14, resets_at: 1795210200 }]);
+        let rejected = json!({"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":99,"unifiedWindows":{"five_hour":{"utilization":1.0,"resetsAt":99}}}});
+        assert_eq!(read_claude_line(&rejected)[1], RunEvent::Limited { window: "five_hour".into(), resets_at: 99 });
+        let out = json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"Claude AI usage limit reached|1795210200","usage":{}});
+        assert!(matches!(&read_claude_line(&out)[0], RunEvent::Finished { limited: true, .. }));
         assert!(read_claude_line(&json!({"type":"system","subtype":"hook_started"})).is_empty());
     }
 }

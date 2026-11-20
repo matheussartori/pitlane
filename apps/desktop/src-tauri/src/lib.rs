@@ -7,7 +7,9 @@ use anyhow::{Context, Result, bail};
 use pit_core::actions::{self, CleanOutcome, CleanPlan, NewOptions, NewReport, ShipPlan, ShipReport, UndoReport};
 use pit_core::lanes::{self, Yard, YardOptions};
 use pit_core::cards::{self, CardOut, CardPatch, CardState, NewCard};
+use pit_core::accounts::{self, AccountStatus, Kind, Routing, Usage};
 use pit_core::runs::{self, Client, RunEvent, RunMeta};
+use std::collections::HashMap;
 use pit_core::{Repo, default_homes, trash};
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -278,10 +280,10 @@ async fn runs_list(path: String) -> CmdResult<Vec<RunMeta>> {
 }
 
 #[tauri::command]
-async fn run_start(path: String, card: u32) -> CmdResult<RunMeta> {
+async fn run_start(path: String, card: u32, allow_api_key: Option<bool>) -> CmdResult<RunMeta> {
     blocking(move || {
         let root = open(&path)?.root;
-        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card }))?;
+        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false) }))?;
         Ok(serde_json::from_value(v["run"].clone())?)
     })
     .await
@@ -315,14 +317,122 @@ async fn run_stop(run: String) -> CmdResult<()> {
     blocking(move || call(serde_json::json!({ "op": "stop", "run": run })).map(drop)).await
 }
 
+#[derive(Debug, Serialize)]
+struct QuotaOut {
+    /// The account the meters are about: this repository's.
+    account: String,
+    events: Vec<RunEvent>,
+    /// The route's thresholds, so every meter lights at the same point.
+    five_hour_at: f64,
+    seven_day_at: f64,
+}
+
 #[tauri::command]
-async fn quota() -> CmdResult<Vec<RunEvent>> {
-    blocking(|| {
-        if Client::connect(&default_homes().1, None).is_err() {
-            return Ok(Vec::new());
+async fn quota(path: String) -> CmdResult<QuotaOut> {
+    blocking(move || {
+        let (home, pitlane_home) = default_homes();
+        let root = open(&path)?.root;
+        let routing = Routing::load(&pitlane_home)?;
+        let account = routing.repo_account(&root, &home);
+        let mut out = QuotaOut {
+            account: account.clone(),
+            events: Vec::new(),
+            five_hour_at: routing.route.run.switch_at.five_hour,
+            seven_day_at: routing.route.run.switch_at.seven_day,
+        };
+        if Client::connect(&pitlane_home, None).is_ok() {
+            let v = call(serde_json::json!({ "op": "quota" }))?;
+            let mut all: HashMap<String, Vec<RunEvent>> = serde_json::from_value(v["quota"].clone())?;
+            out.events = all.remove(&account).unwrap_or_default();
         }
-        let v = call(serde_json::json!({ "op": "quota" }))?;
-        Ok(serde_json::from_value(v["quota"].clone())?)
+        Ok(out)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn run_continue(run: String, allow_api_key: bool) -> CmdResult<RunMeta> {
+    blocking(move || {
+        let v = call(serde_json::json!({ "op": "continue", "run": run, "allow_api_key": allow_api_key }))?;
+        Ok(serde_json::from_value(v["run"].clone())?)
+    })
+    .await
+}
+
+#[derive(Debug, Serialize)]
+struct AccountOut {
+    id: String,
+    kind: Kind,
+    status: AccountStatus,
+    /// Last usage seen in a run, percent of each window.
+    usage: Option<Usage>,
+    /// The account this repository uses.
+    here: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountsOut {
+    accounts: Vec<AccountOut>,
+    route: Vec<String>,
+    five_hour_at: f64,
+    seven_day_at: f64,
+    file: String,
+}
+
+/// Your accounts as the official CLI reports them (signed in or not), their last usage, and the
+/// route. Reading `claude auth status` is the CLI reading its own login; Pitlane only reads the answer.
+#[tauri::command]
+async fn accounts_list(path: String) -> CmdResult<AccountsOut> {
+    blocking(move || {
+        let (home, pitlane_home) = default_homes();
+        let root = open(&path)?.root;
+        let routing = Routing::load(&pitlane_home)?;
+        let mine = routing.repo_account(&root, &home);
+        let quota: HashMap<String, Vec<RunEvent>> = Client::connect(&pitlane_home, None)
+            .ok()
+            .and_then(|mut c| c.call(serde_json::json!({ "op": "quota" })).ok())
+            .and_then(|v| serde_json::from_value(v["quota"].clone()).ok())
+            .unwrap_or_default();
+        let accounts = routing
+            .accounts
+            .iter()
+            .map(|a| AccountOut {
+                id: a.id.clone(),
+                kind: a.kind,
+                status: accounts::status(a, &pitlane_home, "claude"),
+                usage: quota.get(&a.id).map(|evs| {
+                    let mut u = Usage::default();
+                    for e in evs {
+                        if let RunEvent::Quota { window, used, .. } = e {
+                            match window.as_str() {
+                                "five_hour" => u.five_hour = Some(used * 100.0),
+                                "seven_day" => u.seven_day = Some(used * 100.0),
+                                _ => {}
+                            }
+                        }
+                    }
+                    u
+                }),
+                here: a.id == mine,
+            })
+            .collect();
+        Ok(AccountsOut {
+            accounts,
+            route: routing.route.run.prefer.clone(),
+            five_hour_at: routing.route.run.switch_at.five_hour,
+            seven_day_at: routing.route.run.switch_at.seven_day,
+            file: Routing::path(&pitlane_home).to_string_lossy().into_owned(),
+        })
+    })
+    .await
+}
+
+/// Your choice of account for this repository's next runs. Never made by Pitlane on its own.
+#[tauri::command]
+async fn account_use(path: String, id: String) -> CmdResult<()> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        accounts::set_repo_account(&default_homes().1, &root, &id)
     })
     .await
 }
@@ -421,6 +531,9 @@ pub fn run() {
             run_say,
             run_stop,
             run_decide,
+            run_continue,
+            accounts_list,
+            account_use,
             run_timeline,
             run_follow,
             quota

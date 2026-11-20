@@ -216,7 +216,46 @@ export interface RunMeta {
   denied: string[];
   resumed_from: string | null;
   waiting: Approval[];
+  /** The account the route chose (`default` is the normal Claude Code login). */
+  account?: string;
+  /** Why the route chose this account and model. */
+  reason?: string | null;
+  handoff_from?: string | null;
+  exhausted?: string[];
+  /** It hit a usage limit and the next option (an API key) waits for your yes. */
+  next?: string | null;
+  /** When the limit this run hit resets (unix seconds). */
+  resets_at?: number | null;
 }
+
+export interface Quota {
+  /** The account the meters are about: this repository's. */
+  account: string;
+  events: Extract<RunEvent, { kind: "quota" }>[];
+  five_hour_at: number;
+  seven_day_at: number;
+}
+
+export type AccountKind = "subscription" | "team" | "api-key";
+
+export interface AccountView {
+  id: string;
+  kind: AccountKind;
+  status: { logged_in: boolean; method: string | null; email: string | null; problem: string | null };
+  usage: { five_hour: number | null; seven_day: number | null } | null;
+  here: boolean;
+}
+
+export interface Accounts {
+  accounts: AccountView[];
+  route: string[];
+  five_hour_at: number;
+  seven_day_at: number;
+  file: string;
+}
+
+/** A start the route refused because its next option is paid per token. */
+export const NEEDS_API_KEY = "needs-api-key: ";
 
 export interface Approval {
   id: string;
@@ -241,6 +280,7 @@ export type RunEvent =
   | { kind: "note"; text: string }
   | { kind: "approval"; approval: Approval }
   | { kind: "decided"; id: string; decision: Decision; message: string | null }
+  | { kind: "limited"; window: string; resets_at: number }
   | { kind: "exited"; code: number | null; state: RunState };
 
 export const isLive = (s: RunState) => s === "starting" || s === "running";
@@ -290,7 +330,10 @@ export const api = {
   undoClean: (path: string, branch: string) => invoke<UndoReport>("undo_clean", { path, branch }),
   cards: (path: string) => invoke<CardList>("cards_list", { path }),
   runs: (path: string) => invoke<RunMeta[]>("runs_list", { path }),
-  runStart: (path: string, card: number) => invoke<RunMeta>("run_start", { path, card }),
+  runStart: (path: string, card: number, allowApiKey = false) => invoke<RunMeta>("run_start", { path, card, allowApiKey }),
+  runContinue: (run: string, allowApiKey: boolean) => invoke<RunMeta>("run_continue", { run, allowApiKey }),
+  accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),
+  accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),
   runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
   runStop: (run: string) => invoke<void>("run_stop", { run }),
@@ -298,7 +341,7 @@ export const api = {
     invoke<void>("run_decide", { run, approval, decision, message: message ?? null }),
   runTimeline: (run: string) => invoke<[number, RunEvent][]>("run_timeline", { run }),
   runFollow: (run: string, from: number) => invoke<void>("run_follow", { run, from }),
-  quota: () => invoke<Extract<RunEvent, { kind: "quota" }>[]>("quota"),
+  quota: (path: string) => invoke<Quota>("quota", { path }),
   cardAdd: (path: string, title: string, body: string) => invoke<Card>("card_add", { path, title, body }),
   cardUpdate: (
     path: string,

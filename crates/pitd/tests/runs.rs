@@ -109,7 +109,7 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
     let fx = fx();
     let id = card(&fx, "Add a line");
     let s = sup(&fx);
-    let meta = s.start(fx.repo.clone(), id, None).unwrap();
+    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
     assert_eq!(meta.state, RunState::Starting);
 
     // Wait for the agent to be at work, then talk to it.
@@ -149,6 +149,7 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
             RunEvent::Finished { .. } => "finished",
             RunEvent::Note { .. } => "note",
             RunEvent::Approval { .. } => "approval",
+            RunEvent::Limited { .. } => "limited",
             RunEvent::Decided { .. } => "decided",
             RunEvent::Exited { .. } => "exited",
         })
@@ -174,14 +175,14 @@ async fn a_blocked_handoff_asks_in_the_inbox() {
         },
         pit_bin: None,
     });
-    let meta = s.start(fx.repo.clone(), id, None).unwrap();
+    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
     let end = wait_end(&s, &meta.id).await;
     assert_eq!(end.state, RunState::Done);
     let (state, open) = card_state(&fx, id);
     assert_eq!(state, CardState::Blocked);
     assert_eq!(open, 1, "the agent's question is in the Inbox");
     // And a card with open questions does not start.
-    assert!(s.start(fx.repo.clone(), id, None).unwrap_err().to_string().contains("open question"));
+    assert!(s.start(fx.repo.clone(), id, None, Default::default()).unwrap_err().to_string().contains("open question"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -192,14 +193,14 @@ async fn stop_ends_the_turn_and_frees_the_card() {
     fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
     Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
     let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
-    let meta = s.start(fx.repo.clone(), id, None).unwrap();
+    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
     for _ in 0..100 {
         if s.get(&meta.id).unwrap().pid.is_some() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(s.start(fx.repo.clone(), id, None).unwrap_err().to_string().contains("already running"));
+    assert!(s.start(fx.repo.clone(), id, None, Default::default()).unwrap_err().to_string().contains("already running"));
     tokio::time::sleep(Duration::from_millis(300)).await;
     s.stop(&meta.id).unwrap();
     let end = wait_end(&s, &meta.id).await;
@@ -262,7 +263,7 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
     Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
     let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
-    let run = s.start(fx.repo.clone(), id, None).unwrap().id;
+    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap().id;
     for _ in 0..100 {
         if s.get(&run).unwrap().pid.is_some() {
             break;
@@ -328,4 +329,86 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     let tl = s.subscribe(&run, 0).unwrap().replay;
     assert_eq!(tl.iter().filter(|(_, e)| matches!(e, RunEvent::Approval { .. })).count(), 4);
     assert_eq!(tl.iter().filter(|(_, e)| matches!(e, RunEvent::Decided { .. })).count(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_limit_hands_the_card_to_the_next_option_with_your_yes() {
+    let fx = fx();
+    let id = card(&fx, "Long one");
+    let dir = fx.fake.parent().unwrap().to_path_buf();
+    let flag = dir.join("limit-once");
+    let args_log = dir.join("args.log");
+    fs::write(&flag, "").unwrap();
+    // The first launch hits the 5-hour limit after writing a file; later ones work normally.
+    let wrapper = dir.join("fake-limit");
+    fs::write(
+        &wrapper,
+        format!(
+            r#"#!/bin/bash
+echo "ARGS $*" >> {log}
+echo "CCD=$CLAUDE_CONFIG_DIR" >> {log}
+if [ "$1" = "-p" ] && [ -f {flag} ]; then
+  rm {flag}
+  IFS= read -r line
+  echo '{{"type":"system","subtype":"init","session_id":"s-lim","model":"fake-model"}}'
+  echo partial > partial.txt
+  echo '{{"type":"rate_limit_event","rate_limit_info":{{"status":"rejected","rateLimitType":"five_hour","resetsAt":99,"unifiedWindows":{{"five_hour":{{"utilization":1.0,"resetsAt":99}}}}}}}}'
+  echo '{{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Claude AI usage limit reached|99","num_turns":2,"duration_ms":50,"total_cost_usd":0.03,"usage":{{}}}}'
+  cat > /dev/null
+  exit 1
+fi
+exec {fake} "$@"
+"#,
+            log = args_log.display(),
+            flag = flag.display(),
+            fake = fx.fake.display()
+        ),
+    )
+    .unwrap();
+    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    fs::create_dir_all(&fx.home).unwrap();
+    fs::write(
+        fx.home.join("routing.toml"),
+        "[[account]]\nid = \"api\"\nkind = \"api-key\"\napi_key_helper = \"echo not-a-real-key\"\n\n[route.run]\nprefer = [\"@repo\", \"haiku@api\"]\n",
+    )
+    .unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
+
+    let first = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    assert_eq!(first.account, "default");
+    assert!(first.reason.as_deref().unwrap().contains("first in the route"));
+    let end = wait_end(&s, &first.id).await;
+    for _ in 0..100 {
+        if s.get(&first.id).unwrap().next.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let end = s.get(&end.id).unwrap();
+    assert_eq!(end.state, RunState::Failed);
+    assert!(end.error.as_deref().unwrap().contains("Hit the usage limit on default"), "{:?}", end.error);
+    assert_eq!(end.next.as_deref(), Some("haiku on api"));
+    assert_eq!(end.resets_at, Some(99));
+    assert_eq!(card_state(&fx, id).0, CardState::Blocked, "waits for your yes to the API key");
+    let log = Command::new("git").arg("-C").arg(&end.worktree).args(["log", "-1", "--format=%s"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&log.stdout).contains("checkpoint of card"), "the partial work was committed");
+    assert!(s.start(fx.repo.clone(), id, None, Default::default()).is_err(), "a plain start still needs the yes");
+
+    // Your yes: the continuation runs on the API key account, in its own profile, with the helper.
+    let next = s.continue_run(&first.id, true).unwrap();
+    assert_eq!(next.account, "api");
+    assert_eq!(next.model.as_deref(), Some("haiku"));
+    assert_eq!(next.handoff_from.as_deref(), Some(first.id.as_str()));
+    assert_eq!(next.exhausted, vec!["default".to_owned()]);
+    let done = wait_end(&s, &next.id).await;
+    assert_eq!(done.state, RunState::Done, "{:?}", done.error);
+    let seen = fs::read_to_string(done.worktree.join(".briefing-seen")).unwrap();
+    assert!(seen.contains("You are continuing run"), "{seen}");
+    assert!(seen.contains("checkpoint of card"), "commits so far are in the briefing");
+    let args = fs::read_to_string(&args_log).unwrap();
+    assert!(args.contains("--model haiku"), "{args}");
+    assert!(args.contains("apiKeyHelper"), "{args}");
+    assert!(args.contains(&format!("CCD={}", fx.home.join("profiles/api").display())), "{args}");
+    assert!(args.lines().any(|l| l == "CCD="), "the first run used your normal login");
+    assert!(s.get(&first.id).unwrap().next.is_none());
 }

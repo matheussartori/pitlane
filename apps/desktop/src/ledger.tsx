@@ -69,7 +69,10 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
                         <span class="ledger-card">
                           <span class="card-id">#{r.card}</span> {r.card_title}
                         </span>
-                        <span class="subject">{r.model ?? r.agent}</span>
+                        <span class="subject">
+                          {r.model ?? "default model"}
+                          {r.account ? ` on ${r.account}` : ""}
+                        </span>
                       </span>
                     </td>
                     <td class="mono">{r.branch}</td>

@@ -1,6 +1,7 @@
 //! Pitlane core: branch flow, lanes and the actions on them. The `pit` CLI and, later,
 //! the `pitd` daemon are thin layers over this crate.
 
+pub mod accounts;
 pub mod actions;
 pub mod cards;
 pub mod flow;

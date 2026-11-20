@@ -2,7 +2,8 @@
 import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { api, isLive, onRun, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type Yard } from "./api";
+import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type Yard } from "./api";
+import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
 import { RunScreen } from "./run";
 import { BoardView, CardSheet, NewCardSheet } from "./board";
@@ -21,6 +22,7 @@ type SheetState =
   | { kind: "new" }
   | { kind: "card"; id: number }
   | { kind: "new-card" }
+  | { kind: "accounts" }
   | null;
 
 const TAB_KEY = "pitlane.tab";
@@ -62,7 +64,7 @@ export default function App() {
   };
   const [cards, setCards] = createSignal<Card[] | null>(null);
   const [runs, setRuns] = createSignal<RunMeta[] | null>(null);
-  const [quota, setQuota] = createSignal<Extract<RunEvent, { kind: "quota" }>[]>([]);
+  const [quota, setQuota] = createSignal<Quota | null>(null);
   const runFromHash = () => {
     const m = /^#run\/(.+)$/.exec(location.hash);
     return m ? decodeURIComponent(m[1]!) : null;
@@ -154,7 +156,7 @@ export default function App() {
       if (gen !== runsGen || path !== repo()) return;
       setRuns(r);
       for (const m of r) if (isLive(m.state)) void api.runFollow(m.id, 0).catch(() => {});
-      setQuota(await api.quota());
+      setQuota(await api.quota(path));
     } catch {
       if (gen === runsGen) setRuns([]);
     }
@@ -171,18 +173,32 @@ export default function App() {
     }
   }
 
-  async function startRun(card: number) {
+  async function startRun(card: number, allowApiKey = false) {
     const path = repo();
     if (!path) return;
     try {
-      const m = await api.runStart(path, card);
+      const m = await api.runStart(path, card, allowApiKey);
       void api.runFollow(m.id, 0).catch(() => {});
       await loadRuns();
       void loadCards();
       setSheet(null);
       openRun(m.id);
     } catch (e) {
-      toast({ tone: "fail", title: `Card #${card} did not start`, body: msg(e) });
+      const text = msg(e);
+      if (text.startsWith(NEEDS_API_KEY)) {
+        // The route reached a paid option: never taken without a yes.
+        toast(
+          {
+            tone: "info",
+            title: "Only the API key can take this card now",
+            body: `${text.slice(NEEDS_API_KEY.length)}. It is paid per token.`,
+            action: { label: "Use the API key", run: () => void startRun(card, true) },
+          },
+          0,
+        );
+        return;
+      }
+      toast({ tone: "fail", title: `Card #${card} did not start`, body: text });
     }
   }
 
@@ -350,6 +366,21 @@ export default function App() {
               <Show when={settings().repos.length > 0}>
                 <div class="menu-sep" />
               </Show>
+              <Show when={repo()}>
+                <div
+                  class="menu-item"
+                  role="menuitem"
+                  tabindex="0"
+                  onClick={() => {
+                    setMenu(false);
+                    setSheet({ kind: "accounts" });
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && (setMenu(false), setSheet({ kind: "accounts" }))}
+                >
+                  <Icon name="person" small />
+                  Accounts
+                </div>
+              </Show>
               <div class="menu-item" role="menuitem" tabindex="0" onClick={addRepo} onKeyDown={(e) => e.key === "Enter" && addRepo()}>
                 <Icon name="plus" small />
                 Add repository
@@ -383,14 +414,20 @@ export default function App() {
             Ledger
           </button>
         </nav>
-        <Show when={quota().length > 0}>
-          <div class="quota" aria-label="Claude Code usage, as of the last run">
-            <For each={quota()}>
+        <Show when={quota() && quota()!.events.length > 0 ? quota() : null}>
+          {(qa) => (
+          <button
+            type="button"
+            class="quota"
+            aria-label={`Usage of the ${qa().account} account, as of its last run. Open Accounts`}
+            onClick={() => setSheet({ kind: "accounts" })}
+          >
+            <For each={qa().events}>
               {(q) => (
                 <div
                   class="meter"
-                  data-level={q.used >= 0.95 ? "out" : q.used >= 0.7 ? "high" : undefined}
-                  title={`Claude Code, ${q.window === "five_hour" ? "5-hour" : q.window === "seven_day" ? "7-day" : q.window} window, as of the last run. Resets ${new Date(q.resets_at * 1000).toLocaleString()}.`}
+                  data-level={q.used >= 0.95 ? "out" : q.used * 100 >= (q.window === "seven_day" ? qa().seven_day_at : qa().five_hour_at) ? "high" : undefined}
+                  title={`${qa().account}: ${q.window === "five_hour" ? "5-hour" : q.window === "seven_day" ? "7-day" : q.window} window, as of its last run. Resets ${new Date(q.resets_at * 1000).toLocaleString()}.`}
                 >
                   <div class="meter-head">
                     {q.window === "five_hour" ? "Claude 5h" : q.window === "seven_day" ? "Claude 7d" : q.window}
@@ -402,7 +439,8 @@ export default function App() {
                 </div>
               )}
             </For>
-          </div>
+          </button>
+          )}
         </Show>
       </header>
 
@@ -521,6 +559,16 @@ export default function App() {
                   openRun(id);
                 }}
                 onChanged={() => void loadCards()}
+                onClose={() => setSheet(null)}
+              />
+            )}
+          </Show>
+          <Show when={sheet()?.kind === "accounts" && repo()}>
+            {(path) => (
+              <AccountsSheet
+                repo={path()}
+                repoName={current()?.name ?? "This repository"}
+                onChanged={() => void loadRuns()}
                 onClose={() => setSheet(null)}
               />
             )}

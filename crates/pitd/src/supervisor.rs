@@ -15,6 +15,7 @@ use pit_core::actions::{self, NewOptions};
 use pit_core::cards::{self, CardPatch, CardState, NewQuestion};
 use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::lanes::now_secs;
+use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
 use pit_core::flow;
 use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta, RunState};
 use serde_json::Value;
@@ -35,6 +36,18 @@ pub struct Config {
 /// What a person answered to an approval.
 pub type Answer = (Decision, Option<String>);
 
+/// An error that starts with this means: the route's next usable option is an API key and needs
+/// the person's yes (`allow_api_key`). The rest of the message says why.
+pub const NEEDS_API_KEY: &str = "needs-api-key: ";
+
+#[derive(Debug, Clone, Default)]
+pub struct StartOpts {
+    /// The person said yes to the API key for this run.
+    pub allow_api_key: bool,
+    /// This run continues that one, which hit a usage limit.
+    pub handoff_from: Option<String>,
+}
+
 /// What the daemon holds for a run while its process lives.
 struct Live {
     meta: RunMeta,
@@ -48,13 +61,16 @@ struct Live {
     tx: broadcast::Sender<(usize, RunEvent)>,
     /// Rules allowed "for this run".
     rules: Vec<String>,
+    /// It hit a usage limit: when it ends, the route continues the card elsewhere.
+    limited: bool,
     pending: HashMap<String, oneshot::Sender<Answer>>,
 }
 
 pub struct Supervisor {
     pub cfg: Config,
     live: Mutex<HashMap<String, Live>>,
-    quota: Mutex<Vec<RunEvent>>,
+    /// Last usage events seen, per account.
+    quota: Mutex<HashMap<String, Vec<RunEvent>>>,
 }
 
 pub struct Subscription {
@@ -65,7 +81,7 @@ pub struct Subscription {
 
 impl Supervisor {
     pub fn new(cfg: Config) -> Arc<Self> {
-        Arc::new(Self { cfg, live: Mutex::new(HashMap::new()), quota: Mutex::new(Vec::new()) })
+        Arc::new(Self { cfg, live: Mutex::new(HashMap::new()), quota: Mutex::new(HashMap::new()) })
     }
 
     fn dir(&self, id: &str) -> PathBuf {
@@ -121,7 +137,8 @@ impl Supervisor {
         Ok(serde_json::from_str(&t)?)
     }
 
-    pub fn quota(&self) -> Vec<RunEvent> {
+    /// Last usage events seen, per account.
+    pub fn quota(&self) -> HashMap<String, Vec<RunEvent>> {
         self.quota.lock().unwrap().clone()
     }
 
@@ -180,9 +197,92 @@ impl Supervisor {
         Ok(Subscription { replay: self.read_timeline(id, from), rx: None })
     }
 
+    /// Usage per account, in percent, from the last events seen.
+    fn usage(&self) -> HashMap<String, Usage> {
+        self.quota
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(acct, evs)| {
+                let mut u = Usage::default();
+                for e in evs {
+                    if let RunEvent::Quota { window, used, .. } = e {
+                        match window.as_str() {
+                            "five_hour" => u.five_hour = Some(used * 100.0),
+                            "seven_day" => u.seven_day = Some(used * 100.0),
+                            _ => {}
+                        }
+                    }
+                }
+                (acct.clone(), u)
+            })
+            .collect()
+    }
+
+    /// The route's choice for a new run of this repository. A resumed run keeps its account and
+    /// model (the session lives there); a continuation skips the accounts that hit their limit.
+    fn choose(&self, r: &Repo, resume: Option<&RunMeta>, opts: &StartOpts) -> Result<(Choice, String, Vec<String>)> {
+        let routing = Routing::load(&self.cfg.home)?;
+        if let Some(prev) = resume {
+            let a = routing.account(&prev.account).with_context(|| format!("account {} is gone from routing.toml", prev.account))?;
+            let choice = Choice {
+                account: a.id.clone(),
+                kind: a.kind,
+                model: prev.model.clone(),
+                config_dir: accounts::profile_dir(&a.id, &self.cfg.home),
+                api_key_helper: a.api_key_helper.clone(),
+            };
+            return Ok((choice, format!("resumes {} in the same session", prev.id), prev.exhausted.clone()));
+        }
+        let exhausted = match &opts.handoff_from {
+            Some(prev) => {
+                let p = self.get(prev)?;
+                let mut e = p.exhausted.clone();
+                e.push(p.account.clone());
+                e
+            }
+            None => Vec::new(),
+        };
+        let choices = routing.choices(&r.root, &home_dir(), &self.cfg.home)?;
+        let running: HashMap<String, usize> = self.live.lock().unwrap().values().fold(HashMap::new(), |mut m, l| {
+            *m.entry(l.meta.account.clone()).or_default() += 1;
+            m
+        });
+        let max_parallel: HashMap<String, u32> =
+            routing.accounts.iter().filter_map(|a| a.max_parallel.map(|n| (a.id.clone(), n))).collect();
+        let usage = self.usage();
+        let claude = self.cfg.claude_bin.clone();
+        let home = self.cfg.home.clone();
+        let routing_ref = &routing;
+        // Signed out only when the official CLI says so; when it cannot tell, the run will say.
+        let logged_in = move |c: &Choice| {
+            routing_ref.account(&c.account).is_none_or(|a| {
+                let s = accounts::status(a, &home, &claude);
+                s.logged_in || s.problem.is_some()
+            })
+        };
+        let pick = accounts::pick(
+            &choices,
+            &routing.route.run.switch_at,
+            &Situation {
+                usage: &usage,
+                running: &running,
+                max_parallel: &max_parallel,
+                logged_in: &logged_in,
+                allow_api_key: opts.allow_api_key,
+                skip: &exhausted,
+            },
+        );
+        match pick {
+            Pick::Run { choice, reason } => Ok((choice, reason, exhausted)),
+            Pick::NeedsApiKey { reason, .. } => bail!("{NEEDS_API_KEY}{reason}"),
+            Pick::Nothing { reason } => bail!("{reason}"),
+        }
+    }
+
     /// Starts a run of `card` in `repo`. Returns at once; preparing the worktree and the agent's
     /// work show up as events.
-    pub fn start(self: &Arc<Self>, repo: PathBuf, card: u32, resume: Option<String>) -> Result<RunMeta> {
+    pub fn start(self: &Arc<Self>, repo: PathBuf, card: u32, resume: Option<String>, opts: StartOpts) -> Result<RunMeta> {
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
         let c = cards::get(&r, card)?;
         if c.open_questions() > 0 {
@@ -194,8 +294,10 @@ impl Supervisor {
                 bail!("card #{card} is already running ({})", l.meta.id);
             }
         }
-        let (session_id, resumed_from) = match &resume {
-            Some(prev) => (self.get(prev)?.session_id, Some(prev.clone())),
+        let prev = resume.as_deref().map(|p| self.get(p)).transpose()?;
+        let (choice, reason, exhausted) = self.choose(&r, prev.as_ref(), &opts)?;
+        let (session_id, resumed_from) = match &prev {
+            Some(p) => (p.session_id.clone(), Some(p.id.clone())),
             None => (uuid::Uuid::new_v4().to_string(), None),
         };
         let now = now_secs();
@@ -208,7 +310,7 @@ impl Supervisor {
             branch: c.lane.clone().unwrap_or_default(),
             worktree: PathBuf::new(),
             agent: "claude-code".into(),
-            model: r.flow.run.model.clone(),
+            model: choice.model.clone().or_else(|| r.flow.run.model.clone()),
             session_id,
             pid: None,
             state: RunState::Starting,
@@ -223,6 +325,12 @@ impl Supervisor {
             denied: Vec::new(),
             resumed_from,
             waiting: Vec::new(),
+            account: choice.account.clone(),
+            reason: Some(reason),
+            handoff_from: opts.handoff_from.clone(),
+            exhausted,
+            next: None,
+            resets_at: None,
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -238,13 +346,14 @@ impl Supervisor {
                 events: 0,
                 tx,
                 rules: Vec::new(),
+                limited: false,
                 pending: HashMap::new(),
             },
         );
         let me = Arc::clone(self);
         let run = id.clone();
         tokio::spawn(async move {
-            if let Err(e) = me.clone().drive(run.clone(), repo, card, resume.is_some()).await {
+            if let Err(e) = me.clone().drive(run.clone(), repo, card, resume.is_some(), choice, opts.handoff_from).await {
                 me.fail(&run, &format!("{e:#}"));
             }
         });
@@ -264,13 +373,26 @@ impl Supervisor {
         }
     }
 
-    async fn drive(self: Arc<Self>, id: String, repo: PathBuf, card: u32, resuming: bool) -> Result<()> {
+    async fn drive(
+        self: Arc<Self>,
+        id: String,
+        repo: PathBuf,
+        card: u32,
+        resuming: bool,
+        choice: Choice,
+        handoff_from: Option<String>,
+    ) -> Result<()> {
         // Worktree and branch: blocking git work, off the async threads.
         let home = self.cfg.home.clone();
         let me = Arc::clone(&self);
         let rid = id.clone();
-        let prep = tokio::task::spawn_blocking(move || prepare(&repo, card, &home, |t| me.emit(&rid, RunEvent::Note { text: t })))
-            .await??;
+        let prev = handoff_from.as_deref().map(|p| self.get(p)).transpose()?;
+        let prev_texts = handoff_from.as_deref().map(|p| last_words(&self.read_timeline(p, 0))).unwrap_or_default();
+        let repo_for_prep = repo.clone();
+        let prep = tokio::task::spawn_blocking(move || {
+            prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), |t| me.emit(&rid, RunEvent::Note { text: t }))
+        })
+        .await??;
         self.update(&id, |m| {
             m.branch = prep.branch.clone();
             m.worktree = prep.worktree.clone();
@@ -292,9 +414,19 @@ impl Supervisor {
             .arg(runs::RULES)
             .arg("--json-schema")
             .arg(runs::handoff_schema().to_string());
-        if let Some(m) = &prep.model {
+        if let Some(m) = choice.model.as_ref().or(prep.model.as_ref()) {
             cmd.args(["--model", m]);
         }
+        // The account: its own Claude Code directory, where you signed in. Pitlane only points at it.
+        if let Some(dir) = &choice.config_dir {
+            fs::create_dir_all(dir)?;
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
+        // An API key account: Claude Code runs your helper command; the key never passes here.
+        if let Some(helper) = &choice.api_key_helper {
+            cmd.arg("--settings").arg(serde_json::json!({ "apiKeyHelper": helper }).to_string());
+        }
+        self.emit(&id, RunEvent::Note { text: format!("Route: {}", self.get(&id)?.reason.unwrap_or_default()) });
         if let Some(pit) = &self.cfg.pit_bin {
             // Anything no rule allows is asked to a person, through Pitlane, and waits for them.
             let mcp = serde_json::json!({ "mcpServers": { "pitlane_run": {
@@ -390,6 +522,10 @@ impl Supervisor {
         };
         let finished_ok = *finished.lock().unwrap();
         let stopped = self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested);
+        let limited = !stopped && self.live.lock().unwrap().get(&id).is_some_and(|l| l.limited);
+        if limited {
+            return self.hand_off(id, repo, card, status.code()).await;
+        }
         let state = if stopped {
             RunState::Stopped
         } else if finished_ok == Some(true) {
@@ -434,12 +570,24 @@ impl Supervisor {
                 });
             }
             RunEvent::Quota { window, .. } => {
-                let mut q = self.quota.lock().unwrap();
+                let account = self.live.lock().unwrap().get(id).map(|l| l.meta.account.clone()).unwrap_or_default();
+                let mut all = self.quota.lock().unwrap();
+                let q = all.entry(account).or_default();
                 q.retain(|e| !matches!(e, RunEvent::Quota { window: w, .. } if w == window));
                 q.push(ev.clone());
             }
-            RunEvent::Finished { ok, cost_usd, duration_ms, turns, tokens, handoff, denied } => {
+            RunEvent::Limited { resets_at, .. } => {
+                if let Some(l) = self.live.lock().unwrap().get_mut(id) {
+                    l.limited = true;
+                }
+                let at = (*resets_at > 0).then_some(*resets_at);
+                self.update(id, move |m| m.resets_at = at);
+            }
+            RunEvent::Finished { ok, cost_usd, duration_ms, turns, tokens, handoff, denied, limited } => {
                 *finished_ok = Some(*ok);
+                if *limited && let Some(l) = self.live.lock().unwrap().get_mut(id) {
+                    l.limited = true;
+                }
                 let (ok, cost, dur, turns, tokens, handoff, denied) =
                     (*ok, *cost_usd, *duration_ms, *turns, tokens.clone(), handoff.clone(), denied.clone());
                 self.update(id, move |m| {
@@ -567,6 +715,73 @@ impl Supervisor {
             .collect()
     }
 
+    /// The run hit a usage limit: commit what it did, close it, and continue the card with the
+    /// route's next option. When that option is an API key, it waits for the person's yes.
+    async fn hand_off(self: Arc<Self>, id: String, repo: PathBuf, card: u32, code: Option<i32>) -> Result<()> {
+        let meta = self.get(&id)?;
+        let worktree = meta.worktree.clone();
+        let label = meta.card;
+        let checkpoint = tokio::task::spawn_blocking(move || checkpoint(&worktree, label)).await?;
+        if let Ok(Some(sha)) = &checkpoint {
+            self.emit(&id, RunEvent::Note { text: format!("Committed the work so far as {sha} before handing off.") });
+        }
+        let why = format!("Hit the usage limit on {}.", meta.account);
+        self.update(&id, |m| {
+            m.state = RunState::Failed;
+            m.ended_at = Some(now_secs());
+            m.pid = None;
+            m.waiting.clear();
+            m.error = Some(why.clone());
+        });
+        self.emit(&id, RunEvent::Exited { code, state: RunState::Failed });
+        self.live.lock().unwrap().remove(&id);
+
+        match self.start(repo, card, None, StartOpts { allow_api_key: false, handoff_from: Some(id.clone()) }) {
+            Ok(next) => {
+                let text = format!("{why} Continues as run {} with {}.", next.id, next.reason.clone().unwrap_or_default());
+                self.update_disk(&id, |m| m.error = Some(text.clone()));
+                Ok(())
+            }
+            Err(e) => {
+                let e = format!("{e:#}");
+                let (next, text) = match e.strip_prefix(NEEDS_API_KEY) {
+                    // The reason reads "<option>: <why the others were passed over>".
+                    Some(reason) => {
+                        let option = reason.split_once(':').map_or(reason, |(o, _)| o).trim().to_owned();
+                        (Some(option.clone()), format!("{why} The next option, {option}, is paid per token and waits for your yes."))
+                    }
+                    None => (None, format!("{why} Nothing else in the route can take it now: {e}")),
+                };
+                self.update_disk(&id, |m| {
+                    m.error = Some(text.clone());
+                    m.next = next.clone();
+                });
+                let home = self.cfg.home.clone();
+                tokio::task::spawn_blocking(move || set_card_state(&meta, CardState::Blocked, &home)).await??;
+                Ok(())
+            }
+        }
+    }
+
+    /// Changes a run that is no longer live, on disk.
+    fn update_disk(&self, id: &str, f: impl FnOnce(&mut RunMeta)) {
+        if let Ok(mut m) = self.get(id) {
+            f(&mut m);
+            let _ = self.write_meta(&m);
+        }
+    }
+
+    /// Continues a run that hit its limit; `allow_api_key` is the person's yes to the paid option.
+    pub fn continue_run(self: &Arc<Self>, id: &str, allow_api_key: bool) -> Result<RunMeta> {
+        let prev = self.get(id)?;
+        if prev.state.is_live() {
+            bail!("run {id} is still running");
+        }
+        let next = self.start(prev.repo.clone(), prev.card, None, StartOpts { allow_api_key, handoff_from: Some(prev.id.clone()) })?;
+        self.update_disk(id, |m| m.next = None);
+        Ok(next)
+    }
+
     /// A message to the agent while it works: it reads it after its current step.
     pub async fn say(&self, id: &str, text: &str) -> Result<()> {
         let mut stdin = {
@@ -637,7 +852,36 @@ struct Prepared {
 }
 
 /// The card's lane and worktree, made when missing, and what the agent is launched with.
-fn prepare(repo: &Path, card: u32, home: &Path, note: impl Fn(String)) -> Result<Prepared> {
+/// Commits whatever is uncommitted in the worktree, so the next agent starts from it.
+fn checkpoint(worktree: &Path, card: u32) -> Result<Option<String>> {
+    let g = pit_core::git::Git::new(worktree);
+    if g.lines(&["status", "--porcelain"])?.is_empty() {
+        return Ok(None);
+    }
+    g.run(&["add", "-A"])?;
+    g.run(&["commit", "-q", "-m", &format!("pitlane: checkpoint of card #{card} at a usage limit")])?;
+    Ok(Some(g.run(&["rev-parse", "--short", "HEAD"])?))
+}
+
+/// The agent's last words in a run: its handoff summary if any, else its last two messages.
+fn last_words(timeline: &[(usize, RunEvent)]) -> String {
+    if let Some(s) = timeline.iter().rev().find_map(|(_, e)| match e {
+        RunEvent::Finished { handoff: Some(h), .. } => h.get("summary").and_then(|s| s.as_str()).map(str::to_owned),
+        _ => None,
+    }) {
+        return s;
+    }
+    let texts: Vec<&str> = timeline
+        .iter()
+        .filter_map(|(_, e)| match e {
+            RunEvent::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    texts.iter().rev().take(2).rev().cloned().collect::<Vec<_>>().join("\n\n")
+}
+
+fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &str)>, note: impl Fn(String)) -> Result<Prepared> {
     let r = Repo::open(repo, &home_dir(), home)?;
     let c = cards::get(&r, card)?;
     let branch = match &c.lane {
@@ -661,8 +905,34 @@ fn prepare(repo: &Path, card: u32, home: &Path, note: impl Fn(String)) -> Result
     tools.extend(r.flow.run.allow.iter().cloned());
     Ok(Prepared {
         branch,
-        worktree,
-        briefing: runs::briefing(&r, &cards::get(&r, card)?),
+        worktree: worktree.clone(),
+        briefing: {
+            let mut b = runs::briefing(&r, &cards::get(&r, card)?);
+            if let Some((prev, words)) = continues {
+                let g = pit_core::git::Git::new(&worktree);
+                // Production as the yard resolves it: the remote branch, or the local one without a remote.
+                let base = pit_core::lanes::Target::resolve(&r, &r.flow.flow.production).ok().flatten().map(|t| t.sha);
+                let log = match base {
+                    Some(b) => g.run(&["log", "--oneline", "-20", &format!("{b}..HEAD")]).unwrap_or_default(),
+                    None => g.run(&["log", "--oneline", "-5"]).unwrap_or_default(),
+                };
+                let status = g.run(&["status", "--short"]).unwrap_or_default();
+                b.push_str(&format!(
+                    "\n## You are continuing run {}\n\nIt stopped at a usage limit on another account or model. Its work is committed on this branch; carry on from there, do not redo it.\n",
+                    prev.id
+                ));
+                if !words.trim().is_empty() {
+                    b.push_str(&format!("\nWhere it was:\n\n{}\n", words.trim()));
+                }
+                if !log.is_empty() {
+                    b.push_str(&format!("\nCommits so far:\n\n{log}\n"));
+                }
+                if !status.is_empty() {
+                    b.push_str(&format!("\nUncommitted:\n\n{status}\n"));
+                }
+            }
+            b
+        },
         tools,
         max_turns: r.flow.run.max_turns,
         model: r.flow.run.model.clone(),

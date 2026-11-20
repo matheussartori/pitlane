@@ -63,11 +63,29 @@ export async function preview<T>(cmd: string): Promise<T> {
       return (location.hash.includes("3-live") ? liveTimeline() : location.hash.includes("5-failed") ? failedTimeline() : pairs(runTimeline)) as T;
     case "run_follow":
       return undefined as T;
+    case "accounts_list":
+      return {
+        accounts: [
+          { id: "default", kind: "subscription", status: { logged_in: true, method: "claude.ai", email: null, problem: null },
+            usage: { five_hour: 14, seven_day: 27 }, here: true },
+          { id: "work", kind: "team", status: { logged_in: false, method: null, email: null, problem: null }, usage: null, here: false },
+          { id: "anthropic-api", kind: "api-key", status: { logged_in: true, method: "api key helper", email: null, problem: null }, usage: null, here: false },
+        ],
+        route: ["opus@repo", "sonnet@repo", "opus@anthropic-api"],
+        five_hour_at: 90,
+        seven_day_at: 95,
+        file: "/Users/you/.pitlane/routing.toml",
+      } as T;
     case "quota":
-      return [
-        { kind: "quota", window: "five_hour", used: 0.14, resets_at: Math.floor(Date.now() / 1000) + 3 * 3600 },
-        { kind: "quota", window: "seven_day", used: 0.27, resets_at: Math.floor(Date.now() / 1000) + 4 * 86400 },
-      ] as T;
+      return {
+        account: "default",
+        five_hour_at: 90,
+        seven_day_at: 95,
+        events: [
+          { kind: "quota", window: "five_hour", used: 0.14, resets_at: Math.floor(Date.now() / 1000) + 3 * 3600 },
+          { kind: "quota", window: "seven_day", used: 0.27, resets_at: Math.floor(Date.now() / 1000) + 4 * 86400 },
+        ],
+      } as T;
     case "cards_list":
       return { cards: new URLSearchParams(location.search).get("state") === "empty" ? [] : cards, problems: [] } as T;
     default:

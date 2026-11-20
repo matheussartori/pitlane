@@ -133,6 +133,19 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
     }
   }
 
+  async function continueOnKey() {
+    const m = props.meta;
+    if (!m) return;
+    try {
+      const r = await api.runContinue(m.id, true);
+      toast({ tone: "done", title: `Run ${r.id} continues the card`, body: r.reason ?? undefined });
+      props.onChanged();
+      location.hash = `#run/${r.id}`;
+    } catch (e) {
+      toast({ tone: "fail", title: "Not continued", body: msg(e) });
+    }
+  }
+
   async function resume() {
     const m = props.meta;
     if (!m) return;
@@ -203,10 +216,30 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
               {m().branch || "Preparing the lane"}
             </span>
             <LaneTrack branch={m().branch} yard={props.yard} now={props.now} />
-            <Show when={m().model}>
-              <span>{m().model}</span>
-            </Show>
+            <span title={m().reason ?? undefined}>
+              {m().model ?? "default model"}
+              {m().account ? ` on ${m().account}` : ""}
+            </span>
           </p>
+          <Show when={m().next}>
+            {(next) => (
+              <section class="approval" aria-label="Continue on the API key">
+                <p class="approval-ask">Stopped at the usage limit of {m().account ?? "its account"}</p>
+                <p class="approval-why">
+                  Continue as {next()}, paid per token
+                  <Show when={m().resets_at}>
+                    {(t) => <>, or wait: the window resets at {new Date(t() * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</>}
+                  </Show>
+                  .
+                </p>
+                <div class="row-actions">
+                  <button type="button" class="btn btn-primary" onClick={() => void continueOnKey()}>
+                    Continue as {next()}
+                  </button>
+                </div>
+              </section>
+            )}
+          </Show>
 
           <Show when={error()}>
             <ErrorLine>{error()}</ErrorLine>
@@ -263,6 +296,13 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                         <p class="tl-note tl-asked" data-pending={m().waiting.some((w) => w.id === x().approval.id) ? "" : undefined}>
                           <Icon name="needs" small /> Asked to {x().approval.tool === "Bash" ? "run" : "use"}{" "}
                           <code>{rel(x().approval.detail || x().approval.tool)}</code>
+                        </p>
+                      )}
+                    </Match>
+                    <Match when={e.kind === "limited" && e}>
+                      {(x) => (
+                        <p class="tl-note tl-limit">
+                          <Icon name="needs" small /> Hit the {x().window.replace("_", "-")} usage limit on {m().account ?? "default"}.
                         </p>
                       )}
                     </Match>
@@ -362,7 +402,7 @@ export function RunScreen(props: { meta: RunMeta | undefined; yard: Yard | null;
                   </ul>
                 </section>
               </Show>
-              <Show when={m().error}>
+              <Show when={m().error && !m().next}>
                 <ErrorLine>{m().error}</ErrorLine>
               </Show>
             </aside>

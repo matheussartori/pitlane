@@ -52,7 +52,8 @@ let nextId = 1;
 export function toast(t: Omit<Toast, "id">, ms = 7000) {
   const id = nextId++;
   setToasts((all) => [...all.slice(-3), { ...t, id }]);
-  setTimeout(() => dismiss(id), ms);
+  // 0 keeps it until it is answered or dismissed: for anything that waits on a decision.
+  if (ms > 0) setTimeout(() => dismiss(id), ms);
 }
 
 function dismiss(id: number) {
