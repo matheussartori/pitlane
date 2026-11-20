@@ -89,11 +89,18 @@
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watch);
   else watch();
-  // The secondary side bar held the chat, which Pitlane turns off: close it when it is empty.
-  setTimeout(function () {
+  // The secondary side bar held the chat, which Pitlane turns off: close it while it shows nothing.
+  var tries = 0;
+  var closer = setInterval(function () {
+    tries++;
     var aux = document.querySelector(".part.auxiliarybar");
-    if (!aux || aux.offsetWidth === 0 || aux.querySelector(".pane-body, .monaco-list")) return;
-    var close = aux.querySelector('.title-actions .action-label.codicon-close, .title-actions [aria-label^="Hide"], .title-actions [aria-label^="Close"]');
-    if (close) close.click();
-  }, 2500);
+    if (aux && aux.offsetWidth > 0 && aux.innerText.trim() === "") {
+      var close = aux.querySelector('[aria-label*="Hide Secondary Side Bar"], .action-label.codicon-close');
+      if (close) {
+        close.click();
+        clearInterval(closer);
+      }
+    }
+    if (tries > 20) clearInterval(closer);
+  }, 500);
 })();
