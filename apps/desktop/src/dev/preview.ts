@@ -126,6 +126,15 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
         text: "import { integrate } from \"./physics\";\n\n/** The drift angle a kart reaches at each tier, in degrees. */\nexport function driftAngle(tier: number): number {\n  if (tier < 1) return 0;\n  return Math.min(12 + tier * 6, 36);\n}\n\nexport function applyDrift(kart: Kart, dt: number) {\n  const angle = driftAngle(kart.tier);\n  kart.heading += angle * dt;\n  integrate(kart, dt);\n}\n\ninterface Kart {\n  tier: number;\n  heading: number;\n}\n",
         refused: null,
       } as T;
+    case "vscode_status":
+      return { installed: false, version: null, running: false } as T;
+    case "vscode_install":
+      await new Promise((r) => setTimeout(r, 1500));
+      return "4.146.0" as T;
+    case "vscode_show":
+    case "vscode_hide":
+    case "vscode_open":
+      return null as T;
     case "lsp_start":
       return { kind: "missing", family: "ts", hint: "TypeScript needs a language server: vtsls, about 30 MB, installed into ~/.pitlane/lsp.", install: ["npm", "install", "@vtsls/language-server"] } as T;
     case "lsp_install":

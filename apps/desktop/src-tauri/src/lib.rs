@@ -17,6 +17,7 @@ use tauri::{Emitter, Manager};
 
 mod files;
 mod lsp;
+mod vscode;
 mod term;
 use serde::{Deserialize, Serialize};
 
@@ -662,6 +663,73 @@ async fn lsp_install(root: String, lang: String) -> CmdResult<()> {
     .await
 }
 
+// ---------------------------------------------------------------- VS Code (code-server) in the Code tab
+
+#[derive(Default)]
+struct CodeView {
+    folder: Mutex<Option<String>>,
+}
+
+#[tauri::command]
+fn vscode_status(v: tauri::State<'_, vscode::Vscode>) -> vscode::Status {
+    vscode::status(&v, &default_homes().1)
+}
+
+/// Downloads code-server, on the person's click.
+#[tauri::command]
+async fn vscode_install() -> CmdResult<String> {
+    blocking(|| vscode::install(&default_homes().1)).await
+}
+
+/// Shows VS Code over the Code tab's area (logical pixels of the window), on `folder`.
+#[tauri::command]
+async fn vscode_show(app: tauri::AppHandle, folder: String, x: f64, y: f64, w: f64, h: f64) -> CmdResult<()> {
+    use tauri::webview::{PageLoadEvent, WebviewBuilder};
+    use tauri::{LogicalPosition, LogicalSize, WebviewUrl};
+    let a = app.clone();
+    let r = blocking(move || a.state::<vscode::Vscode>().start(&default_homes().1)).await?;
+    let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{}/", r.port)).map_err(|e| e.to_string())?;
+    url.query_pairs_mut().append_pair("folder", &folder);
+    let view = app.state::<CodeView>();
+    let changed = view.folder.lock().unwrap().as_deref() != Some(folder.as_str());
+    let e = |e: tauri::Error| e.to_string();
+    if let Some(wv) = app.get_webview("vscode") {
+        wv.set_position(LogicalPosition::new(x, y)).map_err(e)?;
+        wv.set_size(LogicalSize::new(w, h)).map_err(e)?;
+        if changed || !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
+            wv.navigate(url).map_err(e)?;
+        }
+        wv.show().map_err(e)?;
+    } else {
+        let window = app.get_window("main").ok_or("no main window")?;
+        let builder = WebviewBuilder::new("vscode", WebviewUrl::External(url)).on_page_load(|wv, p| {
+            // code-server's login page: type the password made for this run.
+            if p.event() == PageLoadEvent::Finished && p.url().path().starts_with("/login") {
+                if let Some(r) = wv.app_handle().state::<vscode::Vscode>().current() {
+                    let _ = wv.eval(vscode::login_script(&r.password));
+                }
+            }
+        });
+        window.add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h)).map_err(e)?;
+    }
+    *view.folder.lock().unwrap() = Some(folder);
+    Ok(())
+}
+
+#[tauri::command]
+async fn vscode_hide(app: tauri::AppHandle) -> CmdResult<()> {
+    if let Some(wv) = app.get_webview("vscode") {
+        wv.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Opens a file at a line in the VS Code that is running.
+#[tauri::command]
+async fn vscode_open(app: tauri::AppHandle, path: String, line: Option<u32>, col: Option<u32>) -> CmdResult<()> {
+    blocking(move || app.state::<vscode::Vscode>().open_file(&default_homes().1, Path::new(&path), line, col)).await
+}
+
 // ---------------------------------------------------------------- free terminals
 
 #[tauri::command]
@@ -773,6 +841,8 @@ pub fn run() {
         .manage(Following::default())
         .manage(term::Terms::default())
         .manage(lsp::Lsps::default())
+        .manage(vscode::Vscode::default())
+        .manage(CodeView::default())
         .menu(menu)
         .on_menu_event(|app, e| {
             if e.id().as_ref() == "close-window" {
@@ -819,6 +889,11 @@ pub fn run() {
             file_changes,
             term_open,
             lsp_start,
+            vscode_status,
+            vscode_install,
+            vscode_show,
+            vscode_hide,
+            vscode_open,
             lsp_send,
             lsp_install,
             open_external,
@@ -842,6 +917,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 app.state::<term::Terms>().close_all();
                 app.state::<lsp::Lsps>().close_all();
+                app.state::<vscode::Vscode>().stop();
             }
         });
 }

@@ -420,6 +420,22 @@ export function openExternal(url: string): Promise<void> {
   return invoke<void>("open_external", { url });
 }
 
+// ---------------------------------------------------------------- VS Code (code-server)
+
+export interface VscodeStatus {
+  installed: boolean;
+  version: string | null;
+  running: boolean;
+}
+
+export const vscode = {
+  status: () => invoke<VscodeStatus>("vscode_status"),
+  install: () => invoke<string>("vscode_install"),
+  show: (folder: string, r: { x: number; y: number; w: number; h: number }) => invoke<void>("vscode_show", { folder, ...r }),
+  hide: () => invoke<void>("vscode_hide"),
+  open: (path: string, line?: number, col?: number) => invoke<void>("vscode_open", { path, line: line ?? null, col: col ?? null }),
+};
+
 // ---------------------------------------------------------------- language servers
 
 export type LspStart =

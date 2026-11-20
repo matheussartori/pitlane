@@ -4,7 +4,7 @@
 // by side, tabs that come back, and the standard keys.
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount } from "solid-js";
 import type * as M from "monaco-editor";
-import { files, type FileChanges, type Lane, type SearchHit } from "./api";
+import { files, vscode, type FileChanges, type Lane, type SearchHit, type VscodeStatus } from "./api";
 import { Icon } from "./icons";
 import { loadMonaco, themeName } from "./monaco";
 import { ensureLsp, familyName, familyOf, installLsp, lspStateFor } from "./lsp";
@@ -360,7 +360,7 @@ export function openFromMonaco(resource: M.Uri, at?: { lineNumber: number; colum
   return true;
 }
 
-export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[] }) {
+function LightEditor(props: { repo: string; repoName: string; lanes: Lane[]; onVscode: () => void }) {
   const places = () => [
     { root: props.repo, label: props.repoName },
     ...props.lanes.filter((l) => l.worktree && !l.worktree.is_main).map((l) => ({ root: l.worktree!.path, label: l.branch })),
@@ -788,6 +788,9 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
         <aside class="code-side" aria-label={side() === "search" ? "Search" : "Files"}>
           <div class="code-side-head">
             <PlacePicker places={places()} root={root()} repo={props.repo} onPick={setRootSig} />
+            <button type="button" class="btn btn-ghost btn-icon" aria-label="Open in VS Code" title="VS Code, with extensions" onClick={() => props.onVscode()}>
+              <Icon name="code" small />
+            </button>
             <button type="button" class="btn btn-ghost btn-icon" aria-label="Files" title="Files (⇧⌘E)" aria-pressed={side() === "files"} onClick={() => setSide("files")}>
               <Icon name="folder" small />
             </button>
@@ -919,6 +922,178 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       <Show when={quick()}>
         <QuickOpen list={list() ?? []} onClose={() => (setQuick(false), editor?.focus())} onPick={(p, line) => void open(p, root(), line)} />
       </Show>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- VS Code in the tab
+
+const MODE = "pitlane.code.mode";
+const [mode, setModeSig] = createSignal<"vscode" | "light">((() => {
+  try {
+    return localStorage.getItem(MODE) === "light" ? "light" : "vscode";
+  } catch {
+    return "vscode";
+  }
+})());
+function setMode(m: "vscode" | "light") {
+  setModeSig(m);
+  try {
+    localStorage.setItem(MODE, m);
+  } catch {
+    /* no storage */
+  }
+}
+
+/** The Code tab: VS Code (code-server) when it is installed and chosen, else the light editor. */
+export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[] }) {
+  const [status, { refetch }] = createResource(() => vscode.status().catch(() => ({ installed: false, version: null, running: false }) as VscodeStatus));
+  return (
+    <Show when={mode() === "vscode" && status()} fallback={<LightEditor {...props} onVscode={() => setMode("vscode")} />}>
+      {(st) => (
+        <Show when={st().installed} fallback={<VscodeInstall onDone={() => void refetch()} onLight={() => setMode("light")} />}>
+          <VscodeView {...props} onLight={() => setMode("light")} />
+        </Show>
+      )}
+    </Show>
+  );
+}
+
+function VscodeInstall(props: { onDone: () => void; onLight: () => void }) {
+  const [busy, setBusy] = createSignal(false);
+  const [err, setErr] = createSignal<string | null>(null);
+  const install = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await vscode.install();
+      props.onDone();
+    } catch (e) {
+      setErr(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="code-empty vs-install">
+      <div class="code-empty-title">VS Code, inside Pitlane</div>
+      <p class="code-empty-body">
+        The full editor, with extensions, on the repository or any lane’s worktree. It runs code-server, the open-source VS Code by Coder: about 235 MB, downloaded once into
+        ~/.pitlane/code-server. Extensions come from Open VSX.
+      </p>
+      <div class="vs-actions">
+        <button type="button" class="btn btn-primary" disabled={busy()} aria-busy={busy()} onClick={() => void install()}>
+          <Show when={busy()} fallback={<Icon name="code" small />}>
+            <Spinner />
+          </Show>
+          {busy() ? "Downloading code-server" : "Install VS Code"}
+        </button>
+        <button type="button" class="btn btn-ghost" onClick={props.onLight}>
+          Use the light editor
+        </button>
+      </div>
+      <Show when={err()}>
+        <p class="vs-error">{err()}</p>
+      </Show>
+    </div>
+  );
+}
+
+function VscodeView(props: { repo: string; repoName: string; lanes: Lane[]; onLight: () => void }) {
+  let host!: HTMLDivElement;
+  const places = () => [
+    { root: props.repo, label: props.repoName },
+    ...props.lanes.filter((l) => l.worktree && !l.worktree.is_main).map((l) => ({ root: l.worktree!.path, label: l.branch })),
+  ];
+  const root = () => rootSig() ?? props.repo;
+  const [state, setState] = createSignal<"starting" | "ready" | "failed">("starting");
+  const [why, setWhy] = createSignal("");
+  let covered = false;
+  let alive = true;
+
+  const rect = () => {
+    const r = host.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  };
+  const place = async () => {
+    if (!alive || covered) return;
+    try {
+      await vscode.show(root(), rect());
+      if (alive) setState("ready");
+    } catch (e) {
+      setWhy(msg(e));
+      setState("failed");
+    }
+  };
+  const openPending = async () => {
+    if (!pending) return;
+    const p = pending;
+    pending = null;
+    if (p.root !== root()) setRootSig(p.root);
+    await place();
+    try {
+      await vscode.open(`${p.root}/${p.path}`, p.line, p.col);
+    } catch (e) {
+      toast({ tone: "fail", title: `Could not open ${p.path} in VS Code`, body: msg(e) });
+    }
+  };
+
+  onMount(() => {
+    void place().then(openPending);
+    const ro = new ResizeObserver(() => void place());
+    ro.observe(host);
+    // App menus, sheets and dialogs draw in the page, under VS Code's own view: step aside for them.
+    const overlay = () => !!document.querySelector(".pop, dialog[open], .qo-scrim");
+    const mo = new MutationObserver(() => {
+      const now = overlay();
+      if (now === covered) return;
+      covered = now;
+      if (covered) void vscode.hide().catch(() => {});
+      else void place();
+    });
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
+    const onRequest = () => void openPending();
+    window.addEventListener("pitlane-code-open", onRequest);
+    onCleanup(() => {
+      alive = false;
+      ro.disconnect();
+      mo.disconnect();
+      window.removeEventListener("pitlane-code-open", onRequest);
+      void vscode.hide().catch(() => {});
+    });
+  });
+  createEffect(on(root, () => void place(), { defer: true }));
+
+  return (
+    <div class="vs-screen">
+      <div class="vs-bar">
+        <PlacePicker places={places()} root={root()} repo={props.repo} onPick={setRootSig} />
+        <span class="spacer" />
+        <Show when={state() === "starting"}>
+          <span class="code-lsp">
+            <Spinner /> Starting VS Code
+          </span>
+        </Show>
+        <button type="button" class="btn btn-ghost vs-switch" title="Pitlane's own editor: lighter, with the lane's changes in the margin" onClick={props.onLight}>
+          Light editor
+        </button>
+      </div>
+      <div class="vs-host" ref={host}>
+        <Show when={state() === "failed"}>
+          <div class="code-empty">
+            <div class="code-empty-title">VS Code did not start</div>
+            <p class="code-empty-body selectable">{why()}</p>
+            <div class="vs-actions">
+              <button type="button" class="btn" onClick={() => (setState("starting"), void place())}>
+                Try again
+              </button>
+              <button type="button" class="btn btn-ghost" onClick={props.onLight}>
+                Use the light editor
+              </button>
+            </div>
+          </div>
+        </Show>
+      </div>
     </div>
   );
 }

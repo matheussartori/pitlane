@@ -28,6 +28,7 @@ const paths: Record<string, () => JSX.Element> = {
   up: () => <path d="M7 14l5-5 5 5" />,
   "tabs-top": () => (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>),
   "tabs-side": () => (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>),
+  code: () => <path d="M9 7l-5 5 5 5M15 7l5 5-5 5" />,
   folder: () => <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
 };
 
