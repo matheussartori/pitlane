@@ -41,7 +41,6 @@ const failedTimeline = () => {
 };
 
 let nextTerm = 3;
-let fakeInstall = 0;
 
 export async function preview<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((r) => setTimeout(r, 250));
@@ -121,55 +120,11 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       return "a1b2c3d4" as T;
     case "files_list":
       return ["README.md", "package.json", "src/app.ts", "src/kart/drift.ts", "src/kart/drift.test.ts", "src/kart/physics.ts", "src/lobby/timer.ts", "src/ui/avatar.tsx"] as T;
-    case "file_read":
-      return {
-        path: "src/kart/drift.ts",
-        text: "import { integrate } from \"./physics\";\n\n/** The drift angle a kart reaches at each tier, in degrees. */\nexport function driftAngle(tier: number): number {\n  if (tier < 1) return 0;\n  return Math.min(12 + tier * 6, 36);\n}\n\nexport function applyDrift(kart: Kart, dt: number) {\n  const angle = driftAngle(kart.tier);\n  kart.heading += angle * dt;\n  integrate(kart, dt);\n}\n\ninterface Kart {\n  tier: number;\n  heading: number;\n}\n",
-        refused: null,
-      } as T;
-    case "vscode_status":
-      return { installed: false, version: null, running: false } as T;
-    case "vscode_install":
-      fakeInstall = Date.now();
-      await new Promise((r) => setTimeout(r, 6000));
-      fakeInstall = 0;
-      return "4.146.0" as T;
-    case "vscode_progress": {
-      const t = fakeInstall ? (Date.now() - fakeInstall) / 5000 : 0;
-      const total = 118_000_000;
-      return (fakeInstall ? (t < 1 ? { phase: "download", done: Math.round(total * t), total, version: "4.146.0" } : { phase: "unpack", done: total, total, version: "4.146.0" }) : { phase: "", done: 0, total: 0, version: "" }) as T;
-    }
+    case "vscode_theme":
+    case "vscode_prewarm":
     case "vscode_show":
     case "vscode_hide":
     case "vscode_open":
-      return null as T;
-    case "lsp_start":
-      return { kind: "missing", family: "ts", hint: "TypeScript needs a language server: vtsls, about 30 MB, installed into ~/.pitlane/lsp.", install: ["npm", "install", "@vtsls/language-server"] } as T;
-    case "lsp_install":
-      return null as T;
-    case "files_ignored":
-      return [".env", "dist/", "node_modules/"] as T;
-    case "dir_list":
-      return ["chunks/", "index.js", "index.js.map"] as T;
-    case "files_search": {
-      const q = String((args as { query: string }).query).toLowerCase();
-      const lines: [string, number, string][] = [
-        ["src/kart/drift.ts", 4, "export function driftAngle(tier: number): number {"],
-        ["src/kart/drift.ts", 10, "  const angle = driftAngle(kart.tier);"],
-        ["src/kart/drift.test.ts", 3, "import { driftAngle } from \"./drift\";"],
-        ["src/kart/physics.ts", 1, "export function integrate(kart: Kart, dt: number) {"],
-      ];
-      return lines.filter(([, , t]) => t.toLowerCase().includes(q)).map(([path, line, text]) => ({ path, line, col: text.toLowerCase().indexOf(q) + 1, text })) as T;
-    }
-    case "file_changes":
-      return {
-        base: "a1b2c3d4",
-        original: "import { integrate } from \"./physics\";\n\nexport function driftAngle(tier: number): number {\n  if (tier < 1) return 0;\n  return 12 + tier * 6;\n}\n\nexport function applyDrift(kart: Kart, dt: number) {\n  kart.heading += driftAngle(kart.tier) * dt;\n  integrate(kart, dt);\n}\n\ninterface Kart {\n  tier: number;\n  heading: number;\n}\n",
-        added: [[2, 2], [10, 10]],
-        changed: [[6, 6]],
-        removed: [],
-      } as T;
-    case "file_write":
       return null as T;
     case "term_list":
       return [

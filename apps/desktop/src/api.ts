@@ -357,41 +357,11 @@ export interface Plan {
   waits: Clash[];
 }
 
-// ---------------------------------------------------------------- files for the editor
-
-export interface FileText {
-  path: string;
-  text: string;
-  /** Why it is not shown: binary, too large, not UTF-8. */
-  refused: string | null;
-}
+// ---------------------------------------------------------------- files (for paths in terminals)
 
 export const files = {
   list: (root: string) => invoke<string[]>("files_list", { root }),
-  read: (root: string, path: string) => invoke<FileText>("file_read", { root, path }),
-  write: (root: string, path: string, text: string) => invoke<void>("file_write", { root, path, text }),
-  /** What git ignores; folders end with "/" and open on demand through `dir`. */
-  ignored: (root: string) => invoke<string[]>("files_ignored", { root }),
-  dir: (root: string, path: string) => invoke<string[]>("dir_list", { root, path }),
-  search: (root: string, query: string) => invoke<SearchHit[]>("files_search", { root, query }),
-  changes: (root: string, path: string) => invoke<FileChanges>("file_changes", { root, path }),
 };
-
-export interface SearchHit {
-  path: string;
-  line: number;
-  col: number;
-  text: string;
-}
-
-/** How a file differs from its lane's base: line ranges on disk, and the base's text. */
-export interface FileChanges {
-  base: string | null;
-  original: string | null;
-  added: [number, number][];
-  changed: [number, number][];
-  removed: number[];
-}
 
 // ---------------------------------------------------------------- free terminals
 
@@ -422,44 +392,15 @@ export function openExternal(url: string): Promise<void> {
 
 // ---------------------------------------------------------------- VS Code (code-server)
 
-export interface VscodeStatus {
-  installed: boolean;
-  version: string | null;
-  running: boolean;
-}
-
 export const vscode = {
-  status: () => invoke<VscodeStatus>("vscode_status"),
-  install: () => invoke<string>("vscode_install"),
-  progress: () => invoke<{ phase: "" | "download" | "unpack"; done: number; total: number; version: string }>("vscode_progress"),
+  /** Pitlane's colours for VS Code's dark and light themes, written into its settings. */
+  theme: (t: { dark: Record<string, string>; light: Record<string, string> }) => invoke<void>("vscode_theme", t),
+  /** Loads VS Code on `folder` out of sight, so the Code tab opens at once. */
+  prewarm: (folder: string, w: number, h: number) => invoke<void>("vscode_prewarm", { folder, w, h }),
   show: (folder: string, r: { x: number; y: number; w: number; h: number }) => invoke<void>("vscode_show", { folder, ...r }),
   hide: () => invoke<void>("vscode_hide"),
   open: (path: string, line?: number, col?: number) => invoke<void>("vscode_open", { path, line: line ?? null, col: col ?? null }),
 };
-
-// ---------------------------------------------------------------- language servers
-
-export type LspStart =
-  | { kind: "started"; id: number; name: string }
-  | { kind: "missing"; family: string; hint: string; install: string[] | null }
-  | { kind: "none" };
-
-export const lspApi = {
-  start: (root: string, lang: string) => invoke<LspStart>("lsp_start", { root, lang }),
-  send: (id: number, msg: string) => invoke<void>("lsp_send", { id, msg }),
-  install: (root: string, lang: string) => invoke<void>("lsp_install", { root, lang }),
-};
-
-/** Messages from language servers, and their exits. Nothing in the browser preview. */
-export async function onLsp(onMsg: (id: number, msg: string) => void, onExit: (id: number) => void): Promise<() => void> {
-  if (!inTauri) return () => {};
-  const a = await listen<{ id: number; msg: string }>("lsp-msg", (e) => onMsg(e.payload.id, e.payload.msg));
-  const b = await listen<number>("lsp-exit", (e) => onExit(e.payload));
-  return () => {
-    a();
-    b();
-  };
-}
 
 /** Terminal output and exits. Nothing in the browser preview. */
 export async function onTerm(onData: (id: number, data: string) => void, onExit: (id: number, code: number) => void): Promise<() => void> {

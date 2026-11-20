@@ -1,6 +1,6 @@
-//! VS Code in the Code tab: code-server (open source, Coder), downloaded once on the person's
-//! click into ~/.pitlane/code-server, run as one local server for the app, shown in a webview of
-//! its own over the Code tab. The server listens on 127.0.0.1 only, behind a password made fresh
+//! VS Code in the Code tab: code-server (open source, Coder, MIT), bundled with Pitlane, run as one
+//! local server for the app, shown in a webview of its own over the Code tab. Settings and
+//! extensions live in ~/.pitlane/code-server. The server listens on 127.0.0.1 only, behind a password made fresh
 //! at each start that the webview types in for you; telemetry and update checks are off.
 
 use std::io::Write;
@@ -11,35 +11,18 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
 
 #[derive(Default)]
 pub struct Vscode {
     running: Mutex<Option<Running>>,
-    pub progress: Mutex<Progress>,
 }
 
-/// Where an install is: "download" (bytes so far of the total), "unpack", or "" when idle.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct Progress {
-    pub phase: String,
-    pub done: u64,
-    pub total: u64,
-    pub version: String,
-}
 
 #[derive(Clone)]
 pub struct Running {
     pub port: u16,
     pub password: String,
     pid: u32,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Status {
-    pub installed: bool,
-    pub version: Option<String>,
-    pub running: bool,
 }
 
 pub fn dir(pitlane_home: &Path) -> PathBuf {
@@ -50,98 +33,62 @@ fn data(pitlane_home: &Path) -> PathBuf {
     dir(pitlane_home).join("data")
 }
 
-/// The code-server binary: Pitlane's own copy, or one already on the machine.
-pub fn find(pitlane_home: &Path) -> Option<PathBuf> {
-    let own = dir(pitlane_home).join("current/bin/code-server");
-    if own.is_file() {
-        return Some(own);
-    }
-    std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join("code-server")).find(|f| f.is_file()))
-}
-
-fn version(pitlane_home: &Path) -> Option<String> {
-    std::fs::read_to_string(dir(pitlane_home).join("current/VERSION")).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
-}
-
-pub fn status(v: &Vscode, pitlane_home: &Path) -> Status {
-    Status { installed: find(pitlane_home).is_some(), version: version(pitlane_home), running: v.running.lock().unwrap().is_some() }
-}
-
-/// The latest release for this Mac, from GitHub: (version, tarball URL, size in bytes).
-fn latest() -> Result<(String, String, u64)> {
-    let arch = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "amd64",
-        other => bail!("no code-server build for {other}"),
+/// The code-server binary. The build carries it as one archive (`code-server.tar.gz` and its
+/// `code-server.version` among the app's resources); the first use unpacks it into
+/// ~/.pitlane/code-server/<version>, and older versions there go. Without the archive (a dev
+/// checkout that did not fetch it), one on the PATH.
+pub fn ensure(resources: Option<&Path>, pitlane_home: &Path) -> Result<PathBuf> {
+    let bundled = resources.and_then(|r| {
+        let version = std::fs::read_to_string(r.join("code-server.version")).ok()?.trim().to_owned();
+        let archive = r.join("code-server.tar.gz");
+        (!version.is_empty() && archive.is_file()).then_some((version, archive))
+    });
+    let Some((version, archive)) = bundled else {
+        return std::env::var_os("PATH")
+            .and_then(|p| std::env::split_paths(&p).map(|d| d.join("code-server")).find(|f| f.is_file()))
+            .context("code-server is missing from this build");
     };
-    let out = Command::new("curl")
-        .args(["-fsSL", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/coder/code-server/releases/latest"])
-        .output()
-        .context("could not run curl")?;
-    if !out.status.success() {
-        bail!("could not reach GitHub: {}", String::from_utf8_lossy(&out.stderr).trim());
-    }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    let tag = v["tag_name"].as_str().context("no release")?.trim_start_matches('v').to_owned();
-    let want = format!("macos-{arch}.tar.gz");
-    let asset = v["assets"]
-        .as_array()
-        .and_then(|a| a.iter().find(|x| x["browser_download_url"].as_str().is_some_and(|u| u.ends_with(&want))))
-        .with_context(|| format!("release {tag} has no {want}"))?;
-    let url = asset["browser_download_url"].as_str().unwrap_or_default().to_owned();
-    Ok((tag, url, asset["size"].as_u64().unwrap_or(0)))
-}
-
-/// Downloads and unpacks code-server; the person clicked for it.
-/// Progress is the size of the file so far against the release's own size, read as it grows.
-pub fn install(pitlane_home: &Path, progress: &Mutex<Progress>) -> Result<String> {
-    let set = |phase: &str, done: u64, total: u64, version: &str| *progress.lock().unwrap() = Progress { phase: phase.into(), done, total, version: version.into() };
-    set("download", 0, 0, "");
-    let r = install_steps(pitlane_home, &set);
-    set("", 0, 0, "");
-    r
-}
-
-fn install_steps(pitlane_home: &Path, set: &dyn Fn(&str, u64, u64, &str)) -> Result<String> {
-    let (ver, url, size) = latest()?;
     let root = dir(pitlane_home);
+    let target = root.join(&version);
+    let bin = target.join("bin/code-server");
+    if bin.is_file() {
+        return Ok(bin);
+    }
     std::fs::create_dir_all(&root)?;
-    let tarball = root.join(format!("code-server-{ver}.tar.gz"));
-    set("download", 0, size, &ver);
-    let mut curl = Command::new("curl")
-        .args(["-fsSL", "--retry", "2", "-o"])
-        .arg(&tarball)
-        .arg(&url)
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("could not run curl")?;
-    let status = loop {
-        if let Some(st) = curl.try_wait()? {
-            break st;
+    let part = root.join(format!("{version}.part"));
+    let _ = std::fs::remove_dir_all(&part);
+    std::fs::create_dir_all(&part)?;
+    let ok = Command::new("tar").arg("-xzf").arg(&archive).arg("-C").arg(&part).arg("--strip-components=1").status().context("could not run tar")?;
+    if !ok.success() || !part.join("bin/code-server").is_file() {
+        let _ = std::fs::remove_dir_all(&part);
+        bail!("the bundled code-server did not unpack");
+    }
+    let _ = std::fs::remove_dir_all(&target);
+    std::fs::rename(&part, &target)?;
+    // Older versions go; settings and extensions stay.
+    for e in std::fs::read_dir(&root)?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name != version && name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            let _ = std::fs::remove_dir_all(e.path());
         }
-        let done = std::fs::metadata(&tarball).map(|m| m.len()).unwrap_or(0);
-        set("download", done, size, &ver);
-        std::thread::sleep(Duration::from_millis(250));
-    };
-    if !status.success() {
-        let _ = std::fs::remove_file(&tarball);
-        bail!("the download of code-server {ver} failed");
     }
-    set("unpack", size, size, &ver);
-    let unpack = root.join(format!("v{ver}"));
-    let _ = std::fs::remove_dir_all(&unpack);
-    std::fs::create_dir_all(&unpack)?;
-    let ok = Command::new("tar").args(["-xzf"]).arg(&tarball).arg("-C").arg(&unpack).arg("--strip-components=1").status()?;
-    let _ = std::fs::remove_file(&tarball);
-    if !ok.success() || !unpack.join("bin/code-server").is_file() {
-        bail!("code-server {ver} did not unpack");
+    Ok(bin)
+}
+
+/// Pitlane's colours, under VS Code's own dark and light themes, merged into the settings. A
+/// settings file Pitlane cannot read (comments, a typo) is left alone.
+pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    first_settings(pitlane_home)?;
+    let file = data(pitlane_home).join("User/settings.json");
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&file)?) else { return Ok(()) };
+    let Some(obj) = v.as_object_mut() else { return Ok(()) };
+    let custom = obj.entry("workbench.colorCustomizations").or_insert_with(|| serde_json::json!({}));
+    if let Some(c) = custom.as_object_mut() {
+        c.insert("[Default Dark Modern]".into(), serde_json::Value::Object(dark));
+        c.insert("[Default Light Modern]".into(), serde_json::Value::Object(light));
     }
-    std::fs::write(unpack.join("VERSION"), &ver)?;
-    let current = root.join("current");
-    let _ = std::fs::remove_file(&current);
-    let _ = std::fs::remove_dir_all(&current);
-    std::os::unix::fs::symlink(&unpack, &current)?;
-    Ok(ver)
+    std::fs::write(&file, serde_json::to_string_pretty(&v)?)?;
+    Ok(())
 }
 
 fn password() -> String {
@@ -167,6 +114,15 @@ fn first_settings(pitlane_home: &Path) -> Result<()> {
         "workbench.tips.enabled": false,
         "workbench.layoutControl.enabled": false,
         "window.commandCenter": false,
+        "workbench.activityBar.location": "top",
+        "workbench.secondarySideBar.defaultVisibility": "hidden",
+        "workbench.editor.enablePreview": false,
+        "workbench.welcomePage.walkthroughs.openOnInstall": false,
+        "git.openRepositoryInParentFolders": "always",
+        "editor.fontSize": 13,
+        "editor.lineHeight": 20,
+        "editor.fontFamily": "'SF Mono', Menlo, monospace",
+        "terminal.integrated.fontFamily": "'SF Mono', Menlo, monospace",
         "editor.minimap.enabled": false,
         "workbench.colorTheme": "Default Dark Modern",
         "window.autoDetectColorScheme": true,
@@ -183,19 +139,22 @@ fn first_settings(pitlane_home: &Path) -> Result<()> {
 
 impl Vscode {
     /// The server, started if it is not running.
-    pub fn start(&self, pitlane_home: &Path) -> Result<Running> {
+    pub fn start(&self, bin: &Path, pitlane_home: &Path) -> Result<Running> {
         let mut slot = self.running.lock().unwrap();
         if let Some(r) = slot.as_ref() {
             if TcpStream::connect(("127.0.0.1", r.port)).is_ok() {
                 return Ok(r.clone());
             }
         }
-        let bin = find(pitlane_home).context("code-server is not installed")?;
         first_settings(pitlane_home)?;
+        std::fs::create_dir_all(dir(pitlane_home))?;
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let pw = password();
         let log = std::fs::File::create(dir(pitlane_home).join("server.log"))?;
-        let child: Child = Command::new(&bin)
+        let child: Child = Command::new(bin)
+            // Its config file lives with Pitlane's, not in ~/.config.
+            .arg("--config")
+            .arg(dir(pitlane_home).join("config.yaml"))
             .arg("--bind-addr")
             .arg(format!("127.0.0.1:{port}"))
             .args(["--auth", "password", "--disable-telemetry", "--disable-update-check", "--disable-workspace-trust", "--disable-getting-started-override"])
@@ -228,14 +187,14 @@ impl Vscode {
     }
 
     /// Opens a file at a line in the running VS Code (code-server's own "open in this window").
-    pub fn open_file(&self, pitlane_home: &Path, file: &Path, line: Option<u32>, col: Option<u32>) -> Result<()> {
-        let bin = find(pitlane_home).context("code-server is not installed")?;
+    pub fn open_file(&self, bin: &Path, pitlane_home: &Path, file: &Path, line: Option<u32>, col: Option<u32>) -> Result<()> {
         let target = match (line, col) {
             (Some(l), Some(c)) => format!("{}:{l}:{c}", file.display()),
             (Some(l), None) => format!("{}:{l}", file.display()),
             _ => file.display().to_string(),
         };
-        let out = Command::new(bin).arg("--user-data-dir").arg(data(pitlane_home)).args(["--reuse-window", "--goto"]).arg(target).output()?;
+        // code-server has no --goto: `path:line:col` with --reuse-window opens at that line.
+        let out = Command::new(bin).arg("--config").arg(dir(pitlane_home).join("config.yaml")).arg("--user-data-dir").arg(data(pitlane_home)).arg("--reuse-window").arg(target).output()?;
         if !out.status.success() {
             bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
         }
@@ -266,14 +225,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn says_it_is_missing_and_never_runs_without_it() {
+    fn unpacks_the_bundled_archive_once() {
+        let base = std::env::temp_dir().join(format!("pit-vscode-pack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src/code-server-9.9.9/bin");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("code-server"), "#!/bin/sh\n").unwrap();
+        let res = base.join("res");
+        std::fs::create_dir_all(&res).unwrap();
+        assert!(Command::new("tar").arg("-czf").arg(res.join("code-server.tar.gz")).arg("-C").arg(base.join("src")).arg("code-server-9.9.9").status().unwrap().success());
+        std::fs::write(res.join("code-server.version"), "9.9.9-macos-arm64\n").unwrap();
+        let home = base.join("home");
+        std::fs::create_dir_all(dir(&home).join("1.0.0-macos-arm64")).unwrap();
+        std::fs::create_dir_all(data(&home)).unwrap();
+        let bin = ensure(Some(&res), &home).unwrap();
+        assert!(bin.ends_with("9.9.9-macos-arm64/bin/code-server"));
+        assert!(!dir(&home).join("1.0.0-macos-arm64").exists(), "the older version goes");
+        assert!(data(&home).exists(), "settings stay");
+        assert_eq!(ensure(Some(&res), &home).unwrap(), bin);
+    }
+
+    #[test]
+    fn writes_the_colours_without_losing_the_person_s_settings() {
         let home = std::env::temp_dir().join(format!("pit-vscode-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&home);
-        if find(&home).is_none() {
-            let v = Vscode::default();
-            assert!(!status(&v, &home).installed);
-            assert!(v.start(&home).is_err());
-        }
+        let _ = std::fs::remove_dir_all(&home);
+        let mut dark = serde_json::Map::new();
+        dark.insert("editor.background".into(), "#111111".into());
+        write_theme(&home, dark.clone(), serde_json::Map::new()).unwrap();
+        let file = data(&home).join("User/settings.json");
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(v["telemetry.telemetryLevel"], "off");
+        v["editor.fontSize"] = 16.into();
+        std::fs::write(&file, v.to_string()).unwrap();
+        dark.insert("editor.background".into(), "#222222".into());
+        write_theme(&home, dark, serde_json::Map::new()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(v["editor.fontSize"], 16, "your own settings stay");
+        assert_eq!(v["workbench.colorCustomizations"]["[Default Dark Modern]"]["editor.background"], "#222222");
+        std::fs::write(&file, "// a comment\n{}").unwrap();
+        write_theme(&home, serde_json::Map::new(), serde_json::Map::new()).unwrap();
+        assert!(std::fs::read_to_string(&file).unwrap().starts_with("// a comment"), "a file it cannot read is left alone");
+    }
+
+    #[test]
+    fn types_the_password_safely() {
         let s = login_script("ab\"c");
         assert!(s.contains(r#""ab\"c""#), "{s}");
         assert_eq!(password().len(), 48);

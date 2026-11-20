@@ -13,7 +13,7 @@ import { InboxView } from "./inbox";
 import { Icon } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalTabs, terminalsWanting } from "./terminals";
-import { CodeScreen, openInCode, unsavedCount } from "./code";
+import { CodeScreen, openInCode, prewarmCode } from "./code";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
 import { Toasts, toast } from "./ui";
 
@@ -240,6 +240,9 @@ export default function App() {
     setReviewView(null);
     setTab("code");
   }
+
+  // VS Code loads in the background on the repository, so the Code tab opens at once.
+  createEffect(on(repo, (r) => r && prewarmCode(r)));
 
   // The planner, read again when the cards change: which open cards should wait, and for what.
   const [plan, setPlan] = createSignal<Plan | null>(null);
@@ -554,9 +557,6 @@ export default function App() {
           </button>
           <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "code" ? "page" : undefined} onClick={() => setTab("code")}>
             Code
-            <Show when={unsavedCount() > 0}>
-              <span class="count count-hot" title="Files with unsaved changes">{unsavedCount()}</span>
-            </Show>
           </button>
           <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "terminal" ? "page" : undefined} onClick={() => setTab("terminal")}>
             Terminal

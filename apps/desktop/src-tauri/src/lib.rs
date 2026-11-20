@@ -16,7 +16,6 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 mod files;
-mod lsp;
 mod vscode;
 mod term;
 use serde::{Deserialize, Serialize};
@@ -569,162 +568,122 @@ async fn files_list(root: String) -> CmdResult<Vec<String>> {
     blocking(move || files::list(Path::new(&root))).await
 }
 
-#[tauri::command]
-async fn file_read(root: String, path: String) -> CmdResult<files::FileText> {
-    blocking(move || files::read(Path::new(&root), &path)).await
-}
-
-#[tauri::command]
-async fn file_write(root: String, path: String, text: String) -> CmdResult<()> {
-    blocking(move || files::write(Path::new(&root), &path, &text)).await
-}
-
-#[tauri::command]
-async fn files_ignored(root: String) -> CmdResult<Vec<String>> {
-    blocking(move || files::ignored(Path::new(&root))).await
-}
-
-#[tauri::command]
-async fn dir_list(root: String, path: String) -> CmdResult<Vec<String>> {
-    blocking(move || files::dir(Path::new(&root), &path)).await
-}
-
-#[tauri::command]
-async fn files_search(root: String, query: String) -> CmdResult<Vec<files::Hit>> {
-    blocking(move || files::search(Path::new(&root), &query, 400)).await
-}
-
-/// How a file differs from where its lane left production (the merge-base with it), or from
-/// HEAD outside a lane.
-#[tauri::command]
-async fn file_changes(root: String, path: String) -> CmdResult<files::Changes> {
-    blocking(move || {
-        let dir = Path::new(&root);
-        let base = Repo::open_default(dir)
-            .ok()
-            .and_then(|repo| {
-                let prod = lanes::Target::resolve(&repo, &repo.flow.flow.production).ok().flatten()?;
-                repo.git.run(&["merge-base", "HEAD", &prod.sha]).ok()
-            })
-            .unwrap_or_else(|| "HEAD".into());
-        files::changes(dir, &path, &base)
-    })
-    .await
-}
-
-// ---------------------------------------------------------------- language servers
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-enum LspStart {
-    Started(lsp::Started),
-    Missing(lsp::Missing),
-    /// A language with no server Pitlane knows (Markdown, CSS…): Monaco's own support only.
-    None,
-}
-
-#[tauri::command]
-async fn lsp_start(app: tauri::AppHandle, root: String, lang: String) -> CmdResult<LspStart> {
-    let Some(family) = lsp::family(&lang) else { return Ok(LspStart::None) };
-    blocking(move || {
-        let dir = Path::new(&root);
-        match lsp::find(dir, family, &default_homes().1) {
-            Err(m) => Ok(LspStart::Missing(m)),
-            Ok((name, program, args)) => {
-                let lsps = app.state::<lsp::Lsps>();
-                Ok(LspStart::Started(lsps.start(lsp::app_sink(&app), dir, family, &program, &args, &name)?))
-            }
-        }
-    })
-    .await
-}
-
-#[tauri::command]
-fn lsp_send(lsps: tauri::State<'_, lsp::Lsps>, id: u32, msg: String) -> CmdResult<()> {
-    lsps.send(id, &msg).map_err(|e| format!("{e:#}"))
-}
-
-/// Installs the server for a language, on the person's click. Only the command `find` names.
-#[tauri::command]
-async fn lsp_install(root: String, lang: String) -> CmdResult<()> {
-    let Some(family) = lsp::family(&lang) else { return Err(format!("no language server for {lang}")) };
-    blocking(move || {
-        let home = default_homes().1;
-        let Err(missing) = lsp::find(Path::new(&root), family, &home) else { return Ok(()) };
-        let Some(cmd) = missing.install else { bail!("{}", missing.hint) };
-        std::fs::create_dir_all(lsp::own_dir(&home))?;
-        let out = std::process::Command::new(&cmd[0]).args(&cmd[1..]).current_dir(lsp::own_dir(&home)).output().with_context(|| format!("could not run {}", cmd[0]))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            bail!("{} failed: {}", cmd.join(" "), err.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"));
-        }
-        Ok(())
-    })
-    .await
-}
-
 // ---------------------------------------------------------------- VS Code (code-server) in the Code tab
 
+/// VS Code views, one per folder, most recent first. Up to three stay loaded (hidden when not
+/// shown), so coming back to the tab, or to a recent lane, is instant.
 #[derive(Default)]
 struct CodeView {
-    folder: Mutex<Option<String>>,
+    views: Mutex<Vec<(String, String)>>, // (folder, webview label)
+    next: std::sync::atomic::AtomicU32,
 }
 
-#[tauri::command]
-fn vscode_status(v: tauri::State<'_, vscode::Vscode>) -> vscode::Status {
-    vscode::status(&v, &default_homes().1)
+const CODE_VIEWS: usize = 3;
+
+/// The bundled code-server, unpacked on first use (or, in a checkout without it, one on the PATH).
+fn code_server(app: &tauri::AppHandle) -> Result<PathBuf> {
+    vscode::ensure(app.path().resource_dir().ok().as_deref(), &default_homes().1)
 }
 
-/// Downloads code-server, on the person's click.
+/// Pitlane's colours for VS Code's dark and light themes.
 #[tauri::command]
-async fn vscode_install(app: tauri::AppHandle) -> CmdResult<String> {
-    blocking(move || vscode::install(&default_homes().1, &app.state::<vscode::Vscode>().progress)).await
+async fn vscode_theme(dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>) -> CmdResult<()> {
+    blocking(move || vscode::write_theme(&default_homes().1, dark, light)).await
 }
 
+async fn code_server_running(app: &tauri::AppHandle) -> CmdResult<vscode::Running> {
+    let a = app.clone();
+    blocking(move || {
+        let bin = code_server(&a)?;
+        a.state::<vscode::Vscode>().start(&bin, &default_homes().1)
+    })
+    .await
+}
+
+/// The view for `folder`, made (at `rect`, or out of sight when `hidden`) if there is none.
+fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, rect: (f64, f64, f64, f64), hidden: bool) -> CmdResult<tauri::Webview> {
+    use tauri::webview::{PageLoadEvent, WebviewBuilder};
+    use tauri::{LogicalPosition, LogicalSize, WebviewUrl};
+    let e = |e: tauri::Error| e.to_string();
+    let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{}/", r.port)).map_err(|e| e.to_string())?;
+    url.query_pairs_mut().append_pair("folder", folder);
+    let state = app.state::<CodeView>();
+    let mut views = state.views.lock().unwrap();
+    if let Some(i) = views.iter().position(|(f, _)| f == folder) {
+        let (f, label) = views.remove(i);
+        views.insert(0, (f, label.clone()));
+        if let Some(wv) = app.get_webview(&label) {
+            // A server started again since (a new port): load the folder from it.
+            if !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
+                wv.navigate(url).map_err(e)?;
+            }
+            return Ok(wv);
+        }
+        views.remove(0);
+    }
+    let label = format!("vscode-{}", state.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    let window = app.get_window("main").ok_or("no main window")?;
+    let builder = WebviewBuilder::new(&label, WebviewUrl::External(url)).on_page_load(|wv, p| {
+        // code-server's login page: type the password made for this run.
+        if p.event() == PageLoadEvent::Finished && p.url().path().starts_with("/login") {
+            if let Some(r) = wv.app_handle().state::<vscode::Vscode>().current() {
+                let _ = wv.eval(vscode::login_script(&r.password));
+            }
+        }
+    });
+    let (x, y, w, h) = rect;
+    let at = if hidden { LogicalPosition::new(-20_000.0, 0.0) } else { LogicalPosition::new(x, y) };
+    let wv = window.add_child(builder, at, LogicalSize::new(w.max(400.0), h.max(300.0))).map_err(e)?;
+    if hidden {
+        wv.hide().map_err(e)?;
+    }
+    views.insert(0, (folder.to_owned(), label));
+    while views.len() > CODE_VIEWS {
+        if let Some((_, old)) = views.pop() {
+            if let Some(v) = app.get_webview(&old) {
+                let _ = v.close();
+            }
+        }
+    }
+    Ok(wv)
+}
+
+/// Starts VS Code on `folder` out of sight, so the Code tab opens at once.
 #[tauri::command]
-fn vscode_progress(v: tauri::State<'_, vscode::Vscode>) -> vscode::Progress {
-    v.progress.lock().unwrap().clone()
+async fn vscode_prewarm(app: tauri::AppHandle, folder: String, w: f64, h: f64) -> CmdResult<()> {
+    let r = code_server_running(&app).await?;
+    code_view(&app, &r, &folder, (0.0, 0.0, w, h), true)?;
+    Ok(())
 }
 
 /// Shows VS Code over the Code tab's area (logical pixels of the window), on `folder`.
 #[tauri::command]
 async fn vscode_show(app: tauri::AppHandle, folder: String, x: f64, y: f64, w: f64, h: f64) -> CmdResult<()> {
-    use tauri::webview::{PageLoadEvent, WebviewBuilder};
-    use tauri::{LogicalPosition, LogicalSize, WebviewUrl};
-    let a = app.clone();
-    let r = blocking(move || a.state::<vscode::Vscode>().start(&default_homes().1)).await?;
-    let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{}/", r.port)).map_err(|e| e.to_string())?;
-    url.query_pairs_mut().append_pair("folder", &folder);
-    let view = app.state::<CodeView>();
-    let changed = view.folder.lock().unwrap().as_deref() != Some(folder.as_str());
+    use tauri::{LogicalPosition, LogicalSize};
     let e = |e: tauri::Error| e.to_string();
-    if let Some(wv) = app.get_webview("vscode") {
-        wv.set_position(LogicalPosition::new(x, y)).map_err(e)?;
-        wv.set_size(LogicalSize::new(w, h)).map_err(e)?;
-        if changed || !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
-            wv.navigate(url).map_err(e)?;
-        }
-        wv.show().map_err(e)?;
-    } else {
-        let window = app.get_window("main").ok_or("no main window")?;
-        let builder = WebviewBuilder::new("vscode", WebviewUrl::External(url)).on_page_load(|wv, p| {
-            // code-server's login page: type the password made for this run.
-            if p.event() == PageLoadEvent::Finished && p.url().path().starts_with("/login") {
-                if let Some(r) = wv.app_handle().state::<vscode::Vscode>().current() {
-                    let _ = wv.eval(vscode::login_script(&r.password));
-                }
+    let r = code_server_running(&app).await?;
+    let wv = code_view(&app, &r, &folder, (x, y, w, h), false)?;
+    let shown = wv.label().to_owned();
+    for (_, label) in app.state::<CodeView>().views.lock().unwrap().iter() {
+        if *label != shown {
+            if let Some(v) = app.get_webview(label) {
+                let _ = v.hide();
             }
-        });
-        window.add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h)).map_err(e)?;
+        }
     }
-    *view.folder.lock().unwrap() = Some(folder);
+    wv.set_position(LogicalPosition::new(x, y)).map_err(e)?;
+    wv.set_size(LogicalSize::new(w, h)).map_err(e)?;
+    wv.show().map_err(e)?;
+    let _ = wv.set_focus();
     Ok(())
 }
 
 #[tauri::command]
 async fn vscode_hide(app: tauri::AppHandle) -> CmdResult<()> {
-    if let Some(wv) = app.get_webview("vscode") {
-        wv.hide().map_err(|e| e.to_string())?;
+    for (_, label) in app.state::<CodeView>().views.lock().unwrap().iter() {
+        if let Some(v) = app.get_webview(label) {
+            v.hide().map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -732,7 +691,11 @@ async fn vscode_hide(app: tauri::AppHandle) -> CmdResult<()> {
 /// Opens a file at a line in the VS Code that is running.
 #[tauri::command]
 async fn vscode_open(app: tauri::AppHandle, path: String, line: Option<u32>, col: Option<u32>) -> CmdResult<()> {
-    blocking(move || app.state::<vscode::Vscode>().open_file(&default_homes().1, Path::new(&path), line, col)).await
+    blocking(move || {
+        let bin = code_server(&app)?;
+        app.state::<vscode::Vscode>().open_file(&bin, &default_homes().1, Path::new(&path), line, col)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------- free terminals
@@ -845,7 +808,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Following::default())
         .manage(term::Terms::default())
-        .manage(lsp::Lsps::default())
         .manage(vscode::Vscode::default())
         .manage(CodeView::default())
         .menu(menu)
@@ -886,22 +848,12 @@ pub fn run() {
             lane_drop_hunk,
             plan,
             files_list,
-            file_read,
-            file_write,
-            files_search,
-            files_ignored,
-            dir_list,
-            file_changes,
             term_open,
-            lsp_start,
-            vscode_status,
-            vscode_install,
-            vscode_progress,
+            vscode_theme,
+            vscode_prewarm,
             vscode_show,
             vscode_hide,
             vscode_open,
-            lsp_send,
-            lsp_install,
             open_external,
             term_write,
             term_resize,
@@ -922,7 +874,6 @@ pub fn run() {
             // No shell outlives the app.
             if let tauri::RunEvent::Exit = event {
                 app.state::<term::Terms>().close_all();
-                app.state::<lsp::Lsps>().close_all();
                 app.state::<vscode::Vscode>().stop();
             }
         });
