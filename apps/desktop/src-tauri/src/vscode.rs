@@ -82,10 +82,13 @@ pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json
     let file = data(pitlane_home).join("User/settings.json");
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&file)?) else { return Ok(()) };
     let Some(obj) = v.as_object_mut() else { return Ok(()) };
+    look(obj);
     let custom = obj.entry("workbench.colorCustomizations").or_insert_with(|| serde_json::json!({}));
     if let Some(c) = custom.as_object_mut() {
-        c.insert("[Default Dark Modern]".into(), serde_json::Value::Object(dark));
-        c.insert("[Default Light Modern]".into(), serde_json::Value::Object(light));
+        c.remove("[Default Dark Modern]");
+        c.remove("[Default Light Modern]");
+        c.insert("[Dark Modern]".into(), serde_json::Value::Object(dark));
+        c.insert("[Light Modern]".into(), serde_json::Value::Object(light));
     }
     std::fs::write(&file, serde_json::to_string_pretty(&v)?)?;
     Ok(())
@@ -100,7 +103,7 @@ fn password() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Settings Pitlane starts VS Code with: calm, no telemetry, no tour. Written once; yours after.
+/// Settings Pitlane starts VS Code with: no telemetry, no tour, no AI. Written once; yours after.
 fn first_settings(pitlane_home: &Path) -> Result<()> {
     let user = data(pitlane_home).join("User");
     let file = user.join("settings.json");
@@ -114,20 +117,13 @@ fn first_settings(pitlane_home: &Path) -> Result<()> {
         "workbench.tips.enabled": false,
         "workbench.layoutControl.enabled": false,
         "window.commandCenter": false,
-        "workbench.activityBar.location": "top",
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "workbench.editor.enablePreview": false,
         "workbench.welcomePage.walkthroughs.openOnInstall": false,
         "git.openRepositoryInParentFolders": "always",
-        "editor.fontSize": 13,
         "editor.lineHeight": 20,
-        "editor.fontFamily": "'SF Mono', Menlo, monospace",
-        "terminal.integrated.fontFamily": "'SF Mono', Menlo, monospace",
         "editor.minimap.enabled": false,
-        "workbench.colorTheme": "Default Dark Modern",
         "window.autoDetectColorScheme": true,
-        "workbench.preferredDarkColorTheme": "Default Dark Modern",
-        "workbench.preferredLightColorTheme": "Default Light Modern",
         "security.workspace.trust.enabled": false,
         "chat.disableAIFeatures": true,
         "extensions.ignoreRecommendations": true,
@@ -137,9 +133,47 @@ fn first_settings(pitlane_home: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Pitlane's layout for VS Code, in the spirit of Cursor's: no title bar (the activity bar on the
+/// side, no menu), compact tabs, thin icons (Fluent for the workbench, Symbols for files), Geist
+/// Mono. A key is set when it is missing or still holds an earlier Pitlane default; a value you
+/// chose stays.
+fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    use serde_json::{Value, json};
+    let mono = "'Geist Mono', Menlo, monospace";
+    let keys: Vec<(&str, Value, Vec<Value>)> = vec![
+        ("workbench.activityBar.location", json!("default"), vec![json!("top")]),
+        ("window.menuBarVisibility", json!("hidden"), vec![json!("compact")]),
+        ("window.title", json!("${activeEditorShort}"), vec![]),
+        ("window.density.editorTabHeight", json!("compact"), vec![]),
+        ("workbench.activity.showAccounts", json!(false), vec![]),
+        ("workbench.productIconTheme", json!("fluent-icons"), vec![]),
+        ("workbench.iconTheme", json!("symbols"), vec![]),
+        ("workbench.tree.indent", json!(12), vec![]),
+        ("workbench.tree.renderIndentGuides", json!("none"), vec![]),
+        ("editor.fontFamily", json!(mono), vec![json!("'SF Mono', Menlo, monospace")]),
+        ("terminal.integrated.fontFamily", json!(mono), vec![json!("'SF Mono', Menlo, monospace")]),
+        ("editor.fontSize", json!(12.5), vec![json!(13)]),
+        ("editor.overviewRulerBorder", json!(false), vec![]),
+        ("editor.hideCursorInOverviewRuler", json!(true), vec![]),
+        ("editor.guides.bracketPairs", json!(false), vec![]),
+        ("editor.bracketPairColorization.enabled", json!(false), vec![]),
+        ("workbench.colorTheme", json!("Dark Modern"), vec![json!("Default Dark Modern")]),
+        ("workbench.preferredDarkColorTheme", json!("Dark Modern"), vec![json!("Default Dark Modern")]),
+        ("workbench.preferredLightColorTheme", json!("Light Modern"), vec![json!("Default Light Modern")]),
+    ];
+    for (k, v, earlier) in keys {
+        match obj.get(k) {
+            Some(cur) if !earlier.contains(cur) => {}
+            _ => {
+                obj.insert(k.to_owned(), v);
+            }
+        }
+    }
+}
+
 impl Vscode {
     /// The server, started if it is not running.
-    pub fn start(&self, bin: &Path, pitlane_home: &Path) -> Result<Running> {
+    pub fn start(&self, bin: &Path, resources: Option<&Path>, pitlane_home: &Path) -> Result<Running> {
         let mut slot = self.running.lock().unwrap();
         if let Some(r) = slot.as_ref() {
             if TcpStream::connect(("127.0.0.1", r.port)).is_ok() {
@@ -148,6 +182,15 @@ impl Vscode {
         }
         first_settings(pitlane_home)?;
         std::fs::create_dir_all(dir(pitlane_home))?;
+        install_bundled(bin, resources, pitlane_home);
+        // A server left by an app that did not get to close it: it goes.
+        let pidfile = dir(pitlane_home).join("server.pid");
+        if let Some(old) = std::fs::read_to_string(&pidfile).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
+            let cmd = Command::new("ps").args(["-o", "command=", "-p", &old.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+            if cmd.contains("code-server") && cmd.contains(&dir(pitlane_home).to_string_lossy().into_owned()) {
+                let _ = Command::new("kill").arg(old.to_string()).status();
+            }
+        }
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let pw = password();
         let log = std::fs::File::create(dir(pitlane_home).join("server.log"))?;
@@ -169,6 +212,7 @@ impl Vscode {
             .spawn()
             .with_context(|| format!("could not start {}", bin.display()))?;
         let pid = child.id();
+        let _ = std::fs::write(&pidfile, pid.to_string());
         // Reap it when it ends, so it never lingers as a zombie.
         std::thread::spawn(move || {
             let mut c = child;
@@ -210,6 +254,60 @@ impl Vscode {
             let _ = Command::new("kill").arg(r.pid.to_string()).status();
         }
     }
+}
+
+/// The extensions that come with Pitlane (its icons), installed offline the first time.
+fn install_bundled(bin: &Path, resources: Option<&Path>, pitlane_home: &Path) {
+    let Some(dir_in) = resources.map(|r| r.join("vscode-extensions")) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir_in) else { return };
+    let exts = dir(pitlane_home).join("extensions");
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(id) = name.strip_suffix(".vsix") else { continue };
+        if exts.join(id).is_dir() {
+            continue;
+        }
+        let _ = Command::new(bin)
+            .arg("--config")
+            .arg(dir(pitlane_home).join("config.yaml"))
+            .arg("--user-data-dir")
+            .arg(data(pitlane_home))
+            .arg("--extensions-dir")
+            .arg(&exts)
+            .arg("--install-extension")
+            .arg(e.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+const LOOK_CSS: &str = include_str!("vscode-look.css");
+const GEIST: &[u8] = include_bytes!("../../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2");
+const GEIST_MONO: &[u8] = include_bytes!("../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2");
+
+fn base64(b: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(b.len().div_ceil(3) * 4);
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// Pitlane's type and shapes on VS Code's page: Geist and Geist Mono, and vscode-look.css, added
+/// before VS Code draws.
+pub fn look_script() -> String {
+    let font = |fam: &str, b: &[u8]| format!("@font-face{{font-family:\"{fam}\";src:url(data:font/woff2;base64,{}) format(\"woff2\");font-weight:100 900;font-display:block;}}", base64(b));
+    let css = format!("{}{}{}", font("Geist", GEIST), font("Geist Mono", GEIST_MONO), LOOK_CSS);
+    format!(
+        "(function(){{var add=function(){{if(document.getElementById('pitlane-look'))return;var s=document.createElement('style');s.id='pitlane-look';s.textContent={};(document.head||document.documentElement).appendChild(s);}};if(document.documentElement)add();else document.addEventListener('DOMContentLoaded',add);}})();",
+        serde_json::to_string(&css).unwrap_or_default()
+    )
 }
 
 /// The page that types the password into code-server's login form, once, in its own webview.
@@ -261,10 +359,25 @@ mod tests {
         write_theme(&home, dark, serde_json::Map::new()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(v["editor.fontSize"], 16, "your own settings stay");
-        assert_eq!(v["workbench.colorCustomizations"]["[Default Dark Modern]"]["editor.background"], "#222222");
+        assert_eq!(v["workbench.colorCustomizations"]["[Dark Modern]"]["editor.background"], "#222222");
+        assert_eq!(v["workbench.iconTheme"], "symbols");
         std::fs::write(&file, "// a comment\n{}").unwrap();
         write_theme(&home, serde_json::Map::new(), serde_json::Map::new()).unwrap();
         assert!(std::fs::read_to_string(&file).unwrap().starts_with("// a comment"), "a file it cannot read is left alone");
+    }
+
+    #[test]
+    fn encodes_base64_and_keeps_the_person_s_choices() {
+        assert_eq!(base64(b"Man"), "TWFu");
+        assert_eq!(base64(b"Ma"), "TWE=");
+        assert_eq!(base64(b"M"), "TQ==");
+        let mut o = serde_json::Map::new();
+        o.insert("workbench.iconTheme".into(), "material-icon-theme".into());
+        o.insert("editor.fontFamily".into(), "'SF Mono', Menlo, monospace".into());
+        look(&mut o);
+        assert_eq!(o["workbench.iconTheme"], "material-icon-theme", "a choice stays");
+        assert_eq!(o["editor.fontFamily"], "'Geist Mono', Menlo, monospace", "an earlier Pitlane default moves on");
+        assert!(look_script().contains("pitlane-look"));
     }
 
     #[test]

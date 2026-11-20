@@ -42,7 +42,8 @@
     ],
     "resources": {
       "resources/code-server.tar.gz": "code-server.tar.gz",
-      "resources/code-server.version": "code-server.version"
+      "resources/code-server.version": "code-server.version",
+      "resources/vscode-extensions/": "vscode-extensions/"
     }
   }
 }

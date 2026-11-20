@@ -607,7 +607,7 @@ async fn code_server_running(app: &tauri::AppHandle) -> CmdResult<vscode::Runnin
     let a = app.clone();
     blocking(move || {
         let bin = code_server(&a)?;
-        a.state::<vscode::Vscode>().start(&bin, &default_homes().1)
+        a.state::<vscode::Vscode>().start(&bin, a.path().resource_dir().ok().as_deref(), &default_homes().1)
     })
     .await
 }
@@ -686,7 +686,7 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let window = app.get_window("main").ok_or("no main window")?;
     let (rr, ff) = (ready.clone(), folder.to_owned());
-    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(url)).focused(false).on_page_load(move |wv, p| {
+    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(url)).focused(false).initialization_script(vscode::look_script()).on_page_load(move |wv, p| {
         if p.event() != PageLoadEvent::Finished {
             return;
         }

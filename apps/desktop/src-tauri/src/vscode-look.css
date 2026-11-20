@@ -1,0 +1,81 @@
+/* Pitlane's look on VS Code (code-server), injected into its page by the app. Colours come from
+   the theme Pitlane writes into the settings; this file sets type, density and the few shapes
+   VS Code draws its own way. Fonts are added above this text by the app (Geist, Geist Mono). */
+
+/* Type: Geist for the workbench, sentence case everywhere (no tracked capitals). */
+.monaco-workbench,
+.monaco-workbench.mac,
+.monaco-workbench .monaco-list,
+.monaco-workbench .monaco-inputbox input,
+.monaco-workbench .monaco-button,
+.quick-input-widget,
+.monaco-hover,
+.context-view,
+.monaco-menu {
+  font-family: "Geist", -apple-system, BlinkMacSystemFont, sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+}
+.monaco-workbench .part > .title > .title-label h2,
+.monaco-workbench .pane > .pane-header .title,
+.monaco-workbench .pane > .pane-header h3.title,
+.monaco-workbench .composite.title .title-label h2,
+.monaco-workbench .part.panel > .title .composite-bar .action-label,
+.monaco-workbench .monaco-pane-view .pane > .pane-header {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+.monaco-workbench .part > .title > .title-label h2,
+.monaco-workbench .composite.title .title-label h2 {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+.monaco-workbench .monaco-pane-view .pane > .pane-header {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+.monaco-workbench .monaco-pane-view .pane > .pane-header h3.title {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+/* Lists and trees: Pitlane's row, 24px, no focus ring around the whole list. */
+.monaco-workbench .monaco-list:focus:before { outline: none !important; }
+.monaco-workbench .monaco-list-row { font-size: 12.5px; }
+
+/* Tabs: quiet, the active one marked by its ground and a thin accent rule. */
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
+  font-size: 12px;
+  border-right-color: transparent !important;
+}
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .label-description {
+  font-size: 11px;
+}
+
+/* Status bar: small and muted, like Pitlane's own meta lines. */
+.monaco-workbench .part.statusbar { font-size: 11px; }
+.monaco-workbench .part.statusbar > .items-container > .statusbar-item.remote-kind,
+.monaco-workbench .part.statusbar > .items-container > .statusbar-item[id="status.host"] { display: none !important; }
+
+/* Floating things: Pitlane's radius and hairline, no heavy shadow. */
+.quick-input-widget,
+.monaco-workbench .monaco-hover,
+.monaco-editor .suggest-widget,
+.monaco-editor .find-widget,
+.context-view .monaco-menu-container,
+.monaco-workbench .notifications-toasts .notification-toast {
+  border-radius: 7px !important;
+  overflow: hidden;
+}
+.quick-input-widget { box-shadow: 0 0 0 1px var(--vscode-widget-border), 0 12px 32px rgb(0 0 0 / 0.28) !important; }
+.monaco-workbench .notifications-toasts .notification-toast { box-shadow: 0 0 0 1px var(--vscode-widget-border), 0 8px 24px rgb(0 0 0 / 0.22) !important; }
+
+/* Inputs and buttons: Pitlane's 5px radius. */
+.monaco-workbench .monaco-inputbox,
+.monaco-workbench .monaco-button,
+.monaco-workbench .monaco-select-box { border-radius: 5px !important; }
+
+/* Scrollbars: thin, out of the way. */
+.monaco-workbench .monaco-scrollable-element > .scrollbar > .slider { border-radius: 4px; }
+
+/* Pitlane has no accounts: the activity bar keeps only what you use. */
+.monaco-workbench .activitybar .action-item:has(.codicon-accounts-view-bar-icon) { display: none !important; }

@@ -25,6 +25,21 @@ if (!version) {
   console.log(`code-server: pinned ${version}`);
 }
 
+// Icons with Cursor's calm: Fluent Icons (the workbench) and Symbols (files), MIT, from Open VSX.
+const extensions = [
+  ["miguelsolorio", "fluent-icons", "0.0.19"],
+  ["miguelsolorio", "symbols", "0.0.26"],
+];
+const extDir = join(res, "vscode-extensions");
+mkdirSync(extDir, { recursive: true });
+for (const [ns, name, ver] of extensions) {
+  const file = join(extDir, `${ns}.${name}-${ver}.vsix`);
+  if (existsSync(file)) continue;
+  console.log(`code-server: fetching ${ns}.${name} ${ver}`);
+  execFileSync("curl", ["-fsSL", "--retry", "2", "-o", `${file}.part`, `https://open-vsx.org/api/${ns}/${name}/${ver}/file/${ns}.${name}-${ver}.vsix`], { stdio: "inherit" });
+  renameSync(`${file}.part`, file);
+}
+
 const archive = join(res, "code-server.tar.gz");
 const stamp = join(res, "code-server.version");
 const want = `${version}-macos-${arch}`;
