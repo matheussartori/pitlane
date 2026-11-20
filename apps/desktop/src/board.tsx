@@ -1,6 +1,6 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
 import { For, Show, createMemo, createSignal } from "solid-js";
-import { api, cardStates, isLive, type Card, type CardState, type RunMeta, type Yard } from "./api";
+import { api, cardStates, isLive, type Card, type CardState, type Plan, type RunMeta, type Yard } from "./api";
 import { clock, elapsed, money, runStateView } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
 import { Icon } from "./icons";
@@ -53,6 +53,24 @@ export function LaneTrack(props: { branch: string | undefined; yard: Yard | null
   );
 }
 
+/** One quiet line for a card the planner would hold back; nothing for one that can start now. */
+function planNote(plan: Plan | null | undefined, id: number): string | null {
+  if (!plan) return null;
+  const name = (f: string) => {
+    const [n, dir] = f.split("/").reverse();
+    return dir && /^(index|mod|__init__)\./.test(n!) ? `${dir}/${n}` : n!;
+  };
+  const wait = plan.waits.find((w) => w.card === id);
+  if (wait) return `Waits for ${wait.with_lane ?? `#${wait.with_card}`} to land: both touch ${name(wait.files[0]!)}`;
+  const batch = plan.batches.findIndex((b) => b.includes(id));
+  if (batch <= 0) return null;
+  const earlier = new Set(plan.batches.slice(0, batch).flat());
+  const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1)) || (x.with_card === id && earlier.has(x.card)));
+  if (!c) return null;
+  const other = c.card === id ? c.with_card : c.card;
+  return `After #${other}: both touch ${name(c.files[0]!)}`;
+}
+
 export function BoardView(props: {
   cards: Card[] | null;
   problems: string[];
@@ -61,6 +79,8 @@ export function BoardView(props: {
   runs: RunMeta[];
   onOpen: (id: number) => void;
   onNew: () => void;
+  /** The planner's view of open cards: which should wait, and for what. */
+  plan?: Plan | null;
 }) {
   const liveRun = (id: number) => props.runs.find((r) => r.card === id && isLive(r.state));
   const placed = createMemo(() =>
@@ -73,7 +93,8 @@ export function BoardView(props: {
       const p = asking
         ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? "Wants to run" : `Wants ${asking.waiting[0]!.tool}`, why: `Asks to run ${asking.waiting[0]!.detail}` }
         : place(c, props.yard);
-      return { card: c, p };
+      const note = planNote(props.plan, c.id);
+      return { card: c, p: note && p.column === "backlog" ? { ...p, why: note } : p };
     }),
   );
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);

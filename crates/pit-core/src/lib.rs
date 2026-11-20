@@ -9,6 +9,7 @@ pub mod flow;
 pub mod index;
 pub mod git;
 pub mod lanes;
+pub mod plan;
 pub mod queue;
 pub mod runs;
 pub mod trash;

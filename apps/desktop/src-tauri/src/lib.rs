@@ -548,6 +548,12 @@ fn run_follow(app: tauri::AppHandle, state: tauri::State<'_, Following>, run: St
     Ok(())
 }
 
+/// Which open cards can run together, and which would touch the same files.
+#[tauri::command]
+async fn plan(path: String) -> CmdResult<pit_core::plan::Plan> {
+    blocking(move || pit_core::plan::plan(&open(&path)?, &default_homes().1)).await
+}
+
 /// Reverts one hunk of a lane in its worktree and commits it ("review: drop a change in …").
 #[tauri::command]
 async fn lane_drop_hunk(path: String, branch: String, base: String, head: String, file: String, header: String) -> CmdResult<String> {
@@ -653,6 +659,7 @@ pub fn run() {
             card_review,
             queue_list,
             lane_drop_hunk,
+            plan,
             files_list,
             file_read,
             file_write,

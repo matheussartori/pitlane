@@ -335,6 +335,28 @@ export type RunEvent =
 
 export const isLive = (s: RunState) => s === "starting" || s === "running" || s === "verifying";
 
+// ---------------------------------------------------------------- the planner
+
+export interface Footprint {
+  card: number;
+  title: string;
+  source: "predicted" | "lane";
+  lane: string | null;
+  files: string[];
+}
+export interface Clash {
+  card: number;
+  with_card: number | null;
+  with_lane: string | null;
+  files: string[];
+}
+export interface Plan {
+  footprints: Footprint[];
+  clashes: Clash[];
+  batches: number[][];
+  waits: Clash[];
+}
+
 // ---------------------------------------------------------------- files for the editor
 
 export interface FileText {
@@ -447,6 +469,7 @@ export const api = {
   accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),
   runVerification: (run: string) => invoke<Verification | null>("run_verification", { run }),
   laneDiff: (path: string, branch: string, from?: string) => invoke<LaneDiff>("lane_diff", { path, branch, from: from ?? null }),
+  plan: (path: string) => invoke<Plan>("plan", { path }),
   dropHunk: (path: string, branch: string, base: string, head: string, file: string, header: string) =>
     invoke<string>("lane_drop_hunk", { path, branch, base, head, file, header }),
   queue: (path: string) => invoke<ShipJob[]>("queue_list", { path }),

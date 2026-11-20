@@ -124,6 +124,11 @@ enum Cmd {
     Discard { card: u32 },
     /// Index the repository's symbols (tree-sitter), for briefings. Incremental.
     Index,
+    /// Which open cards can run together, and which would touch the same files.
+    Plan {
+        #[arg(long)]
+        json: bool,
+    },
     /// The briefing a run would get: where to look for a card (or for a text with --text).
     Brief {
         card: Option<u32>,
@@ -431,6 +436,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Discard { card } => {
             daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "discard" }))?;
             println!("{} #{card} is ready again; its lane stays", paint(DONE, "✓"));
+        }
+        Cmd::Plan { json } => {
+            let p = pit_core::plan::plan(&repo, &pit_core::default_homes().1)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&p)?);
+            } else {
+                print_plan(&p);
+            }
         }
         Cmd::Index => {
             let (_, st) = pit_core::index::update(&repo, &pit_core::default_homes().1)?;
@@ -1238,4 +1251,44 @@ fn lanes_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+fn print_plan(p: &pit_core::plan::Plan) {
+    let title = |id: u32| p.footprints.iter().find(|f| f.card == id).map(|f| f.title.clone()).unwrap_or_default();
+    // The file name, or folder/name for an index or mod file, which says nothing alone.
+    let short = |files: &[String]| {
+        files
+            .iter()
+            .map(|f| {
+                let parts: Vec<&str> = f.rsplit('/').take(2).collect();
+                let name = parts[0];
+                if parts.len() == 2 && (name.starts_with("index.") || name.starts_with("mod.") || name.starts_with("__init__.")) { format!("{}/{name}", parts[1]) } else { name.to_owned() }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if p.batches.is_empty() {
+        println!("no open cards without a lane to plan");
+    }
+    for (i, b) in p.batches.iter().enumerate() {
+        let late = b.iter().all(|id| p.waits.iter().any(|w| w.card == *id));
+        let head = if late {
+            "after the lanes they share files with land".to_owned()
+        } else if i == 0 {
+            "can start now, together".to_owned()
+        } else {
+            format!("then, batch {}", i + 1)
+        };
+        println!("{}", paint(MUTED, &head));
+        for id in b {
+            println!("  #{id} {}", title(*id));
+        }
+    }
+    for c in &p.clashes {
+        println!("  #{} and #{} would both touch {}", c.card, c.with_card.unwrap_or_default(), short(&c.files));
+    }
+    for w in &p.waits {
+        println!("  #{} would touch {} that {} already changed", w.card, short(&w.files), w.with_lane.as_deref().unwrap_or("a lane"));
+    }
+    println!("{}", paint(MUTED, "predicted from the index: the files each card's map leads with"));
 }

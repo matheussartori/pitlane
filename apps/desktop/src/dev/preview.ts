@@ -107,6 +107,13 @@ export async function preview<T>(cmd: string): Promise<T> {
         patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
         truncated: false,
       } as T;
+    case "plan":
+      return {
+        footprints: [],
+        clashes: [{ card: 6, with_card: 7, with_lane: null, files: ["src/invites/index.ts"] }],
+        batches: [[6], [7]],
+        waits: [],
+      } as T;
     case "lane_drop_hunk":
       return "a1b2c3d4" as T;
     case "files_list":

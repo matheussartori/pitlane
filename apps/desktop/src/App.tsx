@@ -1,8 +1,8 @@
 // The shell: top bar, the current screen, the Tower. Inbox, Board and Lanes read the repository; Ledger arrives with runs.
-import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type ShipJob, type Yard, isOpenJob } from "./api";
+import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type Plan, type RunMeta, type Settings, type ShipJob, type Yard, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
 import { ReviewScreen } from "./review";
@@ -240,6 +240,15 @@ export default function App() {
     setReviewView(null);
     setTab("code");
   }
+
+  // The planner, read again when the cards change: which open cards should wait, and for what.
+  const [plan, setPlan] = createSignal<Plan | null>(null);
+  createEffect(
+    on(cards, () => {
+      const path = repo();
+      if (path) void api.plan(path).then(setPlan, () => setPlan(null));
+    }),
+  );
 
   async function terminalIn(lane: Lane | undefined) {
     const path = repo();
@@ -675,6 +684,7 @@ export default function App() {
                     yard={yard()}
                     now={now()}
                     runs={runs() ?? []}
+                    plan={plan()}
                     onOpen={(id) => {
                       const live = (runs() ?? []).find((r) => r.card === id && isLive(r.state));
                       if (live) openRun(live.id);
