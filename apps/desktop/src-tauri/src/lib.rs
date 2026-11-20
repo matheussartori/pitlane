@@ -548,6 +548,12 @@ fn run_follow(app: tauri::AppHandle, state: tauri::State<'_, Following>, run: St
     Ok(())
 }
 
+/// Reverts one hunk of a lane in its worktree and commits it ("review: drop a change in …").
+#[tauri::command]
+async fn lane_drop_hunk(path: String, branch: String, base: String, head: String, file: String, header: String) -> CmdResult<String> {
+    blocking(move || pit_core::verify::drop_hunk(&open(&path)?, &branch, &base, &head, &file, &header)).await
+}
+
 // ---------------------------------------------------------------- files for the editor
 
 #[tauri::command]
@@ -646,6 +652,7 @@ pub fn run() {
             lane_diff,
             card_review,
             queue_list,
+            lane_drop_hunk,
             files_list,
             file_read,
             file_write,

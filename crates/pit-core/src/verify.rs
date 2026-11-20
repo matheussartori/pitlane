@@ -156,6 +156,43 @@ pub fn lane_diff(repo: &Repo, branch: &str, limit_bytes: usize, from: Option<&st
     Ok(LaneDiff { base, head, files, patch, truncated })
 }
 
+/// Reverts one hunk of the lane (as `lane_diff` showed it, from `base` to `head`) in the lane's
+/// worktree and commits that, so the drop is in the lane's history. Refuses when the lane moved
+/// since `head`, or the file has uncommitted edits. Returns the new head.
+pub fn drop_hunk(repo: &Repo, branch: &str, base: &str, head: &str, file: &str, hunk_header: &str) -> Result<String> {
+    let wt = crate::actions::ensure_worktree(repo, branch)?;
+    let g = crate::git::Git::new(&wt);
+    let now = g.run(&["rev-parse", "HEAD"])?;
+    if now != head {
+        anyhow::bail!("{branch} moved since this diff was read; read it again first");
+    }
+    if !g.run(&["status", "--porcelain", "--", file])?.is_empty() {
+        anyhow::bail!("{file} has uncommitted edits in the lane's worktree; commit or discard them first");
+    }
+    let diff = g.run(&["diff", "--no-color", "--no-ext-diff", &format!("{base}..{head}"), "--", file])?;
+    let at = diff.find("\n@@").map(|i| i + 1).context("no change in that file")?;
+    let (header, body) = diff.split_at(at);
+    // Hunks start at lines beginning with "@@"; pick the one whose header line matches.
+    let mut hunks: Vec<String> = Vec::new();
+    for line in body.lines() {
+        if line.starts_with("@@") {
+            hunks.push(String::new());
+        }
+        if let Some(h) = hunks.last_mut() {
+            h.push_str(line);
+            h.push('\n');
+        }
+    }
+    let hunk = hunks
+        .into_iter()
+        .find(|h| h.lines().next().is_some_and(|l| l.trim_end() == hunk_header.trim_end()))
+        .with_context(|| format!("that change is no longer in {file}"))?;
+    let patch = format!("{header}{hunk}");
+    g.run_stdin(&["apply", "-R", "--index", "--whitespace=nowarn", "-"], &patch).context("git could not take that change out cleanly")?;
+    g.run(&["commit", "-q", "-m", &format!("review: drop a change in {file}")])?;
+    g.run(&["rev-parse", "HEAD"])
+}
+
 pub fn verdict_schema() -> Value {
     json!({
         "type": "object",
@@ -240,6 +277,43 @@ mod tests {
         assert_eq!(j.findings[0].line, Some(3));
         assert_eq!(cost, Some(0.04));
         assert!(read_judge(r#"{"type":"result","is_error":true,"result":"boom"}"#).is_err());
+    }
+
+    #[test]
+    fn drops_one_hunk_and_commits_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |dir: &Path, a: &[&str]| {
+            let ok = Command::new("git").arg("-C").arg(dir).args(a).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").status().unwrap();
+            assert!(ok.success(), "git {a:?}");
+        };
+        git(&root, &["init", "-q", "-b", "main"]);
+        let lines: Vec<String> = (1..=30).map(|i| format!("line {i}")).collect();
+        std::fs::write(root.join("a.txt"), lines.join("\n") + "\n").unwrap();
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-qm", "base"]);
+        let base = String::from_utf8(Command::new("git").arg("-C").arg(&root).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_owned();
+        git(&root, &["switch", "-q", "-c", "feat/x"]);
+        let mut changed = lines.clone();
+        changed[1] = "line 2 changed".into();
+        changed[27] = "line 28 changed".into();
+        std::fs::write(root.join("a.txt"), changed.join("\n") + "\n").unwrap();
+        git(&root, &["commit", "-qam", "two changes"]);
+        git(&root, &["switch", "-q", "main"]);
+
+        let home = tmp.path().join("home");
+        let repo = Repo::open(&root, &home, &home.join(".pitlane")).unwrap();
+        let d = lane_diff(&repo, "feat/x", 100_000, Some(&base)).unwrap();
+        let headers: Vec<&str> = d.patch.lines().filter(|l| l.starts_with("@@")).collect();
+        assert_eq!(headers.len(), 2);
+        assert!(drop_hunk(&repo, "feat/x", &base, "0000", "a.txt", headers[0]).is_err(), "a stale head is refused");
+        let new_head = drop_hunk(&repo, "feat/x", &base, &d.head, "a.txt", headers[1]).unwrap();
+        let after = lane_diff(&repo, "feat/x", 100_000, Some(&base)).unwrap();
+        assert_eq!(after.head, new_head);
+        assert!(after.patch.contains("line 2 changed") && !after.patch.contains("line 28 changed"), "{}", after.patch);
+        let msg = String::from_utf8(Command::new("git").arg("-C").arg(&root).args(["log", "-1", "--format=%s", "feat/x"]).output().unwrap().stdout).unwrap();
+        assert_eq!(msg.trim(), "review: drop a change in a.txt");
     }
 
     #[test]

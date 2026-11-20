@@ -447,6 +447,8 @@ export const api = {
   accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),
   runVerification: (run: string) => invoke<Verification | null>("run_verification", { run }),
   laneDiff: (path: string, branch: string, from?: string) => invoke<LaneDiff>("lane_diff", { path, branch, from: from ?? null }),
+  dropHunk: (path: string, branch: string, base: string, head: string, file: string, header: string) =>
+    invoke<string>("lane_drop_hunk", { path, branch, base, head, file, header }),
   queue: (path: string) => invoke<ShipJob[]>("queue_list", { path }),
   enqueue: (path: string, branch: string, to?: string) => invoke<ShipJob>("queue_add", { path, branch, to: to ?? null }),
   dequeue: (id: string) => invoke<void>("queue_remove", { id }),

@@ -107,7 +107,12 @@ function DiffView(props: {
   onPick: (i: number, on: boolean) => void;
   viewedKey: string;
   onOpen: (path: string) => void;
+  /** Per-hunk decisions, only while the card waits on your review. */
+  onDrop?: (file: string, header: string) => Promise<void>;
 }) {
+  const [kept, setKept] = createSignal(loadViewed(`${props.viewedKey}.kept`));
+  const [dropping, setDropping] = createSignal<string | null>(null);
+  const hunkKey = (file: string, head: string) => `${file}\0${head}`;
   const files = createMemo(() => parsePatch(props.diff.patch));
   const stat = (path: string) => props.diff.files.find((f) => f.path === path);
   const at = (path: string, line: number | undefined) =>
@@ -166,8 +171,65 @@ function DiffView(props: {
                   <For each={f.hunks}>
                     {(h) => (
                       <>
-                        <div class="hunk-bar">
+                        <div class="hunk-bar" data-kept={kept().has(hunkKey(f.path, h.head)) ? "" : undefined}>
                           <span class="selectable">{h.head}</span>
+                          <Show when={props.onDrop}>
+                            <span class="actions">
+                              <Show
+                                when={!kept().has(hunkKey(f.path, h.head))}
+                                fallback={
+                                  <button
+                                    type="button"
+                                    class="btn btn-ghost hunk-kept"
+                                    title="Undo: mark this change as not decided"
+                                    onClick={() => {
+                                      const k = new Set(kept());
+                                      k.delete(hunkKey(f.path, h.head));
+                                      setKept(k);
+                                      saveViewed(`${props.viewedKey}.kept`, k);
+                                    }}
+                                  >
+                                    <Icon name="done" small />
+                                    Kept
+                                  </button>
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  class="btn btn-ghost"
+                                  title="Keep this change"
+                                  onClick={() => {
+                                    const k = new Set(kept());
+                                    k.add(hunkKey(f.path, h.head));
+                                    setKept(k);
+                                    saveViewed(`${props.viewedKey}.kept`, k);
+                                  }}
+                                >
+                                  Keep
+                                </button>
+                                <button
+                                  type="button"
+                                  class="btn btn-ghost btn-danger"
+                                  title="Take this change out of the lane, as a commit"
+                                  disabled={dropping() != null}
+                                  aria-busy={dropping() === hunkKey(f.path, h.head)}
+                                  onClick={async () => {
+                                    setDropping(hunkKey(f.path, h.head));
+                                    try {
+                                      await props.onDrop!(f.path, h.head);
+                                    } finally {
+                                      setDropping(null);
+                                    }
+                                  }}
+                                >
+                                  <Show when={dropping() === hunkKey(f.path, h.head)}>
+                                    <Spinner />
+                                  </Show>
+                                  Drop
+                                </button>
+                              </Show>
+                            </span>
+                          </Show>
                         </div>
                         <div class="lines selectable">
                           <For each={h.lines}>
@@ -220,7 +282,7 @@ export function ReviewScreen(props: {
   const [verification] = createResource(() => props.run?.id, (id) => api.runVerification(id));
   const round = () => props.run?.round ?? 0;
   const [scope, setScope] = createSignal<"card" | "round">(round() > 0 ? "round" : "card");
-  const [diff] = createResource(
+  const [diff, { refetch: rereadDiff }] = createResource(
     () => (props.card?.lane ? ([props.repo, props.card.lane, scope() === "round" ? (props.run?.base_sha ?? undefined) : undefined] as const) : null),
     ([repo, lane, from]) => api.laneDiff(repo, lane, from),
   );
@@ -376,6 +438,20 @@ export function ReviewScreen(props: {
                       onPick={pick}
                       viewedKey={`${c().id}.${d().head.slice(0, 12)}`}
                       onOpen={(p) => props.onOpenFile(c().lane, p)}
+                      onDrop={
+                        c().state === "review"
+                          ? async (file, header) => {
+                              try {
+                                await api.dropHunk(props.repo, c().lane!, d().base, d().head, file, header);
+                                toast({ tone: "done", title: `Dropped a change in ${file}`, body: "Committed on the lane as review: drop a change." });
+                                await rereadDiff();
+                                props.onChanged();
+                              } catch (e) {
+                                toast({ tone: "fail", title: "Not dropped", body: msg(e) });
+                              }
+                            }
+                          : undefined
+                      }
                     />
                   )}
                 </Show>

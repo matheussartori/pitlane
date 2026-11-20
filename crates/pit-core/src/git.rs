@@ -42,6 +42,24 @@ impl Git {
             .with_context(|| format!("could not run git {}", args.join(" ")))
     }
 
+    /// Runs git with `input` on stdin (a patch for `git apply -`). Fails on a non-zero exit.
+    pub fn run_stdin(&self, args: &[&str], input: &str) -> Result<String> {
+        use std::io::Write;
+        let mut child = self
+            .command(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("could not run git {}", args.join(" ")))?;
+        child.stdin.take().context("no stdin")?.write_all(input.as_bytes())?;
+        let out = child.wait_with_output()?;
+        if !out.status.success() {
+            bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_owned())
+    }
+
     /// Runs git and returns stdout with the trailing newline removed. Fails on a non-zero exit.
     pub fn run(&self, args: &[&str]) -> Result<String> {
         let out = self.output(args)?;

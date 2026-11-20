@@ -107,6 +107,8 @@ export async function preview<T>(cmd: string): Promise<T> {
         patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
         truncated: false,
       } as T;
+    case "lane_drop_hunk":
+      return "a1b2c3d4" as T;
     case "files_list":
       return ["README.md", "package.json", "src/app.ts", "src/kart/drift.ts", "src/kart/drift.test.ts", "src/kart/physics.ts", "src/lobby/timer.ts", "src/ui/avatar.tsx"] as T;
     case "file_read":

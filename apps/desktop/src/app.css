@@ -8,7 +8,7 @@
 /* Hallmark · waive 72 · .tower-title clips a long branch name with text-overflow: ellipsis inside its row · the text range only runs past the Tower as the hidden tail behind the ellipsis */
 /* Hallmark · dismissed recommended-option · an approval offers no recommended answer and ↵ does nothing on it: allowing a command is the person's call, never a default */
 /* Hallmark · dismissed F25 · the desktop window has a 900px minimum width (minWidth in tauri.conf.json), so no phone width exists to fit */
-/* Hallmark · Code (build) · finish-review: self, recaptured dark and light with a file open · Monaco themed from the tokens, loaded only when Code opens · gap: per-hunk accept and reject in Review still read-only, next */
+/* Hallmark · Code (build) · finish-review: self, recaptured dark and light with a file open · Monaco themed from the tokens, loaded only when Code opens · per-hunk Keep and Drop added to Review after it · gap: none */
 /* Hallmark · Terminal (build) · finish-review: self, recaptured dark and light · the xterm surface takes the tokens and lifts any program colour to 4.5:1 · gap: none */
 /* Hallmark · Density redesign (restyle + Tower recomposed) · the person found the UI childish next to Warp: 13px UI, small titles, no pills or orange washes, the Tower a compact list whose only light is a mark · counts changed by design: "Needs you 7" is 6 and "Landed 0" is 1 because a lane ready for main is a calm release, not your move · run clocks tick · finish-review: subagent · fix · 8 findings · 8 resolved (one count of waiting lanes everywhere, Tower rows of one height with the remote state in words, one left edge, quiet approval options, actions in ink and statuses muted, the Needs you stripe dropped) · gap: none */
 /* Hallmark · Merge queue (build) · finish-review: self, Lanes recaptured in dark and light · queued lanes leave Waiting on you, conflicts return to it with the file named · gap: none */
@@ -463,3 +463,8 @@ dialog.sheet-wide { width: min(720px, calc(100% - 48px)); }
 .code-empty { padding: var(--space-lg) var(--gutter); align-content: start; }
 .diff-open { font-size: var(--text-xs); flex-shrink: 0; }
 .mono-link { font-family: var(--font-mono); font-size: var(--text-xs); text-align: left; }
+
+/* Review: a hunk you kept says so quietly; Drop is the only destructive word, in the fail colour. */
+.hunk-bar .btn { height: 22px; }
+.hunk-bar[data-kept] { color: var(--color-done); }
+.hunk-kept { color: var(--color-done); }
