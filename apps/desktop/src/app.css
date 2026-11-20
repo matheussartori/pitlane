@@ -538,8 +538,9 @@ body[data-resizing] .pane { pointer-events: none; }
 .code-side-head { display: flex; align-items: center; gap: var(--space-3xs); padding-inline: var(--space-xs) var(--space-2xs); }
 .code-side-head .btn-icon[aria-pressed="true"] { color: var(--color-ink); background: var(--color-paper-3); }
 .code-place { flex: 1; min-width: 0; font-family: var(--font-body); }
-.code-place-btn { max-width: 100%; }
-.code-place-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-place-btn { width: 100%; }
+.code-place-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.code-place > .pop { width: 100%; min-width: 280px; }
 .code-filter { margin: var(--space-2xs) var(--space-xs); width: auto; }
 .code-tree { overflow: auto; padding-block: var(--space-2xs) var(--space-md); }
 .code-search { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
