@@ -51,7 +51,7 @@ export function LanesView(props: LanesProps) {
   const shipping = () => open().find((j) => j.state === "shipping");
   /** Lanes ready for production that are not in line yet. */
   const readyForMain = () =>
-    (props.yard?.lanes ?? []).filter((l) => l.status === "needs-production" && !open().some((j) => j.branch === l.branch));
+    (props.yard?.lanes ?? []).filter((l) => queuedGroup(l, props.jobs, props.reviewing) === "release");
 
   return (
     <div class="lanes">
