@@ -1,0 +1,415 @@
+// The three actions that change a repository. Each shows exactly what will happen first.
+import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
+import { api, landedLabel, short, type CleanPlan, type Lane, type LocalUpdate, type ShipPlan } from "./api";
+import { Icon } from "./icons";
+import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+
+const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
+
+function localNote(local: LocalUpdate, target: string): string | undefined {
+  switch (local.kind) {
+    case "updated":
+      return `Local ${target} fast-forwarded too.`;
+    case "left-behind":
+      return `Local ${target} has changes in ${local.detail}; pull there when ready.`;
+    case "diverged":
+      return `Local ${target} has commits origin lacks; left as is.`;
+    case "no-local-branch":
+      return undefined;
+  }
+}
+
+// ---------------------------------------------------------------- Ship
+
+export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; onDone: () => void; onClose: () => void }) {
+  const [plan] = createResource(() => api.shipPlan(props.repo, props.lane.branch, props.to));
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const ready = () => {
+    const p = plan();
+    return p && !p.already && p.conflicts.length === 0 && p.tree ? p : null;
+  };
+
+  async function ship(p: ShipPlan) {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.ship(props.repo, p);
+      toast({ tone: "done", title: `${p.branch} is in ${r.target}`, body: localNote(r.local, r.target) });
+      props.onDone();
+      props.onClose();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const title = () => `Ship ${props.lane.branch}` + (plan()?.target ? ` to ${plan()!.target}` : "");
+
+  return (
+    <Sheet
+      title={title()}
+      onClose={props.onClose}
+      foot={
+        <>
+          <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
+            {ready() ? "Cancel" : "Close"}
+          </button>
+          <Show when={ready()}>
+            {(p) => (
+              <button type="button" class="btn btn-primary" aria-busy={busy()} disabled={busy()} onClick={() => ship(p())}>
+                <Show when={busy()} fallback={<Icon name="ship" small />}>
+                  <Spinner />
+                </Show>
+                {busy() ? "Shipping" : `Ship to ${p().target}`}
+              </button>
+            )}
+          </Show>
+        </>
+      }
+    >
+      <Switch>
+        <Match when={plan.loading}>
+          <div class="loading-line">
+            <Spinner /> Fetching origin and simulating the merge
+          </div>
+        </Match>
+        <Match when={plan.error}>
+          <ErrorLine>{msg(plan.error)}</ErrorLine>
+        </Match>
+        <Match when={plan()?.already}>
+          {(how) => (
+            <div class="note">
+              <Icon name="done" small />
+              <span>
+                Already in {plan()!.target} ({landedLabel[how()]}). Nothing to ship.
+              </span>
+            </div>
+          )}
+        </Match>
+        <Match when={plan() && plan()!.conflicts.length > 0}>
+          <ErrorLine>
+            Conflicts with origin/{plan()!.target} in {plan()!.conflicts.length} file
+            {plan()!.conflicts.length === 1 ? "" : "s"}. Nothing changed.
+          </ErrorLine>
+          <ul class="files">
+            <For each={plan()!.conflicts}>{(f) => <li>{f}</li>}</For>
+          </ul>
+          <p>Resolve it by hand where {plan()!.target} is checked out:</p>
+          <code class="files">
+            git switch {plan()!.target} && git pull && git merge {plan()!.branch} && git push
+          </code>
+          <p>rerere records the resolution, so the same conflict resolves itself on the next stage.</p>
+        </Match>
+        <Match when={ready()}>
+          {(p) => (
+            <>
+              <div class="flow">
+                <div class="ref">
+                  <b>{p().branch}</b>
+                  <span>{short(p().sha)}</span>
+                </div>
+                <Icon name="ship" />
+                <div class="ref">
+                  <b>origin/{p().target}</b>
+                  <span>{short(p().target_sha)}</span>
+                </div>
+              </div>
+              <p>
+                Pitlane builds the merge commit <span class="code">Merge {p().branch} into {p().target}</span> without
+                touching your checkouts, then pushes it. If someone pushes to {p().target} first, the push is refused and
+                nothing changes.
+              </p>
+              <Show when={p().check}>
+                {(c) => (
+                  <div class="note">
+                    <Icon name="verify" small />
+                    <span>
+                      Runs <span class="code">{c()[0]}</span> first; a failure ships nothing.
+                    </span>
+                  </div>
+                )}
+              </Show>
+              <Show when={p().remote_behind > 0}>
+                <div class="note">
+                  <Icon name="needs" small />
+                  <span>
+                    origin/{p().branch} has {p().remote_behind} commit{p().remote_behind === 1 ? "" : "s"} you don't have
+                    locally. They will not ship; pull first if they belong in it.
+                  </span>
+                </div>
+              </Show>
+              <Show when={p().remote_ahead > 0}>
+                <div class="note">
+                  <Icon name="ship" small />
+                  <span>
+                    {p().remote_ahead} local commit{p().remote_ahead === 1 ? "" : "s"} not pushed to origin/{p().branch}{" "}
+                    yet; they ship inside the merge.
+                  </span>
+                </div>
+              </Show>
+              <Show when={p().dirty > 0}>
+                <div class="note">
+                  <Icon name="needs" small />
+                  <span>
+                    {p().dirty} uncommitted change{p().dirty === 1 ? "" : "s"} in the worktree will not ship.
+                  </span>
+                </div>
+              </Show>
+            </>
+          )}
+        </Match>
+      </Switch>
+      <Show when={error()}>
+        <ErrorLine>{error()}</ErrorLine>
+      </Show>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------- Clean
+
+export function CleanSheet(props: { repo: string; onDone: () => void; onClose: () => void }) {
+  const [chosen, setChosen] = createSignal<Set<string>>(new Set());
+  const [plan] = createResource(async (): Promise<CleanPlan> => {
+    const p = await api.cleanPlan(props.repo);
+    setChosen(new Set(p.items.map((i) => i.branch)));
+    return p;
+  });
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  function toggle(branch: string, on: boolean) {
+    const s = new Set(chosen());
+    if (on) s.add(branch);
+    else s.delete(branch);
+    setChosen(s);
+  }
+
+  async function run() {
+    const branches = [...chosen()];
+    setBusy(true);
+    setError(null);
+    try {
+      const out = await api.clean(props.repo, branches);
+      const ok = out.filter((o) => !o.error).map((o) => o.branch);
+      const failed = out.filter((o) => o.error);
+      if (ok.length) {
+        toast(
+          {
+            tone: "done",
+            title: `Deleted ${ok.length} lane${ok.length === 1 ? "" : "s"}`,
+            body: `${ok.join(", ")}. Undo stays available for 30 days.`,
+            action: {
+              label: "Undo",
+              run: async () => {
+                for (const b of ok) {
+                  try {
+                    await api.undoClean(props.repo, b);
+                  } catch (e) {
+                    toast({ tone: "fail", title: `Could not restore ${b}`, body: msg(e) });
+                  }
+                }
+                toast({ tone: "done", title: "Restored", body: "Branches are back where they were; worktrees are not recreated." });
+                props.onDone();
+              },
+            },
+          },
+          15000,
+        );
+      }
+      for (const f of failed) toast({ tone: "fail", title: `${f.branch} not deleted`, body: f.error ?? "" }, 12000);
+      props.onDone();
+      props.onClose();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      title="Clean up shipped lanes"
+      onClose={props.onClose}
+      foot={
+        <>
+          <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
+            Cancel
+          </button>
+          <Show when={(plan()?.items.length ?? 0) > 0}>
+            <button
+              type="button"
+              class="btn btn-danger"
+              aria-busy={busy()}
+              disabled={busy() || chosen().size === 0}
+              onClick={run}
+            >
+              <Show when={busy()} fallback={<Icon name="trash" small />}>
+                <Spinner />
+              </Show>
+              Delete {chosen().size}
+            </button>
+          </Show>
+        </>
+      }
+    >
+      <Switch>
+        <Match when={plan.loading}>
+          <div class="loading-line">
+            <Spinner /> Fetching origin and checking every lane against main
+          </div>
+        </Match>
+        <Match when={plan.error}>
+          <ErrorLine>{msg(plan.error)}</ErrorLine>
+        </Match>
+        <Match when={plan()}>
+          {(p) => (
+            <>
+              <Show
+                when={p().items.length > 0}
+                fallback={<p>Nothing to clean: no lane is in production with a clean worktree.</p>}
+              >
+                <p>
+                  These are in production and their worktrees are clean. Deleting removes the worktree, the local branch
+                  and the remote branch. Each can be undone for 30 days.
+                </p>
+                <div>
+                  <For each={p().items}>
+                    {(i) => (
+                      <label class="pick">
+                        <input
+                          type="checkbox"
+                          class="check"
+                          checked={chosen().has(i.branch)}
+                          onChange={(e) => toggle(i.branch, e.currentTarget.checked)}
+                        />
+                        <span class="lane-name">
+                          <span class="branch">{i.branch}</span>
+                          <span class="what">
+                            {[i.local ? "branch" : null, i.worktree ? "worktree" : null, i.delete_remote ? "remote branch" : null]
+                              .filter(Boolean)
+                              .join(" + ")}
+                          </span>
+                        </span>
+                        <span class="tag">{i.how ? landedLabel[i.how] : ""}</span>
+                      </label>
+                    )}
+                  </For>
+                </div>
+              </Show>
+              <Show when={p().skipped.length > 0}>
+                <p class="caption">Kept:</p>
+                <For each={p().skipped}>
+                  {(s) => (
+                    <div class="note">
+                      <Icon name="blocked" small />
+                      <span>
+                        <span class="code">{s.branch}</span>: {s.reason}
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </>
+          )}
+        </Match>
+      </Switch>
+      <Show when={error()}>
+        <ErrorLine>{error()}</ErrorLine>
+      </Show>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------- New lane
+
+export function NewLaneSheet(props: { repo: string; base: string; onDone: () => void; onClose: () => void }) {
+  const [name, setName] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function create(e: Event) {
+    e.preventDefault();
+    const branch = name().trim();
+    if (!branch) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.newLane(props.repo, branch);
+      const extra = [
+        r.copied.length ? `copied ${r.copied.join(", ")}` : null,
+        r.cloned.length ? `cloned ${r.cloned.join(", ")}` : null,
+        r.missing.length ? `${r.missing.join(", ")} not found` : null,
+        r.setup_ok === false ? "setup command failed" : null,
+      ].filter(Boolean);
+      toast(
+        {
+          tone: r.setup_ok === false ? "fail" : "done",
+          title: `${r.branch} from ${r.base} ${short(r.base_sha)}`,
+          body: extra.length ? `${r.path}. ${extra.join(", ")}.` : r.path,
+          action: { label: "Copy path", run: () => void navigator.clipboard.writeText(r.path) },
+        },
+        12000,
+      );
+      props.onDone();
+      props.onClose();
+    } catch (err) {
+      setError(msg(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      title="New lane"
+      onClose={props.onClose}
+      foot={
+        <>
+          <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="new-lane"
+            class="btn btn-primary"
+            aria-busy={busy()}
+            disabled={busy() || !name().trim()}
+          >
+            <Show when={busy()} fallback={<Icon name="plus" small />}>
+              <Spinner />
+            </Show>
+            {busy() ? "Creating" : "Create lane"}
+          </button>
+        </>
+      }
+    >
+      <form id="new-lane" class="field" classList={{ "is-error": !!error() }} onSubmit={create}>
+        <label class="field-label" for="lane-name">
+          Branch
+        </label>
+        <input
+          id="lane-name"
+          class="input input-mono"
+          placeholder="feat/thing"
+          autocomplete="off"
+          spellcheck={false}
+          autofocus
+          value={name()}
+          onInput={(e) => setName(e.currentTarget.value)}
+          disabled={busy()}
+        />
+        <span class="field-help">
+          {busy()
+            ? "Fetching, creating the worktree, copying files, running setup"
+            : `Starts from a freshly fetched origin/${props.base}, in its own worktree.`}
+        </span>
+      </form>
+      <Show when={error()}>
+        <ErrorLine>{error()}</ErrorLine>
+      </Show>
+    </Sheet>
+  );
+}

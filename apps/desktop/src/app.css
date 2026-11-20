@@ -1,0 +1,168 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand (locked design/design.md) · redesign: full
+ * paper: oklch(17% 0.012 255) · accent: oklch(76% 0.165 58) · display: Archivo 600 · body: Archivo
+ * nav: top bar kept (wordmark, repo, four tabs) · signature: the track, each lane's place on local, remote, dev and main · states: loading, empty, error, full
+ * axes: dark/grotesk-sans/warm · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H5 E4 S5 R4 V3 · weakest: V, the first Hallmark run on this app so there is no log to rotate against; the track is new to the product rather than borrowed from a dashboard kit */
+/* Hallmark · finish-review: subagent · recapture once (scroll container clipped the full pages), then fix · 8 findings · 7 resolved 1 partial (the gap between short lane names and the track stays: the track keeps one column across groups) · gap: none */
+
+/* Layout only: tokens and components come from design/ (tokens.css, base.css, components.css). */
+
+html, body, #root { height: 100%; }
+body { overflow: clip; cursor: default; -webkit-user-select: none; user-select: none; }
+.selectable, input { -webkit-user-select: text; user-select: text; }
+
+.app { display: grid; grid-template-rows: var(--bar-h) minmax(0, 1fr); height: 100vh; }
+
+/* ---------- Top bar: also the title bar, with room for the traffic lights ---------- */
+.bar { display: flex; align-items: center; gap: var(--space-sm); padding-inline: 84px var(--space-sm); border-bottom: 1px solid var(--color-rule); background: var(--color-paper); min-width: 0; }
+.bar .tabs { flex: 1; min-width: 0; }
+.wordmark { font: var(--weight-display) var(--text-lg)/1 var(--font-display); letter-spacing: var(--tracking-display); color: var(--color-ink); display: inline-flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
+.wordmark .icon { color: var(--color-accent-text); }
+.repo { display: inline-flex; align-items: center; gap: var(--space-2xs); height: var(--control-h); padding-inline: var(--space-xs); border-radius: var(--radius-md); color: var(--color-ink-2); font-size: var(--text-sm); border: 0; background: transparent; box-shadow: var(--ring); cursor: pointer; flex-shrink: 0;
+  transition: color var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out); }
+.repo:hover { box-shadow: var(--ring-strong); color: var(--color-ink); }
+.repo:active { transform: scale(0.97); }
+.repo:disabled { opacity: 0.55; cursor: not-allowed; }
+.repo:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.anchor { position: relative; }
+.anchor > .pop { position: absolute; top: calc(100% + var(--space-2xs)); left: 0; z-index: 100; }
+.menu-item .path { margin-inline-start: auto; font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
+.menu-item[aria-current="true"] { color: var(--color-ink); }
+.menu-item:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+
+/* ---------- Body: main, plus the Tower on every screen but Lanes ---------- */
+.body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+.body[data-tower] { grid-template-columns: minmax(0, 1fr) var(--tower-w); }
+.main { overflow: auto; padding: var(--space-lg) var(--space-xl) var(--space-2xl); min-width: 0; }
+.tower-pane { border-left: 1px solid var(--color-rule); background: var(--color-paper-2); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+.tower-pane .tower { overflow: auto; }
+.tower-row[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--color-accent); }
+.tower-foot { padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--color-rule); color: var(--color-muted); font-size: var(--text-xs); }
+.tower-foot b { color: var(--color-accent-text); font-weight: var(--weight-strong); }
+@media (max-width: 1100px) { .body[data-tower] { grid-template-columns: minmax(0, 1fr); } .tower-pane { display: none; } }
+
+/* ---------- Lanes ---------- */
+.lanes { width: 100%; max-width: 1280px; margin-inline: auto; display: grid; gap: var(--space-lg); align-content: start; }
+.lanes-head { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.lanes-head .title { font: var(--weight-display) var(--text-2xl)/1 var(--font-display); letter-spacing: var(--tracking-display); text-wrap: balance; }
+.summary { color: var(--color-muted); font-size: var(--text-md); }
+.summary b { color: var(--color-accent-text); font-weight: var(--weight-strong); }
+.spacer { margin-inline-start: auto; }
+
+/* The yard: one table, grouped by who acts next. Rules only, no box. */
+.yard { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.c-no { width: 52px; }
+.c-track { width: 272px; }
+.c-wt { width: 112px; }
+.c-next { width: 296px; }
+.yard thead th { text-align: left; font: var(--weight-regular) var(--text-xs)/1.2 var(--font-body); color: var(--color-muted); padding: 0 var(--space-sm) var(--space-xs); border-bottom: 1px solid var(--color-rule-strong); white-space: nowrap; }
+.yard .end { text-align: right; }
+.group-row th { padding: var(--space-xl) var(--space-sm) var(--space-xs); text-align: left; font-weight: var(--weight-regular); border-bottom: 1px solid var(--color-rule); }
+.yard tbody:first-of-type .group-row th { padding-top: var(--space-md); }
+.group-head { display: flex; align-items: center; gap: var(--space-xs); margin: 0; min-height: var(--control-h); }
+.group-title { font: var(--weight-strong) var(--text-md)/1.2 var(--font-body); color: var(--color-ink); }
+.group-head .btn { margin-inline-start: auto; }
+.yard td { padding: var(--space-sm); border-bottom: 1px solid var(--color-rule); vertical-align: middle; }
+.yard tbody tr:not(.group-row) { cursor: pointer; }
+.yard tbody tr:not(.group-row) td { transition: background-color var(--dur-micro) var(--ease-out); }
+.yard tbody tr:not(.group-row):hover td, .yard tr[aria-selected="true"] td { background: var(--color-paper-2); }
+.yard tr[data-needs] td:first-child { box-shadow: inset 2px 0 0 var(--color-accent); }
+
+.lane-no { font: var(--weight-display) var(--text-xl)/1 var(--font-display); letter-spacing: var(--tracking-display); color: var(--color-muted); font-variant-numeric: tabular-nums; text-align: right; }
+.yard tr[data-needs] .lane-no { color: var(--color-accent-text); }
+.lane-name { display: grid; gap: var(--space-3xs); min-width: 0; }
+.lane-name .branch { font: var(--weight-strong) var(--text-sm)/1.3 var(--font-mono); color: var(--color-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-name .subject { font-size: var(--text-xs); color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The track: local, remote, integration, production. Reached stages join in ink; only your move is orange. */
+.rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: start; }
+.rail-head > span { text-align: center; }
+.node { position: relative; display: grid; justify-items: center; align-content: start; gap: var(--space-2xs); min-height: 30px; padding-top: var(--space-2xs); }
+.node + .node::before { content: ""; position: absolute; top: 8px; right: 50%; width: 100%; height: 2px; background: var(--color-rule); }
+.node .dot { position: relative; z-index: 1; width: 10px; height: 10px; border-radius: 50%; background: var(--color-paper); box-shadow: inset 0 0 0 2px var(--color-rule-strong); }
+.node[data-state="on"] .dot { background: var(--color-ink-2); box-shadow: none; }
+.node[data-state="on"] + .node[data-state="on"]::before { background: var(--color-ink-2); }
+.node[data-state="next"] .dot { background: var(--color-accent-wash); box-shadow: inset 0 0 0 2px var(--color-accent); }
+.node[data-state="count"] .dot { box-shadow: inset 0 0 0 2px var(--color-ink-2); }
+.node[data-state="gone"] .dot { background: transparent; box-shadow: none; outline: 1.5px dashed var(--color-muted); outline-offset: -1.5px; }
+.node[data-state="fail"] .dot { background: var(--color-fail); box-shadow: none; }
+.node .fig { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-muted); white-space: nowrap; }
+.node[data-state="count"] .fig { color: var(--color-ink-2); }
+.node[data-state="fail"] .fig { color: var(--color-fail); }
+.node[data-state="gone"] .fig { font-family: var(--font-body); color: var(--color-muted); }
+
+.wt { font-size: var(--text-sm); color: var(--color-muted); white-space: nowrap; }
+.wt[data-dirty] { color: var(--color-ink-2); }
+
+.next { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-xs); min-width: 0; }
+.next-text { display: inline-flex; align-items: center; gap: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.next-text[data-tone="needs"] { color: var(--color-accent-text); }
+.next-text[data-tone="failed"] { color: var(--color-fail); }
+.next-text[data-tone="muted"] { color: var(--color-muted); }
+/* Every action shows at rest. Outside the waiting group it sits as quiet text and takes its fill when you reach for it. */
+.yard tr:not([data-needs]) .next .btn { background: transparent; box-shadow: none; color: var(--color-ink-2); transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out); }
+.yard tr:not([data-needs]):is(:hover, :focus-within, [aria-selected="true"]) .next .btn { background: var(--color-paper-3); box-shadow: var(--ring); color: var(--color-ink); }
+
+.yard .skeleton { display: block; }
+.skeleton-row td { height: 63px; }
+.lanes .empty { padding-inline: 0; }
+.lanes .error-line { align-items: center; }
+.lanes .error-line .icon { margin-top: 0; }
+
+/* Commits only in integration */
+.strays { display: grid; gap: var(--space-xs); padding-top: var(--space-md); }
+.strays-note { color: var(--color-muted); font-size: var(--text-sm); max-width: var(--measure); }
+.commit-list { list-style: none; margin: 0; padding: 0; }
+.commit { display: grid; grid-template-columns: 88px minmax(0, 1fr) auto; gap: var(--space-sm); align-items: baseline; padding: var(--space-xs) var(--space-sm); border-top: 1px solid var(--color-rule); font-size: var(--text-sm); }
+.commit:last-child { border-bottom: 1px solid var(--color-rule); }
+.commit .sha { font: var(--weight-regular) var(--text-xs)/1.4 var(--font-mono); color: var(--color-muted); }
+.commit .who { color: var(--color-muted); font-size: var(--text-xs); white-space: nowrap; }
+
+/* Narrow windows: each lane restacks, the number and the action stay in view. */
+@media (max-width: 60rem) {
+  .main { padding-inline: var(--space-md); }
+  .yard, .yard tbody { display: block; }
+  .yard thead, .yard colgroup { display: none; }
+  .group-row, .group-row th { display: block; }
+  .yard tbody tr:not(.group-row) { display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: var(--space-sm); padding-block: var(--space-xs); border-bottom: 1px solid var(--color-rule); }
+  .yard tbody tr:not(.group-row) td { border: 0; padding: var(--space-2xs) 0; }
+  .yard td:nth-child(1) { grid-row: span 3; }
+  .yard td:nth-child(3) { max-width: 240px; }
+  .yard td:nth-child(4) { display: none; }
+  .next { justify-content: flex-start; flex-wrap: wrap; }
+}
+
+/* ---------- Dialogs ---------- */
+dialog.sheet { border: 0; padding: 0; color: var(--color-ink); background: var(--color-paper-2); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); width: min(560px, calc(100% - 48px)); }
+dialog.sheet::backdrop { background: var(--color-scrim); }
+.sheet-head { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-md) var(--space-lg) var(--space-sm); }
+.sheet-head h2 { font: var(--weight-display) var(--text-xl)/1.2 var(--font-display); letter-spacing: var(--tracking-display); overflow-wrap: break-word; min-width: 0; text-wrap: balance; }
+.sheet-body { display: grid; gap: var(--space-sm); padding: 0 var(--space-lg) var(--space-md); font-size: var(--text-md); color: var(--color-ink-2); }
+.sheet-body code, .code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-ink); }
+.sheet-foot { display: flex; justify-content: flex-end; gap: var(--space-xs); padding: var(--space-sm) var(--space-lg) var(--space-md); border-top: 1px solid var(--color-rule); }
+.flow { display: grid; grid-template-columns: auto auto auto; justify-content: start; align-items: center; gap: var(--space-xs); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); }
+.flow .ref { display: grid; gap: var(--space-3xs); }
+.flow .ref b { font: var(--weight-strong) var(--text-sm)/1.2 var(--font-mono); color: var(--color-ink); }
+.flow .ref span { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); }
+.flow .icon { color: var(--color-muted); }
+.note { display: flex; gap: var(--space-xs); align-items: flex-start; font-size: var(--text-sm); }
+.note .icon { margin-top: var(--space-3xs); color: var(--color-accent-text); }
+.files { margin: 0; padding: var(--space-xs) var(--space-sm); list-style: none; border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); font: var(--weight-regular) var(--text-sm)/1.7 var(--font-mono); color: var(--color-ink); -webkit-user-select: text; user-select: text; }
+.pick { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-sm); align-items: center; padding: var(--space-xs) 0; border-bottom: 1px solid var(--color-rule); }
+.pick:last-child { border-bottom: 0; }
+.pick .what { font-size: var(--text-xs); color: var(--color-muted); }
+.loading-line { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
+.caption { color: var(--color-muted); font-size: var(--text-sm); }
+
+/* ---------- Toasts ---------- */
+.toasts { position: fixed; right: var(--space-md); bottom: var(--space-md); display: grid; gap: var(--space-xs); z-index: 500; }
+.toast .icon { margin-top: var(--space-3xs); }
+.toast[data-tone="done"] > .icon { color: var(--color-done); }
+.toast[data-tone="fail"] > .icon { color: var(--color-fail); }
+.toast-body { -webkit-user-select: text; user-select: text; overflow-wrap: anywhere; }
+.row-actions { display: flex; justify-content: flex-end; gap: var(--space-2xs); }
+
+/* Reduced motion: state changes land at once; the spinner and skeleton keep their own slow loop (base.css). */
+@media (prefers-reduced-motion: reduce) {
+  .repo, .yard tbody tr:not(.group-row) td, .yard tr .next .btn { transition: none; }
+}

@@ -1,0 +1,307 @@
+// The shell: top bar, the current screen, the Tower. Lanes is live; the other screens arrive with pitd.
+import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { api, type Lane, type RepoEntry, type Settings, type Yard } from "./api";
+import { Icon } from "./icons";
+import { group } from "./lane";
+import { LanesView, Tower } from "./lanes";
+import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
+import { Toasts, toast } from "./ui";
+
+type Tab = "inbox" | "board" | "lanes" | "ledger";
+type SheetState = { kind: "ship"; lane: Lane; to: string } | { kind: "clean" } | { kind: "new" } | null;
+
+const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
+
+export default function App() {
+  const [settings, setSettings] = createSignal<Settings>({ repos: [], last: null });
+  const [repo, setRepo] = createSignal<string | null>(null);
+  const [tab, setTab] = createSignal<Tab>("lanes");
+  const [yard, setYard] = createSignal<Yard | null>(null);
+  const [fetching, setFetching] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const [fetchedAt, setFetchedAt] = createSignal<number | null>(null);
+  const [now, setNow] = createSignal(Date.now());
+  const [selected, setSelected] = createSignal<string | null>(null);
+  const [sheet, setSheet] = createSignal<SheetState>(null);
+  const [menu, setMenu] = createSignal(false);
+  const [booted, setBooted] = createSignal(false);
+  const [checkingOut, setCheckingOut] = createSignal<string | null>(null);
+
+  async function checkout(lane: Lane) {
+    const path = repo();
+    if (!path || checkingOut()) return;
+    setCheckingOut(lane.branch);
+    try {
+      const r = await api.newLane(path, lane.branch);
+      toast(
+        {
+          tone: r.setup_ok === false ? "fail" : "done",
+          title: `${r.branch} checked out, tracking ${r.base}`,
+          body: r.setup_ok === false ? `${r.path}. The setup command failed.` : r.path,
+          action: { label: "Copy path", run: () => void navigator.clipboard.writeText(r.path) },
+        },
+        12000,
+      );
+      await load(false);
+    } catch (e) {
+      toast({ tone: "fail", title: `${lane.branch} not checked out`, body: msg(e) });
+    } finally {
+      setCheckingOut(null);
+    }
+  }
+
+  // Loads are tagged so a slow answer for an old repo never overwrites a newer one.
+  let generation = 0;
+  async function load(fetch: boolean) {
+    const path = repo();
+    if (!path) return;
+    const gen = ++generation;
+    if (fetch) setFetching(true);
+    try {
+      const y = await api.yard(path, fetch);
+      if (gen !== generation) return;
+      setYard(y);
+      setError(null);
+      if (fetch) setFetchedAt(Date.now());
+    } catch (e) {
+      if (gen === generation) setError(msg(e));
+    } finally {
+      if (fetch && gen === generation) setFetching(false);
+    }
+  }
+
+  async function switchTo(path: string) {
+    setMenu(false);
+    if (path === repo()) return;
+    generation++;
+    setRepo(path);
+    setYard(null);
+    setError(null);
+    setFetchedAt(null);
+    setSelected(null);
+    setFetching(false);
+    void api.selectRepo(path);
+    await load(false); // local refs first: instant
+    await load(true); // then fetch and GitHub
+  }
+
+  async function addRepo() {
+    setMenu(false);
+    const dir = await openDialog({ directory: true, multiple: false, title: "Choose a git repository" });
+    if (typeof dir !== "string") return;
+    try {
+      const entry = await api.addRepo(dir);
+      setSettings(await api.settings());
+      await switchTo(entry.path);
+    } catch (e) {
+      toast({ tone: "fail", title: "Not added", body: msg(e) });
+    }
+  }
+
+  onMount(async () => {
+    try {
+      const s = await api.settings();
+      setSettings(s);
+      const start = s.last ?? s.repos[0]?.path;
+      if (start) await switchTo(start);
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setBooted(true);
+    }
+
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    // Coming back to the window: recheck local state (cheap, no network).
+    const onFocus = () => {
+      if (!fetching() && !sheet()) void load(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if (e.metaKey && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        if (!fetching()) void load(true);
+      } else if (!typing && !e.metaKey && !e.ctrlKey && !sheet() && repo()) {
+        if (e.key === "n" || e.key === "N") {
+          e.preventDefault();
+          setSheet({ kind: "new" });
+        } else if (/^[1-4]$/.test(e.key) && e.altKey) {
+          setTab((["inbox", "board", "lanes", "ledger"] as const)[Number(e.key) - 1]!);
+        }
+      }
+      if (e.key === "Escape") setMenu(false);
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      clearInterval(tick);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
+
+  const current = (): RepoEntry | undefined => settings().repos.find((r) => r.path === repo());
+  const needs = () => yard()?.lanes.filter((l) => group(l) === "waiting").length ?? 0;
+  const select = (b: string) => {
+    setSelected(b);
+    setTab("lanes");
+  };
+
+  return (
+    <div class="app">
+      <header class="bar" data-tauri-drag-region>
+        <span class="wordmark" data-tauri-drag-region>
+          <Icon name="mark" />
+          Pitlane
+        </span>
+        <div class="anchor">
+          <button type="button" class="repo" aria-haspopup="menu" aria-expanded={menu()} onClick={() => setMenu(!menu())}>
+            <Icon name="branch" small />
+            {current()?.name ?? "Add repository"}
+            <Icon name="chev" small />
+          </button>
+          <Show when={menu()}>
+            <div class="pop" role="menu">
+              <For each={settings().repos}>
+                {(r) => (
+                  <div
+                    class="menu-item"
+                    role="menuitem"
+                    tabindex="0"
+                    aria-current={r.path === repo()}
+                    onClick={() => switchTo(r.path)}
+                    onKeyDown={(e) => e.key === "Enter" && switchTo(r.path)}
+                  >
+                    <Icon name="branch" small />
+                    {r.name}
+                    <span class="path">{r.path}</span>
+                  </div>
+                )}
+              </For>
+              <Show when={settings().repos.length > 0}>
+                <div class="menu-sep" />
+              </Show>
+              <div class="menu-item" role="menuitem" tabindex="0" onClick={addRepo} onKeyDown={(e) => e.key === "Enter" && addRepo()}>
+                <Icon name="plus" small />
+                Add repository
+              </div>
+            </div>
+          </Show>
+        </div>
+        <nav class="tabs" aria-label="Screens" data-tauri-drag-region>
+          <button type="button" class="tab" aria-current={tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
+            Inbox
+          </button>
+          <button type="button" class="tab" aria-current={tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
+            Board
+          </button>
+          <button type="button" class="tab" aria-current={tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
+            Lanes
+            <Show when={needs() > 0}>
+              <span class="count count-hot">{needs()}</span>
+            </Show>
+          </button>
+          <button type="button" class="tab" aria-current={tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
+            Ledger
+          </button>
+        </nav>
+      </header>
+
+      {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
+      <div class="body" data-tower={tab() !== "lanes" ? "" : undefined}>
+        <main class="main">
+          <Show
+            when={repo()}
+            fallback={
+              <Show when={booted()}>
+                <div class="empty">
+                  <div class="empty-title">Every lane in view</div>
+                  <p class="empty-body">
+                    Add a git repository to see each branch, its worktree and where it has really landed.
+                  </p>
+                  <button type="button" class="btn btn-primary btn-lg" onClick={addRepo}>
+                    <Icon name="folder" small />
+                    Add repository
+                  </button>
+                </div>
+              </Show>
+            }
+          >
+            {(path) => (
+              <Switch>
+                <Match when={tab() === "lanes"}>
+                  <LanesView
+                    yard={yard()}
+                    fetching={fetching()}
+                    error={error()}
+                    fetchedAt={fetchedAt()}
+                    now={now()}
+                    selected={selected()}
+                    onSelect={setSelected}
+                    onRefresh={() => void load(true)}
+                    onShip={(lane, to) => setSheet({ kind: "ship", lane, to })}
+                    onCheckout={checkout}
+                    checkingOut={checkingOut()}
+                    onClean={() => setSheet({ kind: "clean" })}
+                    onNew={() => setSheet({ kind: "new" })}
+                  />
+                  <Switch>
+                    <Match when={sheet()?.kind === "ship" && (sheet() as { lane: Lane; to: string })}>
+                      {(s) => (
+                        <ShipSheet
+                          repo={path()}
+                          lane={s().lane}
+                          to={s().to}
+                          onDone={() => void load(false)}
+                          onClose={() => setSheet(null)}
+                        />
+                      )}
+                    </Match>
+                    <Match when={sheet()?.kind === "clean"}>
+                      <CleanSheet repo={path()} onDone={() => void load(false)} onClose={() => setSheet(null)} />
+                    </Match>
+                  </Switch>
+                </Match>
+                <Match when={tab() === "inbox"}>
+                  <Later title="Inbox" body="Questions from agents land here, each with a recommended answer, once pitd runs them." onBack={() => setTab("lanes")} />
+                </Match>
+                <Match when={tab() === "board"}>
+                  <Later title="Board" body="Cards grouped by who acts next: needs you, running, to review, landed. It arrives with pitd and the card files in .pitlane/cards." onBack={() => setTab("lanes")} />
+                </Match>
+                <Match when={tab() === "ledger"}>
+                  <Later title="Ledger" body="Tokens, cost and time per card and per agent, read from the agents' own telemetry. It arrives with the first runs." onBack={() => setTab("lanes")} />
+                </Match>
+              </Switch>
+            )}
+          </Show>
+          <Show when={sheet()?.kind === "new" && repo()}>
+            {(path) => (
+              <NewLaneSheet
+                repo={path()}
+                base={yard()?.production ?? "main"}
+                onDone={() => void load(false)}
+                onClose={() => setSheet(null)}
+              />
+            )}
+          </Show>
+        </main>
+        <Show when={tab() !== "lanes"}>
+          <Tower yard={yard()} selected={selected()} onSelect={select} />
+        </Show>
+      </div>
+      <Toasts />
+    </div>
+  );
+}
+
+function Later(props: { title: string; body: string; onBack: () => void }) {
+  return (
+    <div class="empty">
+      <div class="empty-title">{props.title} is next</div>
+      <p class="empty-body">{props.body}</p>
+      <button type="button" class="btn" onClick={props.onBack}>
+        Back to Lanes
+      </button>
+    </div>
+  );
+}
