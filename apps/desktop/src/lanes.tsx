@@ -1,7 +1,8 @@
 // The Lanes screen: every lane grouped by who acts next, each with its place on the track
 // (local, remote, integration, production). The Tower is the same lanes, compact, for the other screens.
 import { For, Show, createEffect, type JSX } from "solid-js";
-import type { Lane, Yard } from "./api";
+import { isLive, type Lane, type RunMeta, type Yard } from "./api";
+import { clock, elapsed } from "./run";
 import { Icon } from "./icons";
 import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, track, worktreeName, type Group } from "./lane";
 import { ErrorLine, Spinner } from "./ui";
@@ -353,7 +354,14 @@ function Skeleton() {
 
 // ---------------------------------------------------------------- Tower
 
-export function Tower(props: { yard: Yard | null; selected: string | null; onSelect: (branch: string) => void }) {
+export function Tower(props: {
+  yard: Yard | null;
+  runs: RunMeta[];
+  now: number;
+  selected: string | null;
+  onSelect: (branch: string) => void;
+  onOpenRun: (id: string) => void;
+}) {
   const needs = () => props.yard?.lanes.filter((l) => group(l) === "waiting").length ?? 0;
   return (
     <aside class="tower-pane" aria-label="Tower">
@@ -371,6 +379,7 @@ export function Tower(props: { yard: Yard | null; selected: string | null; onSel
             const waiting = () => group(l) === "waiting";
             const chip = () => (waiting() ? (v().chip === "failed" ? "failed" : "needs") : v().chip);
             const sync = l.sync;
+            const run = () => props.runs.find((r) => r.branch === l.branch && isLive(r.state));
             return (
               <div
                 class="tower-row"
@@ -378,8 +387,8 @@ export function Tower(props: { yard: Yard | null; selected: string | null; onSel
                 tabindex="0"
                 data-state={waiting() ? "needs" : v().chip === "done" ? "done" : undefined}
                 aria-selected={props.selected === l.branch}
-                onClick={() => props.onSelect(l.branch)}
-                onKeyDown={(e) => e.key === "Enter" && props.onSelect(l.branch)}
+                onClick={() => (run() ? props.onOpenRun(run()!.id) : props.onSelect(l.branch))}
+                onKeyDown={(e) => e.key === "Enter" && (run() ? props.onOpenRun(run()!.id) : props.onSelect(l.branch))}
               >
                 <span class="tower-lane">{pad2(l.number)}</span>
                 <span class="tower-main">
@@ -398,10 +407,22 @@ export function Tower(props: { yard: Yard | null; selected: string | null; onSel
                   </span>
                 </span>
                 <span class="tower-state">
-                  <span class="chip" data-state={chip()}>
-                    <Icon name={waiting() && v().chip !== "failed" ? "needs" : v().icon} small />
-                    {waiting() ? "You" : v().chip === "done" ? "Done" : v().chip === "running" ? "Work" : "Idle"}
-                  </span>
+                  <Show
+                    when={run()}
+                    fallback={
+                      <span class="chip" data-state={chip()}>
+                        <Icon name={waiting() && v().chip !== "failed" ? "needs" : v().icon} small />
+                        {waiting() ? "You" : v().chip === "done" ? "Done" : v().chip === "running" ? "Work" : "Idle"}
+                      </span>
+                    }
+                  >
+                    {(r) => (
+                      <span class="chip" data-state="running">
+                        <Icon name="run" small />
+                        <span class="figure">{clock(elapsed(r(), props.now))}</span>
+                      </span>
+                    )}
+                  </Show>
                 </span>
               </div>
             );

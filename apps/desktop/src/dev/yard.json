@@ -30,6 +30,34 @@
     },
     {
       "number": 2,
+      "branch": "feat/9-describe-the-demo-in-the-readme",
+      "sha": "951104d5f108be0d929271da95b72a8c61df81a9",
+      "subject": "docs: describe the demo in the README",
+      "local": true,
+      "remote_sha": null,
+      "sync": {
+        "kind": "local-only"
+      },
+      "last_push": null,
+      "upstream": null,
+      "upstream_gone": false,
+      "tracks_other": null,
+      "unpushed": 1,
+      "ahead": 1,
+      "worktree": {
+        "path": "/private/tmp/claude-501/-Users-sartori-Projects-matheussartori-novo/d042ed55-b5a4-4405-8a56-d8ffe39f42f2/scratchpad/wt/demo/feat-9-describe-the-demo-in-the-readme",
+        "dirty": 0,
+        "is_main": false,
+        "is_current": false
+      },
+      "in_integration": null,
+      "in_production": null,
+      "integration_commits": [],
+      "idle_days": 0,
+      "status": "in-progress"
+    },
+    {
+      "number": 3,
       "branch": "feat/billing-retry",
       "sha": "fb08d764b31af91ceb748acc2ff61607e56ccd1b",
       "subject": "test(billing): cover the retry window",
@@ -57,7 +85,7 @@
       "status": "needs-production"
     },
     {
-      "number": 3,
+      "number": 4,
       "branch": "feat/invite-limits",
       "sha": "01e072ed01c31a89c6bd8bb1cc0229e20b4a4090",
       "subject": "feat(invites): rate limit per account",
@@ -81,7 +109,7 @@
       "status": "in-progress"
     },
     {
-      "number": 4,
+      "number": 5,
       "branch": "feat/kart-drift",
       "sha": "534cec6f7681cc0f8482234a01f98e81a905655c",
       "subject": "feat(kart): drift tier 3",
@@ -107,7 +135,7 @@
       "status": "contaminated"
     },
     {
-      "number": 5,
+      "number": 6,
       "branch": "feat/landing-refresh",
       "sha": "7ed5c85f37062d8423448e9202862cd95492f27c",
       "subject": "fix(landing): image sizes",
@@ -135,7 +163,7 @@
       "status": "can-delete"
     },
     {
-      "number": 6,
+      "number": 7,
       "branch": "feat/lobby-timer",
       "sha": "b127fb04c46579af6a99dffc63eaa5aae6d2f58f",
       "subject": "fix(lobby): countdown off by one",
@@ -158,7 +186,7 @@
       "status": "in-progress"
     },
     {
-      "number": 7,
+      "number": 8,
       "branch": "feat/onboarding",
       "sha": "8e924ea44a9e2c1a5ba25f6b23ac2ec5f9e42771",
       "subject": "Merge feat/start-call into main",
@@ -181,7 +209,7 @@
       "status": "new"
     },
     {
-      "number": 8,
+      "number": 9,
       "branch": "feat/start-call",
       "sha": "270623bcb14181a6ced2da8423a81bc81778b3d2",
       "subject": "feat(calls): start a call from the lobby",
@@ -204,7 +232,7 @@
       "status": "can-delete"
     },
     {
-      "number": 9,
+      "number": 10,
       "branch": "fix/avatar-svg",
       "sha": "bcf7d1f6255b5c06afaf9d6590a550fe7ed5102a",
       "subject": "fix(avatar): strip scripts from SVG",

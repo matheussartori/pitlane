@@ -1,5 +1,6 @@
 // Mirrors the serde shapes of pit-core and the Tauri commands in src-tauri/src/lib.rs.
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -174,6 +175,75 @@ export interface CardList {
   problems: string[];
 }
 
+export type RunState = "starting" | "running" | "done" | "failed" | "stopped" | "interrupted";
+
+export interface Tokens {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+export interface Handoff {
+  status?: "done" | "partial" | "blocked";
+  summary?: string;
+  files_changed?: string[];
+  commits?: string[];
+  tests?: { command?: string; passed?: boolean; notes?: string };
+  next_steps?: string[];
+}
+
+export interface RunMeta {
+  id: string;
+  repo: string;
+  card: number;
+  card_title: string;
+  branch: string;
+  worktree: string;
+  agent: string;
+  model: string | null;
+  session_id: string;
+  pid: number | null;
+  state: RunState;
+  started_at: number;
+  ended_at: number | null;
+  cost_usd: number | null;
+  duration_ms: number | null;
+  turns: number | null;
+  tokens: Tokens;
+  handoff: Handoff | null;
+  error: string | null;
+  denied: string[];
+  resumed_from: string | null;
+}
+
+export type RunEvent =
+  | { kind: "started"; model: string; session: string }
+  | { kind: "text"; text: string }
+  | { kind: "tool"; id: string; name: string; detail: string }
+  | { kind: "tool-done"; id: string; ok: boolean; detail: string }
+  | { kind: "said"; text: string }
+  | { kind: "quota"; window: string; used: number; resets_at: number }
+  | { kind: "finished"; ok: boolean; cost_usd: number; duration_ms: number; turns: number; tokens: Tokens; handoff: Handoff | null; denied: string[] }
+  | { kind: "note"; text: string }
+  | { kind: "exited"; code: number | null; state: RunState };
+
+export const isLive = (s: RunState) => s === "starting" || s === "running";
+
+/** Live events from the daemon, pushed by the Tauri backend. Nothing in the browser preview. */
+export async function onRun(
+  onEvent: (run: string, i: number, event: RunEvent) => void,
+  onEnd: (run: string, meta: RunMeta | null) => void,
+): Promise<() => void> {
+  if (!inTauri) return () => {};
+  const a = await listen<{ run: string; i: number; event: RunEvent }>("run-event", (e) => onEvent(e.payload.run, e.payload.i, e.payload.event));
+  const b = await listen<{ run: string; meta: RunMeta | null }>("run-end", (e) => onEnd(e.payload.run, e.payload.meta));
+  return () => {
+    a();
+    b();
+  };
+}
+
 export interface RepoEntry {
   path: string;
   name: string;
@@ -204,6 +274,14 @@ export const api = {
   clean: (path: string, branches: string[]) => invoke<CleanOutcome[]>("clean", { path, branches }),
   undoClean: (path: string, branch: string) => invoke<UndoReport>("undo_clean", { path, branch }),
   cards: (path: string) => invoke<CardList>("cards_list", { path }),
+  runs: (path: string) => invoke<RunMeta[]>("runs_list", { path }),
+  runStart: (path: string, card: number) => invoke<RunMeta>("run_start", { path, card }),
+  runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
+  runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
+  runStop: (run: string) => invoke<void>("run_stop", { run }),
+  runTimeline: (run: string) => invoke<[number, RunEvent][]>("run_timeline", { run }),
+  runFollow: (run: string, from: number) => invoke<void>("run_follow", { run, from }),
+  quota: () => invoke<Extract<RunEvent, { kind: "quota" }>[]>("quota"),
   cardAdd: (path: string, title: string, body: string) => invoke<Card>("card_add", { path, title, body }),
   cardUpdate: (
     path: string,

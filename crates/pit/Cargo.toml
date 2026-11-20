@@ -13,6 +13,8 @@ pit-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+pitd.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread"] }
 terminal_size = "0.4"
 
 [dev-dependencies]

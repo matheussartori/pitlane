@@ -1,7 +1,9 @@
 // The shell: top bar, the current screen, the Tower. Inbox, Board and Lanes read the repository; Ledger arrives with runs.
 import { For, Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, type Card, type Lane, type RepoEntry, type Settings, type Yard } from "./api";
+import { api, isLive, onRun, type Card, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, type Yard } from "./api";
+import { LedgerView } from "./ledger";
+import { RunScreen } from "./run";
 import { BoardView, CardSheet, NewCardSheet } from "./board";
 import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
@@ -42,6 +44,7 @@ export default function App() {
   const [tab, setTabSignal] = createSignal<Tab>(savedTab());
   const setTab = (t: Tab) => {
     setTabSignal(t);
+    setRunView(null);
     history.replaceState(null, "", `#${t}`);
     try {
       localStorage.setItem(TAB_KEY, t);
@@ -50,6 +53,16 @@ export default function App() {
     }
   };
   const [cards, setCards] = createSignal<Card[] | null>(null);
+  const [runs, setRuns] = createSignal<RunMeta[] | null>(null);
+  const [quota, setQuota] = createSignal<Extract<RunEvent, { kind: "quota" }>[]>([]);
+  const runFromHash = () => {
+    const m = /^#run\/(.+)$/.exec(location.hash);
+    return m ? decodeURIComponent(m[1]!) : null;
+  };
+  const [runView, setRunView] = createSignal<string | null>(runFromHash());
+  const openRun = (id: string) => {
+    location.hash = `#run/${encodeURIComponent(id)}`;
+  };
   const [problems, setProblems] = createSignal<string[]>([]);
   const [yard, setYard] = createSignal<Yard | null>(null);
   const [fetching, setFetching] = createSignal(false);
@@ -121,6 +134,39 @@ export default function App() {
     }
   }
 
+  // Runs come from the daemon (or its records on disk). Live ones are followed, so their end
+  // refreshes the screens even when nobody has the run open.
+  let runsGen = 0;
+  async function loadRuns() {
+    const path = repo();
+    if (!path) return;
+    const gen = ++runsGen;
+    try {
+      const r = await api.runs(path);
+      if (gen !== runsGen || path !== repo()) return;
+      setRuns(r);
+      for (const m of r) if (isLive(m.state)) void api.runFollow(m.id, 0).catch(() => {});
+      setQuota(await api.quota());
+    } catch {
+      if (gen === runsGen) setRuns([]);
+    }
+  }
+
+  async function startRun(card: number) {
+    const path = repo();
+    if (!path) return;
+    try {
+      const m = await api.runStart(path, card);
+      void api.runFollow(m.id, 0).catch(() => {});
+      await loadRuns();
+      void loadCards();
+      setSheet(null);
+      openRun(m.id);
+    } catch (e) {
+      toast({ tone: "fail", title: `Card #${card} did not start`, body: msg(e) });
+    }
+  }
+
   async function switchTo(path: string) {
     setMenu(false);
     if (path === repo()) return;
@@ -128,6 +174,7 @@ export default function App() {
     setRepo(path);
     setYard(null);
     setCards(null);
+    setRuns(null);
     setProblems([]);
     setError(null);
     setFetchedAt(null);
@@ -135,6 +182,7 @@ export default function App() {
     setFetching(false);
     void api.selectRepo(path);
     void loadCards();
+    void loadRuns();
     await load(false); // local refs first: instant
     await load(true); // then fetch and GitHub
   }
@@ -164,15 +212,37 @@ export default function App() {
       setBooted(true);
     }
 
-    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    // The clock ticks every second while an agent runs, every 30 s otherwise.
+    const tick = setInterval(() => {
+      if ((runs() ?? []).some((r) => isLive(r.state)) || Date.now() - now() >= 30_000) setNow(Date.now());
+    }, 1000);
+    const offRun = await onRun(
+      () => {},
+      () => {
+        void loadRuns();
+        void loadCards();
+        void load(false);
+      },
+    );
+    const onHash = () => {
+      const r = runFromHash();
+      setRunView(r);
+      if (!r) {
+        const t = location.hash.replace(/^#\/?/, "");
+        if (isTab(t)) setTabSignal(t);
+      }
+    };
+    window.addEventListener("hashchange", onHash);
     // Coming back to the window: recheck local state (cheap, no network).
     const onFocus = () => {
       void loadCards();
+      void loadRuns();
       if (!fetching() && !sheet()) void load(false);
     };
     // Agents write cards through MCP while the app is open: pick them up within a few seconds.
     const poll = setInterval(() => {
       if (document.visibilityState === "visible" && (tab() === "inbox" || tab() === "board") && !sheet()) void loadCards();
+      if (document.visibilityState === "visible" && (runs() ?? []).some((r) => isLive(r.state))) void loadRuns();
     }, 4000);
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -196,6 +266,8 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     onCleanup(() => {
       clearInterval(tick);
+      offRun();
+      window.removeEventListener("hashchange", onHash);
       clearInterval(poll);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
@@ -256,7 +328,7 @@ export default function App() {
           </Show>
         </div>
         <nav class="tabs" aria-label="Screens" data-tauri-drag-region>
-          <button type="button" class="tab" aria-current={tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
+          <button type="button" class="tab" aria-current={!runView() && tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
             Inbox
             <Show when={asking() > 0}>
               <span class="count count-hot" title={`${asking()} open ${asking() === 1 ? "question" : "questions"}`}>
@@ -265,10 +337,10 @@ export default function App() {
               </span>
             </Show>
           </button>
-          <button type="button" class="tab" aria-current={tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
+          <button type="button" class="tab" aria-current={!runView() && tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
             Board
           </button>
-          <button type="button" class="tab" aria-current={tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
+          <button type="button" class="tab" aria-current={!runView() && tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
             Lanes
             <Show when={needs() > 0}>
               <span class="count count-hot" title={`${needs()} ${needs() === 1 ? "lane waits" : "lanes wait"} on you`}>
@@ -277,10 +349,31 @@ export default function App() {
               </span>
             </Show>
           </button>
-          <button type="button" class="tab" aria-current={tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
+          <button type="button" class="tab" aria-current={!runView() && tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
             Ledger
           </button>
         </nav>
+        <Show when={quota().length > 0}>
+          <div class="quota" aria-label="Claude Code usage, as of the last run">
+            <For each={quota()}>
+              {(q) => (
+                <div
+                  class="meter"
+                  data-level={q.used >= 0.95 ? "out" : q.used >= 0.7 ? "high" : undefined}
+                  title={`Claude Code, ${q.window === "five_hour" ? "5-hour" : q.window === "seven_day" ? "7-day" : q.window} window, as of the last run. Resets ${new Date(q.resets_at * 1000).toLocaleString()}.`}
+                >
+                  <div class="meter-head">
+                    {q.window === "five_hour" ? "Claude 5h" : q.window === "seven_day" ? "Claude 7d" : q.window}
+                    <b>{Math.round(q.used * 100)}%</b>
+                  </div>
+                  <div class="meter-track">
+                    <div class="meter-fill" style={{ "--v": String(q.used) }} />
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
       </header>
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
@@ -305,6 +398,20 @@ export default function App() {
           >
             {(path) => (
               <Switch>
+                <Match when={runView()}>
+                  {(id) => (
+                    <RunScreen
+                      meta={(runs() ?? []).find((r) => r.id === id())}
+                      yard={yard()}
+                      now={now()}
+                      onBack={() => setTab(tab() === "lanes" ? "board" : tab())}
+                      onChanged={() => {
+                        void loadRuns();
+                        void loadCards();
+                      }}
+                    />
+                  )}
+                </Match>
                 <Match when={tab() === "lanes"}>
                   <LanesView
                     yard={yard()}
@@ -353,12 +460,17 @@ export default function App() {
                     problems={problems()}
                     yard={yard()}
                     now={now()}
-                    onOpen={(id) => setSheet({ kind: "card", id })}
+                    runs={runs() ?? []}
+                    onOpen={(id) => {
+                      const live = (runs() ?? []).find((r) => r.card === id && isLive(r.state));
+                      if (live) openRun(live.id);
+                      else setSheet({ kind: "card", id });
+                    }}
                     onNew={() => setSheet({ kind: "new-card" })}
                   />
                 </Match>
                 <Match when={tab() === "ledger"}>
-                  <Later title="Ledger" body="Tokens, cost and time per card and per agent, read from the agents' own telemetry. It arrives with the first runs." onBack={() => setTab("lanes")} />
+                  <LedgerView runs={runs()} now={now()} onOpen={openRun} />
                 </Match>
               </Switch>
             )}
@@ -370,6 +482,12 @@ export default function App() {
                 card={card()}
                 yard={yard()}
                 now={now()}
+                runs={(runs() ?? []).filter((r) => r.card === card().id)}
+                onRun={() => void startRun(card().id)}
+                onOpenRun={(id) => {
+                  setSheet(null);
+                  openRun(id);
+                }}
                 onChanged={() => void loadCards()}
                 onClose={() => setSheet(null)}
               />
@@ -400,22 +518,10 @@ export default function App() {
           </Show>
         </main>
         <Show when={tab() !== "lanes"}>
-          <Tower yard={yard()} selected={selected()} onSelect={select} />
+          <Tower yard={yard()} runs={runs() ?? []} now={now()} selected={selected()} onSelect={select} onOpenRun={openRun} />
         </Show>
       </div>
       <Toasts />
-    </div>
-  );
-}
-
-function Later(props: { title: string; body: string; onBack: () => void }) {
-  return (
-    <div class="empty">
-      <div class="empty-title">{props.title} is next</div>
-      <p class="empty-body">{props.body}</p>
-      <button type="button" class="btn" onClick={props.onBack}>
-        Back to Lanes
-      </button>
     </div>
   );
 }

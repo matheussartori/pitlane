@@ -10,6 +10,7 @@ use pit_core::Repo;
 use pit_core::actions::{self, LocalUpdate, NewOptions};
 use pit_core::lanes::{self, Lane, Status, Sync, Yard, YardOptions};
 use pit_core::cards::{self, CardOut, CardPatch, CardState, NewCard, NewQuestion};
+use pit_core::runs::{Client, RunEvent, RunMeta, RunState};
 use pit_core::trash;
 
 mod mcp;
@@ -59,6 +60,36 @@ enum Cmd {
     Card(CardCmd),
     /// Serve the cards over MCP on stdio: claude mcp add pitlane -- pit mcp
     Mcp,
+    /// Run the daemon that owns agent runs (started on demand by pit and the app).
+    Daemon,
+    /// Have an agent work a card in the card's worktree, and follow it.
+    Run {
+        card: u32,
+        /// Start it and return; follow later with pit log.
+        #[arg(short, long)]
+        detach: bool,
+    },
+    /// Runs of this repository, newest first.
+    Runs {
+        #[arg(long)]
+        json: bool,
+    },
+    /// A run's events; -f keeps following until it ends.
+    Log {
+        run: String,
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Tell a running agent something without stopping it.
+    Say { run: String, text: String },
+    /// Stop a run: the agent ends its current step cleanly.
+    Stop { run: String },
+    /// Continue a finished or stopped run in the same session.
+    Resume {
+        run: String,
+        #[arg(short, long)]
+        detach: bool,
+    },
     /// Move a lane one stage forward: into integration, then into production.
     Ship {
         /// Defaults to the branch checked out here.
@@ -157,6 +188,12 @@ fn open(dir: Option<PathBuf>) -> Result<Repo> {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    if let Cmd::Daemon = cli.cmd {
+        let (_, home) = pit_core::default_homes();
+        let claude_bin = std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
+        tokio::runtime::Runtime::new()?.block_on(pitd::serve(pitd::Config { home, claude_bin }))?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Cmd::Mcp = cli.cmd {
         // The agent may start it anywhere; each tool call opens the repository it runs in.
         let dir = match cli.dir {
@@ -184,7 +221,63 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 print_yard(&y);
             }
         }
-        Cmd::Mcp => unreachable!("handled above"),
+        Cmd::Mcp | Cmd::Daemon => unreachable!("handled above"),
+        Cmd::Run { card, detach } => {
+            let mut c = daemon()?;
+            let v = c.call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card }))?;
+            let m: RunMeta = serde_json::from_value(v["run"].clone())?;
+            println!("{} run {} for #{} {}", paint(DONE, "✓"), m.id, m.card, m.card_title);
+            return follow_or_detach(&m.id, detach);
+        }
+        Cmd::Resume { run, detach } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "resume", "run": run }))?;
+            let m: RunMeta = serde_json::from_value(v["run"].clone())?;
+            println!("{} run {} resumes {}", paint(DONE, "✓"), m.id, run);
+            return follow_or_detach(&m.id, detach);
+        }
+        Cmd::Runs { json } => {
+            let v = daemon()?.call(serde_json::json!({ "op": "list", "repo": repo.root }))?;
+            let runs: Vec<RunMeta> = serde_json::from_value(v["runs"].clone())?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&runs)?);
+                return Ok(ExitCode::SUCCESS);
+            }
+            if runs.is_empty() {
+                println!("no runs yet. Start one: pit run <card>");
+            }
+            for m in &runs {
+                println!(
+                    "{}  {}  #{} {}  {}  {}",
+                    paint(MUTED, &m.id),
+                    state_word(m.state),
+                    m.card,
+                    m.card_title,
+                    paint(MUTED, &m.branch),
+                    paint(MUTED, &run_figures(m))
+                );
+            }
+        }
+        Cmd::Log { run, follow } => {
+            let mut c = daemon()?;
+            if follow {
+                return follow_run(&mut c, &run);
+            }
+            let end = c.follow(&run, 0, |_, e| {
+                print_event(&e);
+                true
+            })?;
+            if let Some(m) = end {
+                print_end(&m);
+            }
+        }
+        Cmd::Say { run, text } => {
+            daemon()?.call(serde_json::json!({ "op": "say", "run": run, "text": text }))?;
+            println!("{} sent; the agent reads it after its current step", paint(DONE, "✓"));
+        }
+        Cmd::Stop { run } => {
+            daemon()?.call(serde_json::json!({ "op": "stop", "run": run }))?;
+            println!("{} stopping {run}; the agent ends its current step", paint(DONE, "✓"));
+        }
         Cmd::Card(c) => return card(&repo, c),
         Cmd::New { branch, no_fetch, no_setup, card, json } => {
             if let Some(id) = card {
@@ -244,6 +337,87 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn daemon() -> Result<Client> {
+    let (_, home) = pit_core::default_homes();
+    Client::connect(&home, std::env::current_exe().ok().as_deref())
+}
+
+fn follow_or_detach(run: &str, detach: bool) -> Result<ExitCode> {
+    if detach {
+        println!("  follow with: pit log {run} -f");
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!("{}", paint(MUTED, &format!("  following. Ctrl-C leaves it running; pit stop {run} stops it")));
+    follow_run(&mut daemon()?, run)
+}
+
+fn follow_run(c: &mut Client, run: &str) -> Result<ExitCode> {
+    let end = c.follow(run, 0, |_, e| {
+        print_event(&e);
+        true
+    })?;
+    Ok(match end {
+        Some(m) => {
+            print_end(&m);
+            if m.state == RunState::Done { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        }
+        None => ExitCode::SUCCESS,
+    })
+}
+
+fn state_word(s: RunState) -> String {
+    match s {
+        RunState::Starting => paint(RUN, "starting"),
+        RunState::Running => paint(RUN, "running "),
+        RunState::Done => paint(DONE, "done    "),
+        RunState::Failed => paint(FAIL, "failed  "),
+        RunState::Stopped => paint(MUTED, "stopped "),
+        RunState::Interrupted => paint(ACCENT, "interrupted"),
+    }
+}
+
+fn run_figures(m: &RunMeta) -> String {
+    let mut parts = Vec::new();
+    if let Some(ms) = m.duration_ms {
+        parts.push(format!("{}m{:02}s", ms / 60_000, ms / 1000 % 60));
+    }
+    if let Some(t) = m.turns {
+        parts.push(format!("{t} turns"));
+    }
+    if let Some(c) = m.cost_usd {
+        parts.push(format!("${c:.2}"));
+    }
+    parts.join(", ")
+}
+
+fn print_event(e: &RunEvent) {
+    match e {
+        RunEvent::Started { model, .. } => println!("{} agent started ({model})", paint(RUN, "▸")),
+        RunEvent::Text { text } => println!("{}", text.trim_end()),
+        RunEvent::Tool { name, detail, .. } => println!("  {} {}", paint(MUTED, name), paint(MUTED, detail)),
+        RunEvent::ToolDone { ok: false, detail, .. } => println!("    {} {}", paint(FAIL, "✕"), paint(MUTED, detail)),
+        RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
+        RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
+        RunEvent::Note { text } => println!("{}", paint(MUTED, text)),
+        RunEvent::Finished { ok, handoff, denied, .. } => {
+            if let Some(s) = handoff.as_ref().and_then(|h| h.get("summary")).and_then(|s| s.as_str()) {
+                println!("\n{} {s}", if *ok { paint(DONE, "✓") } else { paint(FAIL, "✕") });
+            }
+            for d in denied {
+                println!("  {} not allowed: {d}", paint(ACCENT, "!"));
+            }
+        }
+        RunEvent::Exited { .. } => {}
+    }
+}
+
+fn print_end(m: &RunMeta) {
+    println!("{} {}  {}", state_word(m.state), m.id, paint(MUTED, &run_figures(m)));
+    if let Some(e) = &m.error {
+        println!("  {}", paint(FAIL, e.lines().next().unwrap_or_default()));
+    }
 }
 
 fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {

@@ -13,6 +13,7 @@ pub struct FlowFile {
     pub flow: Flow,
     pub worktree: WorktreeCfg,
     pub ship: ShipCfg,
+    pub run: RunCfg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +122,32 @@ impl WorktreeCfg {
     }
 }
 
+/// How agents run cards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RunCfg {
+    /// Extra tools the agent may use without asking, in Claude Code's syntax, e.g. "Bash(npm test:*)".
+    pub allow: Vec<String>,
+    pub max_turns: u32,
+    /// Claude Code model alias or name; empty: the CLI's default.
+    pub model: Option<String>,
+    /// Prefix of the branch made for a card that has no lane: `feat/` gives `feat/41-avatar-limit`.
+    pub branch_prefix: String,
+}
+
+impl Default for RunCfg {
+    fn default() -> Self {
+        Self { allow: Vec::new(), max_turns: 60, model: None, branch_prefix: "feat/".into() }
+    }
+}
+
+/// Tools every run may use: read and edit in its worktree, and git without leaving the branch.
+pub const RUN_BASE_TOOLS: [&str; 16] = [
+    "Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "TodoWrite", "NotebookEdit",
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+    "Bash(git add:*)", "Bash(git commit:*)", "Bash(ls:*)", "Bash(pwd)",
+];
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ShipCfg {
@@ -161,6 +188,12 @@ clone_deps = []             # copy-on-write clones, e.g. ["node_modules"]
 
 [ship]
 # check = "npm test"        # must pass before a lane ships to production
+
+[run]
+allow       = []            # extra tools for agents, e.g. ["Bash(npm test:*)", "Bash(npm run lint:*)"]
+max_turns   = 60
+branch_prefix = "feat/"     # a card without a lane runs on feat/<id>-<slug>
+# model     = "sonnet"
 "#;
 
 /// `*` matches any run of characters (slashes included); everything else is literal.

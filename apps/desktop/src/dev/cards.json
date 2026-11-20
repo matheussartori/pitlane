@@ -131,5 +131,16 @@
     "body": "",
     "open_questions": 0,
     "file": "0008-lobby-countdown-off-by-one.md"
+  },
+  {
+    "id": 9,
+    "title": "Describe the demo in the README",
+    "state": "review",
+    "lane": "feat/9-describe-the-demo-in-the-readme",
+    "created": "2026-11-20T18:55:19Z",
+    "updated": "2026-11-20T18:55:31Z",
+    "body": "## Goal\n\nThe README says only \"demo\". Replace it with one sentence that says this is a demo repository for Pitlane, then commit.\n\n## Acceptance\n\n- README.md has exactly one sentence describing the repository.\n- The change is committed on the current branch.",
+    "open_questions": 0,
+    "file": "0009-describe-the-demo-in-the-readme.md"
   }
 ]

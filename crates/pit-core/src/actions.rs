@@ -149,6 +149,25 @@ pub fn new_lane(repo: &Repo, branch: &str, opts: NewOptions) -> Result<NewReport
     })
 }
 
+/// The worktree of an existing local branch, creating one under the flow's root when it has none.
+pub fn ensure_worktree(repo: &Repo, branch: &str) -> Result<PathBuf> {
+    if let Some(w) = repo.worktrees()?.into_iter().find(|w| w.branch.as_deref() == Some(branch) && !w.prunable) {
+        return Ok(w.path);
+    }
+    if repo.git.rev_parse(&format!("refs/heads/{branch}"))?.is_none() {
+        bail!("no local branch {branch}");
+    }
+    let path = repo.flow.worktree.path_for(&repo.home, &repo.name, branch);
+    if path.exists() {
+        bail!("{} already exists but is not a worktree of {branch}", path.display());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    repo.git.run(&["worktree", "add", "--quiet", &path.to_string_lossy(), branch])?;
+    Ok(path)
+}
+
 /// Copies a file or directory. `clone` asks for copy-on-write (APFS clonefile, or reflink).
 fn copy_tree(src: &Path, dst: &Path, clone: bool) -> Result<()> {
     if let Some(parent) = dst.parent() {

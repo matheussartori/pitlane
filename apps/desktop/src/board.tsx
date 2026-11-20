@@ -1,7 +1,8 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
 import { For, Show, createMemo, createSignal } from "solid-js";
-import { api, cardStates, type Card, type CardState, type Yard } from "./api";
-import { columnEmpty, columnTitle, columns, laneOf, openQuestions, place, stateLabel } from "./cards";
+import { api, cardStates, isLive, type Card, type CardState, type RunMeta, type Yard } from "./api";
+import { clock, elapsed, money, runStateView } from "./run";
+import { columnEmpty, columnTitle, columns, openQuestions, place, stateLabel } from "./cards";
 import { Icon } from "./icons";
 import { QuestionBlock } from "./inbox";
 import { track } from "./lane";
@@ -20,7 +21,12 @@ function stopNote(nodes: { stage: string; state: string; figure?: string }[]): s
 
 /** The lane's track at card size: four stops and the one that matters, in words. */
 function MiniTrack(props: { card: Card; yard: Yard | null; now: number }) {
-  const lane = () => laneOf(props.card, props.yard);
+  return <LaneTrack branch={props.card.lane} yard={props.yard} now={props.now} />;
+}
+
+/** The track of the lane on `branch`, small, with the one stop that matters in words. */
+export function LaneTrack(props: { branch: string | undefined; yard: Yard | null; now: number }) {
+  const lane = () => (props.branch ? props.yard?.lanes.find((l) => l.branch === props.branch) : undefined);
   return (
     <Show when={lane() && props.yard ? lane() : null}>
       {(l) => (
@@ -52,9 +58,11 @@ export function BoardView(props: {
   problems: string[];
   yard: Yard | null;
   now: number;
+  runs: RunMeta[];
   onOpen: (id: number) => void;
   onNew: () => void;
 }) {
+  const liveRun = (id: number) => props.runs.find((r) => r.card === id && isLive(r.state));
   const placed = createMemo(() => (props.cards ?? []).map((c) => ({ card: c, p: place(c, props.yard) })));
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);
   const needs = () => byColumn("needs").length;
@@ -116,10 +124,22 @@ export function BoardView(props: {
                           onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), props.onOpen(card.id))}
                         >
                           <div class="card-top">
-                            <span class="chip" data-state={p.chip}>
-                              <Icon name={p.icon} small />
-                              {p.label}
-                            </span>
+                            <Show
+                              when={liveRun(card.id)}
+                              fallback={
+                                <span class="chip" data-state={p.chip}>
+                                  <Icon name={p.icon} small />
+                                  {p.label}
+                                </span>
+                              }
+                            >
+                              {(r) => (
+                                <span class="chip" data-state="running">
+                                  <Icon name="run" small />
+                                  Running <span class="figure">{clock(elapsed(r(), props.now))}</span>
+                                </span>
+                              )}
+                            </Show>
                             <span class="card-id">#{card.id}</span>
                           </div>
                           <div class="card-title">{card.title}</div>
@@ -155,6 +175,9 @@ export function CardSheet(props: {
   card: Card;
   yard: Yard | null;
   now: number;
+  runs: RunMeta[];
+  onRun: () => void;
+  onOpenRun: (id: string) => void;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -170,6 +193,7 @@ export function CardSheet(props: {
     state() !== props.card.state ||
     lane().trim() !== (props.card.lane ?? "");
   const open = () => openQuestions([props.card]);
+  const live = () => props.runs.find((r) => isLive(r.state));
   const answered = () => (props.card.questions ?? []).filter((q) => q.answer != null);
 
   async function save() {
@@ -216,12 +240,40 @@ export function CardSheet(props: {
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
             {dirty() ? "Cancel" : "Close"}
           </button>
-          <button type="button" class="btn btn-primary" disabled={busy() || !dirty() || !title().trim()} aria-busy={busy()} onClick={save}>
-            <Show when={busy()}>
-              <Spinner />
+          <Show
+            when={!dirty()}
+            fallback={
+              <button type="button" class="btn btn-primary" disabled={busy() || !title().trim()} aria-busy={busy()} onClick={save}>
+                <Show when={busy()}>
+                  <Spinner />
+                </Show>
+                Save
+              </button>
+            }
+          >
+            <Show
+              when={live()}
+              fallback={
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  disabled={busy() || open().length > 0 || props.card.state === "done"}
+                  title={open().length > 0 ? "Answer the open questions first" : "Claude Code works the card in its own worktree"}
+                  onClick={props.onRun}
+                >
+                  <Icon name="run" small />
+                  Run
+                </button>
+              }
+            >
+              {(r) => (
+                <button type="button" class="btn btn-primary" onClick={() => props.onOpenRun(r().id)}>
+                  <Icon name="run" small />
+                  Open the run <span class="figure">{clock(elapsed(r(), props.now))}</span>
+                </button>
+              )}
             </Show>
-            Save
-          </button>
+          </Show>
         </>
       }
     >
@@ -291,6 +343,26 @@ export function CardSheet(props: {
             </div>
           )}
         </For>
+      </Show>
+      <Show when={props.runs.length > 0}>
+        <h3 class="sheet-sub">Runs</h3>
+        <ul class="card-runs">
+          <For each={props.runs}>
+            {(r) => (
+              <li>
+                <button type="button" class="card-run" onClick={() => props.onOpenRun(r.id)}>
+                  <span class="chip" data-state={runStateView[r.state].chip}>
+                    <Icon name={runStateView[r.state].icon} small />
+                    {runStateView[r.state].label}
+                  </span>
+                  <span class="card-run-summary">{r.handoff?.summary ?? r.error?.split("\n")[0] ?? r.branch}</span>
+                  <span class="figure">{clock(elapsed(r, props.now))}</span>
+                  <span class="figure">{money(r.cost_usd)}</span>
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
       </Show>
       <Show when={answered().length > 0}>
         <h3 class="sheet-sub">Decisions</h3>

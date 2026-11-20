@@ -5,6 +5,9 @@
 /* Hallmark · pre-emit critique: P4 H5 E4 S5 R4 V3 · weakest: V, the first Hallmark run on this app so there is no log to rotate against; the track is new to the product rather than borrowed from a dashboard kit */
 /* Hallmark · waive 39b · article.card at 121px holds a title, the reason it waits and its lane track · a board card is a tile you open, the design system's own card, not a control */
 /* Hallmark · finish-review: subagent · recapture once (scroll container clipped the full pages), then fix · 8 findings · 7 resolved 1 partial (the gap between short lane names and the track stays: the track keeps one column across groups) · gap: none */
+/* Hallmark · waive 72 · .tower-title clips a long branch name with text-overflow: ellipsis inside its row · the text range only runs past the Tower as the hidden tail behind the ellipsis */
+/* Hallmark · dismissed F25 · the desktop window has a 900px minimum width (minWidth in tauri.conf.json), so no phone width exists to fit */
+/* Hallmark · Run and Ledger (build) · finish-review: subagent · fix · 8 findings · 8 resolved (fixture paths repaired for the old 160-character cut) · gap: none */
 /* Hallmark · Board and Inbox (build) · finish-review: subagent · fix · 8 findings · 8 resolved, plus dark mode captured and checked · gap: none */
 
 /* Layout only: tokens and components come from design/ (tokens.css, base.css, components.css). */
@@ -39,6 +42,7 @@ body { overflow: clip; cursor: default; -webkit-user-select: none; user-select: 
 .main { overflow: auto; padding: var(--space-lg) var(--space-xl) var(--space-2xl); min-width: 0; }
 .tower-pane { border-left: 1px solid var(--color-rule); background: var(--color-paper-2); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 .tower-pane .tower { overflow: auto; }
+.tower-pane .tower-main { overflow: hidden; } /* long lane names end in an ellipsis inside the row */
 .tower-row[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--color-accent); }
 .tower-foot { padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--color-rule); color: var(--color-muted); font-size: var(--text-xs); }
 .tower-foot b { color: var(--color-accent-text); font-weight: var(--weight-strong); }
@@ -180,6 +184,75 @@ body { overflow: clip; cursor: default; -webkit-user-select: none; user-select: 
 .other { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); margin-top: var(--space-2xs); }
 .install { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 .install code { font: var(--weight-regular) var(--text-sm)/1 var(--font-mono); color: var(--color-ink); background: var(--color-paper-sunk); box-shadow: var(--ring); border-radius: var(--radius-md); padding: var(--space-xs) var(--space-sm); }
+
+/* ---------- Quota meters in the top bar: real figures from the last run ---------- */
+.quota { display: flex; gap: var(--space-md); flex-shrink: 0; }
+.quota .meter { width: 92px; }
+@media (max-width: 1100px) { .quota { display: none; } }
+
+/* ---------- Run ---------- */
+.run-screen { width: 100%; max-width: 1280px; margin-inline: auto; display: flex; flex-direction: column; gap: var(--space-sm); height: 100%; min-height: 0; }
+.run-screen > .run-body { flex: 1; }
+.main:has(.run-screen) { overflow: hidden; padding-bottom: var(--space-md); }
+.back .icon { transform: rotate(90deg); }
+.run-clock { font: var(--weight-strong) var(--text-md)/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
+.run-where { display: flex; gap: var(--space-md); flex-wrap: wrap; color: var(--color-muted); font-size: var(--text-sm); }
+.run-where .branch { font-family: var(--font-mono); color: var(--color-ink-2); }
+.run-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: var(--space-lg); min-height: 0; align-items: start; }
+.timeline { overflow: auto; min-height: 0; max-height: 100%; display: grid; align-content: start; gap: var(--space-xs); padding: var(--space-sm) var(--space-md) var(--space-lg); background: var(--color-paper-sunk); border-radius: var(--radius-lg); box-shadow: var(--ring); }
+.tl-text { font-size: var(--text-md); line-height: 1.6; color: var(--color-ink); white-space: pre-wrap; max-width: 80ch; margin-block: var(--space-2xs); }
+.tl-note { font-size: var(--text-xs); color: var(--color-muted); display: flex; align-items: center; gap: var(--space-xs); }
+.tl-working { margin-top: var(--space-xs); }
+.tl-tool { display: grid; grid-template-columns: 72px minmax(0, 1fr) 16px; gap: var(--space-xs); align-items: center; font-size: var(--text-sm); }
+.tl-tool-name { color: var(--color-muted); }
+.tl-tool-detail { font: var(--weight-regular) var(--text-sm)/1.4 var(--font-mono); color: var(--color-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-tool-mark { display: inline-flex; color: var(--color-muted); }
+.tl-tool[data-state="ok"] .tl-tool-mark { color: var(--color-done); }
+.tl-tool[data-state="fail"] .tl-tool-mark, .tl-tool-fail { color: var(--color-fail); }
+.tl-tool-fail { grid-column: 2 / 4; font: var(--weight-regular) var(--text-xs)/1.4 var(--font-mono); }
+.tl-said { display: grid; gap: var(--space-3xs); padding-left: var(--space-sm); box-shadow: inset 2px 0 0 var(--color-accent); font-size: var(--text-md); color: var(--color-ink); margin-block: var(--space-2xs); }
+.tl-said b { font-size: var(--text-xs); color: var(--color-accent-text); font-weight: var(--weight-strong); }
+.tl-finished { display: flex; gap: var(--space-xs); align-items: center; font-size: var(--text-sm); color: var(--color-ink); margin-top: var(--space-xs); }
+.tl-finished .icon { margin-top: var(--space-3xs); color: var(--color-fail); }
+.tl-finished[data-ok] .icon { color: var(--color-done); }
+.run-side { display: grid; align-content: start; gap: var(--space-lg); overflow: auto; min-height: 0; max-height: 100%; }
+.figures { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm) var(--space-md); }
+.figures > div { display: grid; gap: var(--space-3xs); }
+.figures dt { font-size: var(--text-xs); color: var(--color-muted); }
+.figures dd { margin: 0; display: grid; gap: var(--space-3xs); font: var(--weight-strong) var(--text-lg)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink); }
+.figures dd small { font: var(--weight-regular) var(--text-xs)/1.2 var(--font-body); color: var(--color-muted); }
+.side-steps { display: grid; gap: var(--space-3xs); min-width: 0; }
+.side-steps code { overflow-wrap: anywhere; }
+.run-where .mini-track { margin-inline: var(--space-2xs); }
+.handoff { display: grid; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-ink-2); }
+.side-title { font: var(--weight-strong) var(--text-md)/1.2 var(--font-body); color: var(--color-ink); }
+.side-sub { font: var(--weight-strong) var(--text-sm)/1.2 var(--font-body); color: var(--color-ink); margin-top: var(--space-2xs); }
+.side-hint { font-size: var(--text-xs); color: var(--color-muted); }
+.side-list { margin: 0; padding-left: var(--space-md); display: grid; gap: var(--space-3xs); }
+.side-list.mono { list-style: none; padding-left: 0; font: var(--weight-regular) var(--text-xs)/1.5 var(--font-mono); overflow-wrap: anywhere; }
+.side-line { display: flex; gap: var(--space-xs); align-items: flex-start; }
+.side-line > .icon { margin-top: var(--space-3xs); color: var(--color-done); flex-shrink: 0; }
+.side-line code { font: var(--weight-regular) var(--text-xs)/1.4 var(--font-mono); }
+.composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); }
+/* Narrow windows: the figures and the handoff stack under the log instead of disappearing. */
+@media (max-width: 60rem) { .run-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; } .run-side { max-height: 38vh; } }
+
+/* ---------- Card runs and Ledger ---------- */
+.card-runs { list-style: none; margin: 0; padding: 0; display: grid; }
+.card-run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--space-sm); align-items: center; width: 100%; min-height: var(--control-h-lg); padding: var(--space-2xs) 0; border: 0; border-top: 1px solid var(--color-rule); background: none; color: var(--color-ink-2); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.card-run:hover { color: var(--color-ink); }
+.card-run:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.card-run-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ledger { width: 100%; max-width: 1280px; margin-inline: auto; display: grid; gap: var(--space-lg); align-content: start; }
+.ledger-table td.num, .ledger-table th.end { text-align: right; }
+.ledger-table td.num { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.ledger-table td.muted { color: var(--color-muted); font-size: var(--text-sm); white-space: nowrap; }
+.ledger-table tbody tr { cursor: pointer; }
+.ledger-table tbody tr:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.ledger-table tfoot th, .ledger-table tfoot td { padding: var(--space-sm); font-weight: var(--weight-strong); color: var(--color-ink); border-top: 1px solid var(--color-rule-strong); text-align: left; }
+.ledger-table tfoot td.num { text-align: right; }
+.ledger-card { font-weight: var(--weight-strong); color: var(--color-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- Dialogs ---------- */
 dialog.sheet { border: 0; padding: 0; color: var(--color-ink); background: var(--color-paper-2); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); width: min(560px, calc(100% - 48px)); }
