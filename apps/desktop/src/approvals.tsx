@@ -105,7 +105,7 @@ export function ApprovalBlock(props: {
         <Show
           when={denying()}
           fallback={
-            <button type="button" class="option" disabled={busy()} onClick={startDeny}>
+            <button type="button" class="option option-deny" disabled={busy()} onClick={startDeny}>
               <Show when={props.keys}>
                 <span class="kbd">4</span>
               </Show>

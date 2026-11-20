@@ -24,7 +24,8 @@ export function laneView(lane: Lane, yard: Yard): LaneView {
         needsYou: true,
       };
     case "needs-production":
-      return { chip: "needs", icon: "needs", label: `Ready for ${yard.production}`, needsYou: true };
+      // A release decision, not an alarm: calm until you choose to ship.
+      return { chip: "queued", icon: "ship", label: `Ready for ${yard.production}`, needsYou: false };
     case "shipped-dirty":
       return { chip: "needs", icon: "needs", label: "Shipped, uncommitted", needsYou: true };
     case "can-delete":
@@ -120,20 +121,23 @@ export const pad2 = (n: number) => String(n).padStart(2, "0");
 
 // ---------------------------------------------------------------- groups: who acts next
 
-export type Group = "waiting" | "progress" | "shipped" | "parked";
-export const groupOrder: Group[] = ["waiting", "progress", "shipped", "parked"];
+export type Group = "waiting" | "progress" | "release" | "shipped" | "parked";
+export const groupOrder: Group[] = ["waiting", "progress", "release", "shipped", "parked"];
 export const groupTitle: Record<Group, string> = {
   waiting: "Waiting on you",
   progress: "In progress",
+  release: "Ready to release",
   shipped: "Shipped",
   parked: "Parked",
 };
 
+/** Waiting on you is only what is stuck without you; a lane ready for production waits for a release, calmly. */
 export function group(l: Lane): Group {
-  if (l.status === "contaminated" || l.status === "needs-production" || l.status === "shipped-dirty") return "waiting";
+  if (l.status === "contaminated" || l.status === "shipped-dirty") return "waiting";
   if (l.sync.kind === "behind" || l.sync.kind === "diverged" || l.tracks_other) return "waiting";
   if (l.status === "can-delete" || l.status === "shipped") return "shipped";
   if (l.status === "stale") return "parked";
+  if (l.status === "needs-production") return "release";
   return "progress";
 }
 

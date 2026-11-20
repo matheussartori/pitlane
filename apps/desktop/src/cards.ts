@@ -54,12 +54,7 @@ export function place(card: Card, yard: Yard | null): Placement {
   if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: "Blocked", why: firstLine(card.body) };
   if (lane && yard && group(lane) === "waiting") {
     const n = next(lane, yard);
-    const label =
-      lane.status === "needs-production"
-        ? `Ready for ${yard.production}`
-        : lane.status === "contaminated"
-          ? `Mixed with ${yard.integration ?? "integration"}`
-          : "Lane needs you";
+    const label = lane.status === "contaminated" ? `Mixed with ${yard.integration ?? "integration"}` : "Lane needs you";
     return {
       column: "needs",
       chip: lane.status === "contaminated" ? "failed" : "needs",

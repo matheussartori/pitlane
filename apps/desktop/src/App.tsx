@@ -386,7 +386,13 @@ export default function App() {
   });
 
   const current = (): RepoEntry | undefined => settings().repos.find((r) => r.path === repo());
-  const needs = () => yard()?.lanes.filter((l) => queuedGroup(l, jobs()) === "waiting").length ?? 0;
+  const reviewing = () => (cards() ?? []).filter((c) => c.state === "review" && c.lane).map((c) => c.lane!);
+  const needs = () =>
+    yard()?.lanes.filter(
+      (l) =>
+        queuedGroup(l, jobs(), reviewing()) === "waiting" ||
+        (runs() ?? []).some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0),
+    ).length ?? 0;
   const approvals = () =>
     (runs() ?? []).filter((r) => isLive(r.state)).flatMap((r) => r.waiting.map((approval) => ({ run: r, approval })));
   const asking = () => openQuestions(cards() ?? []).length + approvals().length;
@@ -587,6 +593,7 @@ export default function App() {
                     onClean={() => setSheet({ kind: "clean" })}
                     onNew={() => setSheet({ kind: "new" })}
                     jobs={jobs()}
+                    reviewing={reviewing()}
                     onQueueAll={(ls, to) => void queueAll(ls, to)}
                     onDequeue={(id) => void dequeue(id)}
                   />
@@ -696,7 +703,7 @@ export default function App() {
           <Tower
             yard={yard()}
             runs={runs() ?? []}
-            reviewing={(cards() ?? []).filter((c) => c.state === "review" && c.lane).map((c) => c.lane!)}
+            reviewing={reviewing()}
             jobs={jobs()}
             now={now()}
             selected={selected()}

@@ -3,10 +3,10 @@
 <meta name="description" content="Tokens, componentes e padrões do Pitlane, o orquestrador de agentes de código.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
 <style>
 /* Hallmark · shape: app screen · genre: modern-minimal · theme: custom · idea: "a pit wall: every car in view, only the ones that need you light up" · vibe: "asphalt, signal orange, calm until it matters"
- * paper: oklch(17% 0.012 255) · accent: oklch(76% 0.165 58) · display: Archivo 600 · body: Archivo · outlier: JetBrains Mono (code, terminal, figures)
+ * paper: oklch(16% 0.006 255) · accent: oklch(74% 0.15 58) · display: Geist 600 · body: Geist 13px · outlier: Geist Mono (code, terminal, branches, figures)
  * nav: top bar with four destinations and the Tower docked right · signature: the Tower, stable lanes with live figures · states: loading, empty, error, full
  * axes: dark/grotesk-heavy/warm · posture: restrained · modes: dark+light · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 · weakest: H, a specimen sheet has no single hero; the composed workspace opens the page instead */
@@ -91,7 +91,7 @@ body { padding-left: max(var(--space-md), env(safe-area-inset-left, 0px)); paddi
 @media (max-width: 640px) { .type-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2xs); } }
 .t-display { font: var(--weight-display) var(--text-display)/1.05 var(--font-display); letter-spacing: var(--tracking-display); }
 .t-title { font: var(--weight-display) var(--text-2xl)/1.15 var(--font-display); letter-spacing: var(--tracking-display); }
-.t-lane { font: var(--weight-display) var(--text-3xl)/1 var(--font-display); color: var(--color-muted); }
+.t-lane { font: var(--weight-regular) var(--text-3xl)/1 var(--font-mono); color: var(--color-muted); }
 .t-panel { font: var(--weight-strong) var(--text-xl)/1.2 var(--font-body); }
 .t-prose { font-size: var(--text-lg); line-height: var(--leading-prose); max-width: 60ch; }
 .t-ui { font-size: var(--text-md); }
@@ -325,16 +325,16 @@ body { padding-left: max(var(--space-md), env(safe-area-inset-left, 0px)); paddi
     <div class="sub">
       <h3>Tipografia</h3>
       <div class="type-rows">
-        <div class="type-row"><code>Archivo 600, 44</code><span class="t-display">Nothing needs you</span></div>
-        <div class="type-row"><code>Archivo 600, 22</code><span class="t-title">Board</span></div>
-        <div class="type-row"><code>Archivo 600, 28, lanes</code><span class="t-lane">01 02 03 04</span></div>
-        <div class="type-row"><code>Archivo 600, 18</code><span class="t-panel">Walkthrough</span></div>
-        <div class="type-row"><code>Archivo 400, 16, prosa</code><span class="t-prose">The agent capped avatars at 256 KB in validate.ts and added a test for the exact limit. SVG uploads are now refused.</span></div>
-        <div class="type-row"><code>Archivo 400, 14, UI</code><span class="t-ui">Rename CallBar to CallDock</span></div>
-        <div class="type-row"><code>Archivo 400, 12, meta</code><span class="t-meta">waiting 3m, 2 questions</span></div>
-        <div class="type-row"><code>JetBrains Mono 400, 13</code><code class="t-mono">npm test -w @amity/core -- validate</code></div>
+        <div class="type-row"><code>Geist 600, 18, empty state</code><span class="t-display">Nothing needs you</span></div>
+        <div class="type-row"><code>Geist 600, 16, screen title</code><span class="t-title">Board</span></div>
+        <div class="type-row"><code>Geist Mono 400, 12, lanes</code><span class="t-lane">01 02 03 04</span></div>
+        <div class="type-row"><code>Geist 500, 15, sheet title</code><span class="t-panel">Walkthrough</span></div>
+        <div class="type-row"><code>Geist 400, 14, prosa</code><span class="t-prose">The agent capped avatars at 256 KB in validate.ts and added a test for the exact limit. SVG uploads are now refused.</span></div>
+        <div class="type-row"><code>Geist 400, 13, UI</code><span class="t-ui">Rename CallBar to CallDock</span></div>
+        <div class="type-row"><code>Geist 400, 11, meta</code><span class="t-meta">waiting 3m, 2 questions</span></div>
+        <div class="type-row"><code>Geist Mono 400, 12</code><code class="t-mono">npm test -w @amity/core -- validate</code></div>
       </div>
-      <p>Duas famílias com papéis fixos. O display (Archivo 600, tracking fechado) só em títulos de tela, números de lane e o grande momento de cada tela, nunca em botão ou dado. Mono só para código, terminal e números que se comparam (com <code>tabular-nums</code>). A escala é 1.15 a partir de 14 px, e prosa sobe para 16 px.</p>
+      <p>Uma família, Geist, em tamanhos pequenos: 13px na interface, 16 no maior título de tela, 18 só no estado vazio. Peso 600 só em títulos; 500 para ênfase. Geist Mono para código, terminal, nomes de branch, números de lane e figuras que se comparam. Tamanho nunca sinaliza importância; uma marca pequena, sim.</p>
     </div>
 
     <div class="grid-2">

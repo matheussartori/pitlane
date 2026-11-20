@@ -4,7 +4,7 @@ import { For, Show, createEffect, type JSX } from "solid-js";
 import { isLive, isOpenJob, type Lane, type RunMeta, type ShipJob, type Yard } from "./api";
 import { clock, elapsed } from "./run";
 import { Icon } from "./icons";
-import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, track, worktreeName, type Group } from "./lane";
+import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, syncView, track, worktreeName, type Group } from "./lane";
 import { ErrorLine, Spinner } from "./ui";
 
 export interface LanesProps {
@@ -26,6 +26,8 @@ export interface LanesProps {
   jobs: ShipJob[];
   onQueueAll: (lanes: Lane[], to: string) => void;
   onDequeue: (id: string) => void;
+  /** Branches whose card waits in review. */
+  reviewing: string[];
   onNew: () => void;
 }
 
@@ -40,7 +42,7 @@ export function LanesView(props: LanesProps) {
     const y = props.yard;
     if (!y) return [];
     return groupOrder
-      .map((g) => ({ key: g, lanes: y.lanes.filter((l) => queuedGroup(l, props.jobs) === g) }))
+      .map((g) => ({ key: g, lanes: y.lanes.filter((l) => queuedGroup(l, props.jobs, props.reviewing) === g) }))
       .filter((g) => g.lanes.length > 0);
   };
   const waiting = () => groups().find((g) => g.key === "waiting")?.lanes.length ?? 0;
@@ -132,7 +134,7 @@ export function LanesView(props: LanesProps) {
                       <th scope="rowgroup" colspan="5">
                         <span class="group-head">
                           <GroupTitle group={g.key} count={g.lanes.length} />
-                          <Show when={g.key === "waiting" && readyForMain().length > 1}>
+                          <Show when={g.key === "release" && readyForMain().length > 1}>
                             <button type="button" class="btn" onClick={() => props.onQueueAll(readyForMain(), y().production)}>
                               <Icon name="ship" small />
                               Queue all {readyForMain().length} for {y().production}
@@ -190,8 +192,9 @@ export function LanesView(props: LanesProps) {
 }
 
 /** A lane in the merge queue is in progress, not waiting on you; one the queue stopped on a conflict is. */
-export function queuedGroup(l: Lane, jobs: ShipJob[]): Group {
+export function queuedGroup(l: Lane, jobs: ShipJob[], reviewing: string[] = []): Group {
   const mine = jobs.filter((j) => j.branch === l.branch);
+  if (reviewing.includes(l.branch)) return "waiting"; // its card waits on your review
   if (mine.some(isOpenJob)) return "progress";
   if (mine.some((j) => j.state === "conflict" || j.state === "failed")) return "waiting";
   return group(l);
@@ -211,7 +214,7 @@ function GroupTitle(props: { group: Group; count: number }) {
 function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLTableRowElement) => void }) {
   const props = p.props;
   const l = p.lane;
-  const needs = () => queuedGroup(l, props.jobs) === "waiting";
+  const needs = () => queuedGroup(l, props.jobs, props.reviewing) === "waiting";
   // The lane's place in the merge queue: in line, shipping, or the conflict that stopped it.
   const job = () => {
     const mine = p.props.jobs.filter((j) => j.branch === l.branch);
@@ -459,8 +462,7 @@ export function Tower(props: {
   const needs = () =>
     props.yard?.lanes.filter(
       (l) =>
-        queuedGroup(l, props.jobs) === "waiting" ||
-        props.reviewing.includes(l.branch) ||
+        queuedGroup(l, props.jobs, props.reviewing) === "waiting" ||
         props.runs.some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0),
     ).length ?? 0;
   return (
@@ -476,9 +478,8 @@ export function Tower(props: {
         <For each={props.yard?.lanes ?? []}>
           {(l) => {
             const v = () => laneView(l, props.yard!);
-            const waiting = () => queuedGroup(l, props.jobs) === "waiting" || props.reviewing.includes(l.branch);
+            const waiting = () => queuedGroup(l, props.jobs, props.reviewing) === "waiting";
             const chip = () => (waiting() ? (v().chip === "failed" ? "failed" : "needs") : v().chip);
-            const sync = l.sync;
             const run = () => props.runs.find((r) => r.branch === l.branch && isLive(r.state));
             return (
               <div
@@ -493,16 +494,13 @@ export function Tower(props: {
                 <span class="tower-lane">{pad2(l.number)}</span>
                 <span class="tower-main">
                   <span class="tower-title">{l.branch}</span>
-                  <span class="tower-sub">
-                    <span>{l.idle_days}d</span>
+                  <span class="tower-sub" title={syncView(l, props.now).detail}>
+                    <span>{syncView(l, props.now).label.toLowerCase()}</span>
                     <Show when={l.worktree && l.worktree.dirty > 0}>
-                      <span>+{l.worktree!.dirty}</span>
+                      <span>+{l.worktree!.dirty} changed</span>
                     </Show>
-                    <Show when={sync.kind === "ahead"}>
-                      <span>{(sync as { ahead: number }).ahead}↑</span>
-                    </Show>
-                    <Show when={sync.kind === "behind"}>
-                      <span>{(sync as { behind: number }).behind}↓</span>
+                    <Show when={l.idle_days > 0}>
+                      <span>{l.idle_days}d</span>
                     </Show>
                   </span>
                 </span>
@@ -510,10 +508,13 @@ export function Tower(props: {
                   <Show
                     when={run()}
                     fallback={
-                      <span class="chip" data-state={chip()}>
-                        <Icon name={waiting() && v().chip !== "failed" ? "needs" : v().icon} small />
-                        {waiting() ? "You" : v().chip === "done" ? "Done" : v().chip === "running" ? "Work" : "Idle"}
-                      </span>
+                      // Quiet unless it matters: a mark only when the lane needs you, failed or is done.
+                      <Show when={waiting() || v().chip === "done" || v().chip === "failed"}>
+                        <span class="chip" data-state={chip()}>
+                          <Icon name={waiting() && v().chip !== "failed" ? "needs" : v().icon} small />
+                          {waiting() ? "You" : v().chip === "done" ? "Done" : "Failed"}
+                        </span>
+                      </Show>
                     }
                   >
                     {(r) => (
