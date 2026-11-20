@@ -89,19 +89,26 @@
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watch);
   else watch();
-  // The secondary side bar held the chat, which Pitlane turns off: close it while it shows nothing.
+  // The secondary side bar held the chat, which Pitlane turns off: close it while it shows nothing
+  // but that (VS Code's own ⌥⌘B, the one way that works in every layout).
+  function hideAux() {
+    var close = document.querySelector(".part.auxiliarybar .codicon-auxiliarybar-close");
+    if (close) return close.click();
+    var ev = new KeyboardEvent("keydown", { key: "b", code: "KeyB", metaKey: true, altKey: true, bubbles: true, cancelable: true });
+    try {
+      Object.defineProperty(ev, "keyCode", { get: function () { return 66; } });
+      Object.defineProperty(ev, "which", { get: function () { return 66; } });
+    } catch (e) {}
+    (document.activeElement || document.body).dispatchEvent(ev);
+  }
   var tries = 0;
   var closer = setInterval(function () {
     tries++;
     var aux = document.querySelector(".part.auxiliarybar");
     var text = aux ? aux.innerText.trim() : "";
-    // Empty, or only the chat Pitlane turned off.
     if (aux && aux.offsetWidth > 0 && (text === "" || text === "Chat" || /^Drag a view here/.test(text))) {
-      var close = aux.querySelector('.codicon-auxiliarybar-close, [aria-label*="Hide Secondary Side Bar"]');
-      if (close) {
-        close.click();
-        clearInterval(closer);
-      }
+      hideAux();
+      clearInterval(closer);
     }
     if (tries > 20) clearInterval(closer);
   }, 500);
