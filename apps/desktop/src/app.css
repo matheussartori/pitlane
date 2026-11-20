@@ -26,14 +26,38 @@ html, body, #root { height: 100%; }
 body { overflow: clip; cursor: default; -webkit-user-select: none; user-select: none; }
 .selectable, input { -webkit-user-select: text; user-select: text; }
 
-.app { display: grid; grid-template-rows: var(--bar-h) minmax(0, 1fr); height: 100vh; }
-
-/* ---------- Top bar: also the title bar, with room for the traffic lights ---------- */
-.bar { display: flex; align-items: center; gap: var(--space-xs); padding-inline: 80px var(--space-sm); border-bottom: 1px solid var(--color-rule); background: var(--color-paper); min-width: 0; }
-.bar .tabs { flex: 1; min-width: 0; }
-.bar .tab { position: relative; } /* keeps each badge's screen-reader text inside the scrolling tab row */
-.wordmark { font: var(--weight-display) var(--text-md)/1 var(--font-display); letter-spacing: var(--tracking-display); color: var(--color-ink); display: inline-flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
-.wordmark .icon { color: var(--color-accent-text); }
+/* Hallmark · Shell (redesign) · finish-review: self, recaptured dark, light and native · a frame with the traffic lights and a rail of screens around one inset panel; Linear's inverted L, Arc's inset */
+/* ---------- The shell: a dark frame (a drag strip on top, the rail at the side) around one inset panel ---------- */
+body { background: var(--color-frame); }
+.app { display: grid; grid-template-columns: 56px minmax(0, 1fr); grid-template-rows: 38px minmax(0, 1fr); height: 100vh; background: var(--color-frame); }
+.strip { grid-column: 1 / -1; grid-row: 1; }
+.navrail { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); min-height: 0; padding: var(--space-2xs) 0 var(--space-sm); }
+.navrail-items { display: flex; flex-direction: column; align-items: center; gap: var(--space-3xs); }
+.navrail-sep { width: 20px; height: 1px; margin-block: var(--space-2xs); background: var(--color-rule); }
+.navrail-foot { display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); margin-top: auto; }
+.navrail-item { position: relative; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: var(--radius-lg); background: transparent; color: var(--color-muted); cursor: pointer; }
+.navrail-item .icon { width: 18px; height: 18px; stroke-width: 1.5; }
+.navrail-item:hover { color: var(--color-ink); background: color-mix(in oklch, var(--color-ink) 7%, transparent); }
+.navrail-item[aria-current="page"] { color: var(--color-ink); background: color-mix(in oklch, var(--color-ink) 11%, transparent); }
+.navrail-item:focus-visible, .navrail-repo-btn:focus-visible, .navrail-quota:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.navrail-count { position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; padding-inline: var(--space-2xs); border-radius: var(--radius-pill); background: var(--color-paper-3); color: var(--color-ink-2); font: var(--weight-strong) 10px/16px var(--font-mono); font-variant-numeric: tabular-nums; text-align: center; box-shadow: 0 0 0 2px var(--color-frame); }
+.navrail-count[data-hot] { background: var(--color-accent); color: var(--color-accent-ink); }
+/* The name and key, beside the rail on hover: instant on focus, a breath on hover. */
+.navrail-item::after { content: attr(data-tip); position: absolute; left: calc(100% + 8px); top: 50%; z-index: 300; padding: var(--space-2xs) var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-3); color: var(--color-ink); box-shadow: var(--shadow-pop); font: var(--weight-regular) var(--text-sm)/1 var(--font-body); white-space: pre; pointer-events: none; opacity: 0; transform: translate(-2px, -50%); transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out); }
+.navrail-item:hover::after { opacity: 1; transform: translate(0, -50%); transition-delay: 350ms; }
+.navrail-item:focus-visible::after { opacity: 1; transform: translate(0, -50%); transition: none; }
+.navrail-repo { display: grid; place-items: center; margin-bottom: var(--space-2xs); }
+.navrail-repo-btn { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--radius-lg); background: var(--color-paper-3); color: var(--color-ink); font: var(--weight-display) var(--text-sm)/1 var(--font-body); text-transform: capitalize; cursor: pointer; box-shadow: inset 0 0 0 1px var(--color-rule); }
+.navrail-repo-btn:hover { box-shadow: inset 0 0 0 1px var(--color-rule-strong); }
+.anchor > .pop.navrail-pop { top: 0; left: calc(100% + 8px); }
+.navrail-quota { display: flex; gap: var(--space-2xs); align-items: flex-end; height: 24px; padding: var(--space-3xs) var(--space-xs); border: 0; border-radius: var(--radius-md); background: transparent; cursor: pointer; }
+.navrail-quota:hover { background: color-mix(in oklch, var(--color-ink) 7%, transparent); }
+.navrail-meter { position: relative; width: 4px; height: 18px; border-radius: 2px; background: var(--color-paper-3); overflow: hidden; }
+.navrail-meter-fill { position: absolute; inset: 0; background: var(--color-ink-2); transform-origin: bottom; transform: scaleY(var(--v, 0)); }
+.navrail-meter[data-level="high"] .navrail-meter-fill { background: var(--color-accent); }
+.navrail-meter[data-level="out"] .navrail-meter-fill { background: var(--color-fail); }
+.panel { grid-column: 2; grid-row: 2; display: grid; min-width: 0; min-height: 0; margin: 0 var(--space-xs) var(--space-xs) 0; border-radius: 10px; background: var(--color-paper); box-shadow: 0 0 0 1px var(--color-rule); overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .navrail-item::after { transition: none; } }
 .repo { display: inline-flex; align-items: center; gap: var(--space-2xs); height: var(--control-h); padding-inline: var(--space-xs); border-radius: var(--radius-md); color: var(--color-ink-2); font-size: var(--text-sm); border: 0; background: transparent; box-shadow: var(--ring); cursor: pointer; flex-shrink: 0;
   transition: color var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out); }
 .repo:hover { box-shadow: var(--ring-strong); color: var(--color-ink); }

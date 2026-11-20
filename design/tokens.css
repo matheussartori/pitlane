@@ -9,6 +9,7 @@
   --color-paper-2: oklch(18.5% 0.007 255);
   --color-paper-3: oklch(22% 0.008 255);
   --color-paper-sunk: oklch(13.5% 0.006 255);
+  --color-frame: oklch(11.5% 0.006 255); /* the window around the content panel, darkest */
   --color-rule: oklch(25.5% 0.008 255);
   --color-rule-strong: oklch(33% 0.01 255);
 
@@ -79,7 +80,7 @@
   /* Depth: lightness and an inset hairline on dark; no drop shadows. */
   --ring: inset 0 0 0 1px var(--color-rule);
   --ring-strong: inset 0 0 0 1px var(--color-rule-strong);
-  --ring-field: inset 0 0 0 1px var(--color-muted); /* field edges: 3:1 against the surface */
+  --ring-field: inset 0 0 0 1px var(--color-rule-strong); /* field edges: a hairline on a filled field (the fill says "field") */
   --shadow-pop: 0 0 0 1px var(--color-rule-strong);
 
   /* Motion: state, never decoration. */
@@ -97,6 +98,7 @@
   --color-paper-2: oklch(96.8% 0.003 255);
   --color-paper-3: oklch(94% 0.004 255);
   --color-paper-sunk: oklch(99% 0.003 255);
+  --color-frame: oklch(95.2% 0.004 255); /* the window around the content panel */
   --color-rule: oklch(91% 0.005 255);
   --color-rule-strong: oklch(83% 0.007 255);
   --color-ink: oklch(21% 0.014 255);
@@ -129,6 +131,7 @@
     --color-paper-2: oklch(96.8% 0.003 255);
     --color-paper-3: oklch(94% 0.004 255);
     --color-paper-sunk: oklch(99% 0.003 255);
+    --color-frame: oklch(95.2% 0.004 255); /* the window around the content panel */
     --color-rule: oklch(91% 0.005 255);
     --color-rule-strong: oklch(83% 0.007 255);
     --color-ink: oklch(21% 0.014 255);

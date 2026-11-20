@@ -10,9 +10,9 @@ import { RunScreen } from "./run";
 import { BoardView, CardSheet, NewCardSheet } from "./board";
 import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
-import { Icon } from "./icons";
+import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
-import { TerminalScreen, openTerminal, startTerminals, terminalTabs, terminalsWanting } from "./terminals";
+import { TerminalScreen, openTerminal, startTerminals, terminalsWanting } from "./terminals";
 import { CodeScreen, openInCode, prewarmCode, rethemeCode } from "./code";
 import { SettingsScreen } from "./settings";
 import { loadPrefs, prefs } from "./prefs";
@@ -470,6 +470,8 @@ export default function App() {
     ).length ?? 0;
   const approvals = () =>
     (runs() ?? []).filter((r) => isLive(r.state)).flatMap((r) => r.waiting.map((approval) => ({ run: r, approval })));
+  /** The screen in view, for the rail (a run or a review sits over the screen it came from). */
+  const here = (t: Tab) => !runView() && reviewView() == null && tab() === t;
   const asking = () => openQuestions(cards() ?? []).length + approvals().length;
   const openCard = () => {
     const s = sheet();
@@ -482,19 +484,22 @@ export default function App() {
 
   return (
     <div class="app">
-      <header class="bar" data-tauri-drag-region>
-        <span class="wordmark" data-tauri-drag-region>
-          <Icon name="mark" />
-          Pitlane
-        </span>
-        <div class="anchor">
-          <button type="button" class="repo" aria-haspopup="menu" aria-expanded={menu()} onClick={() => setMenu(!menu())}>
-            <Icon name="branch" small />
-            {current()?.name ?? "Add repository"}
-            <Icon name="chev" small />
+      <div class="strip" data-tauri-drag-region />
+      <nav class="navrail" aria-label="Pitlane">
+        <div class="anchor navrail-repo">
+          <button
+            type="button"
+            class="navrail-repo-btn"
+            aria-haspopup="menu"
+            aria-expanded={menu()}
+            aria-label={current() ? `Repository: ${current()!.name}` : "Add a repository"}
+            title={current()?.name ?? "Add a repository"}
+            onClick={() => setMenu(!menu())}
+          >
+            {(current()?.name ?? "+").slice(0, 2)}
           </button>
           <Show when={menu()}>
-            <div class="pop" role="menu">
+            <div class="pop navrail-pop" role="menu">
               <For each={settings().repos}>
                 {(r) => (
                   <div
@@ -540,74 +545,54 @@ export default function App() {
             </div>
           </Show>
         </div>
-        <nav class="tabs" aria-label="Screens" data-tauri-drag-region>
-          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}>
-            Inbox
-            <Show when={asking() > 0}>
-              <span class="count count-hot" title={`${asking()} open ${asking() === 1 ? "question" : "questions"}`}>
-                {asking()}
-                <span class="visually-hidden"> open {asking() === 1 ? "question" : "questions"}</span>
-              </span>
-            </Show>
-          </button>
-          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "board" ? "page" : undefined} onClick={() => setTab("board")}>
-            Board
-          </button>
-          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "lanes" ? "page" : undefined} onClick={() => setTab("lanes")}>
-            Lanes
-            <Show when={needs() > 0}>
-              <span class="count count-hot" title={`${needs()} ${needs() === 1 ? "lane waits" : "lanes wait"} on you`}>
-                {needs()}
-                <span class="visually-hidden"> {needs() === 1 ? "lane waits" : "lanes wait"} on you</span>
-              </span>
-            </Show>
-          </button>
-          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "ledger" ? "page" : undefined} onClick={() => setTab("ledger")}>
-            Ledger
-          </button>
-          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "code" ? "page" : undefined} onClick={() => setTab("code")}>
-            Code
-          </button>
-          <button type="button" class="tab" aria-current={!runView() && reviewView() == null && tab() === "terminal" ? "page" : undefined} onClick={() => setTab("terminal")}>
-            Terminal
-            <Show when={terminalTabs().length > 0}>
-              <span class={terminalsWanting() > 0 ? "count count-hot" : "count"} title={terminalsWanting() > 0 ? `${terminalsWanting()} waiting for you` : undefined}>
-                {terminalsWanting() > 0 ? terminalsWanting() : terminalTabs().length}
-              </span>
-            </Show>
-          </button>
-        </nav>
-        <Show when={quota() && quota()!.events.length > 0 ? quota() : null}>
-          {(qa) => (
-          <button
-            type="button"
-            class="quota"
-            aria-label={`Usage of the ${qa().account} account, as of its last run. Open Accounts`}
-            onClick={() => setSheet({ kind: "accounts" })}
-          >
-            <For each={qa().events}>
-              {(q) => (
-                <div
-                  class="meter"
-                  data-level={q.used >= 0.95 ? "out" : q.used * 100 >= (q.window === "seven_day" ? qa().seven_day_at : qa().five_hour_at) ? "high" : undefined}
-                  title={`${qa().account}: ${q.window === "five_hour" ? "5-hour" : q.window === "seven_day" ? "7-day" : q.window} window, as of its last run. Resets ${new Date(q.resets_at * 1000).toLocaleString()}.`}
-                >
-                  <div class="meter-head">
-                    {q.window === "five_hour" ? "Claude 5h" : q.window === "seven_day" ? "Claude 7d" : q.window}
-                    <b>{Math.round(q.used * 100)}%</b>
-                  </div>
-                  <div class="meter-track">
-                    <div class="meter-fill" style={{ "--v": String(q.used) }} />
-                  </div>
-                </div>
-              )}
-            </For>
-          </button>
-          )}
-        </Show>
-      </header>
+        <div class="navrail-items">
+          <RailItem icon="inbox" label="Inbox" keys="⌥1" current={here("inbox")} onClick={() => setTab("inbox")} count={asking()} hot />
+          <RailItem icon="board" label="Board" keys="⌥2" current={here("board")} onClick={() => setTab("board")} />
+          <RailItem icon="lanes" label="Lanes" keys="⌥3" current={here("lanes")} onClick={() => setTab("lanes")} count={needs()} hot />
+          <RailItem icon="ledger" label="Ledger" keys="⌥4" current={here("ledger")} onClick={() => setTab("ledger")} />
+          <div class="navrail-sep" />
+          <RailItem icon="code" label="Code" current={here("code")} onClick={() => setTab("code")} />
+          <RailItem
+            icon="term"
+            label="Terminal"
+            keys="⌘T new"
+            current={here("terminal")}
+            onClick={() => setTab("terminal")}
+            count={terminalsWanting() > 0 ? terminalsWanting() : 0}
+            hot
+          />
+        </div>
+        <div class="navrail-foot">
+          <Show when={quota() && quota()!.events.length > 0 ? quota() : null}>
+            {(qa) => (
+              <button
+                type="button"
+                class="navrail-quota"
+                aria-label={`Usage of the ${qa().account} account. Open Accounts`}
+                title={qa()
+                  .events.map((q) => `${q.window === "five_hour" ? "5-hour" : q.window === "seven_day" ? "7-day" : q.window}: ${Math.round(q.used * 100)}%`)
+                  .join("\n")}
+                onClick={() => setSheet({ kind: "accounts" })}
+              >
+                <For each={qa().events}>
+                  {(q) => (
+                    <span
+                      class="navrail-meter"
+                      data-level={q.used >= 0.95 ? "out" : q.used * 100 >= (q.window === "seven_day" ? qa().seven_day_at : qa().five_hour_at) ? "high" : undefined}
+                    >
+                      <span class="navrail-meter-fill" style={{ "--v": String(q.used) }} />
+                    </span>
+                  )}
+                </For>
+              </button>
+            )}
+          </Show>
+          <RailItem icon="settings" label="Settings" keys="⌘," current={tab() === "settings"} onClick={() => setTab("settings")} />
+        </div>
+      </nav>
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
+      <div class="panel">
       <div class="body" data-tower={!["lanes", "terminal", "code", "settings"].includes(tab()) ? "" : undefined}>
         <main class="main" data-flush={(tab() === "terminal" || tab() === "code" || tab() === "settings") && !runView() && reviewView() == null ? "" : undefined}>
           <Show
@@ -829,7 +814,29 @@ export default function App() {
           />
         </Show>
       </div>
+      </div>
       <Toasts />
     </div>
+  );
+}
+
+/** One screen in the rail: its icon, a count when something waits, its name and key on hover. */
+function RailItem(props: { icon: IconName; label: string; keys?: string; current: boolean; onClick: () => void; count?: number; hot?: boolean }) {
+  return (
+    <button
+      type="button"
+      class="navrail-item"
+      aria-current={props.current ? "page" : undefined}
+      aria-label={props.count ? `${props.label}, ${props.count} waiting` : props.label}
+      data-tip={props.keys ? `${props.label}  ${props.keys}` : props.label}
+      onClick={props.onClick}
+    >
+      <Icon name={props.icon} />
+      <Show when={props.count}>
+        <span class="navrail-count" data-hot={props.hot ? "" : undefined}>
+          {props.count! > 9 ? "9+" : props.count}
+        </span>
+      </Show>
+    </button>
   );
 }

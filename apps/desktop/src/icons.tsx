@@ -29,6 +29,11 @@ const paths: Record<string, () => JSX.Element> = {
   "tabs-top": () => (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>),
   "tabs-side": () => (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>),
   code: () => <path d="M9 7l-5 5 5 5M15 7l5 5-5 5" />,
+  inbox: () => (<><path d="M4 13l2.4-7.2A1 1 0 0 1 7.35 5h9.3a1 1 0 0 1 .95.8L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z" /><path d="M4 13h4.5l1 2h5l1-2H20" /></>),
+  board: () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9.5 4.5v15M14.5 4.5v15" /></>),
+  lanes: () => (<><path d="M4 7h16M4 12h16M4 17h10" /></>),
+  ledger: () => (<><path d="M6.5 4.5h11a1 1 0 0 1 1 1v14h-12a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z" /><path d="M4.5 17.5a2 2 0 0 1 2-2h12M9 9h6" /></>),
+  settings: () => (<><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>),
   folder: () => <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
 };
 

@@ -11,7 +11,7 @@ Live specimen: `design/index.html`. Research behind it: `docs/research/ux-resear
 
 ## Tokens
 `design/tokens.css` is the source of truth. Roles:
-- Ground: `--color-paper` (near-black graphite, hue 255, low chroma), `-2` panels and cards, `-3` hover and menus, `-sunk` terminal, diff, inputs
+- Frame: `--color-frame` around the content panel. Ground: `--color-paper` (near-black graphite, hue 255, low chroma), `-2` panels and cards, `-3` hover and menus, `-sunk` terminal, diff, inputs
 - Ink: `--color-ink`, `--color-ink-2`, `--color-muted`; rules `--color-rule`, `--color-rule-strong`
 - Accent `--color-accent` (signal orange, hue 58) means "your move" only: the one primary button, focus, and small marks (a 2px stripe, an icon and its word, a lane number). Never a fill behind a row or a card. Under 2% of a screen
 - States: `--color-run`, `--color-done`, `--color-fail` (+ `-wash`). Never colour alone: icon + word + colour
@@ -26,7 +26,7 @@ Live specimen: `design/index.html`. Research behind it: `docs/research/ux-resear
 - Inputs sit in `paper-sunk` with a ring; focus is an outline, never a border change
 
 ## Product patterns (see the specimen)
-- Shell: top bar (wordmark, repo, Inbox / Board / Lanes / Ledger / Code / Terminal, ⌘K, quota meters) + the Tower docked right (folded away on Lanes, Code and Terminal)
+- Shell: no title bar. A frame (`--color-frame`, one step darker than the panel) holds a 38px drag strip on top, where the traffic lights sit, and a 56px rail at the side: the repository as a 32px tile (its first letters; the menu of repositories opens beside it), the screens as 18px outline icons in 36px targets (Inbox, Board, Lanes, Ledger; a rule; Code, Terminal) with a count badge when something waits (accent when it waits on you), and at the foot the Claude quota as two thin bars and Settings. Hover names the screen and its key beside the rail. Everything else sits in one inset panel: 8px from the frame, 10px radius, a hairline. Research: docs/research/ui-trends.md
 - The Tower (signature): a compact list like a terminal's tab list. Each row: the number in small mono, the branch, a mono sub-line (idle days, dirty files, ahead/behind). A row says nothing at the right unless it matters: "You" with its icon in accent, a run's clock, Failed, Done. No row is ever filled with colour. Never reorders on activity
 - State marks (`.chip`): an icon and a word in the state's colour, no fill, no outline
 - Board groups by who acts next (Needs you, Backlog, In progress, Landed); "By stage" is the alternate lens. Cards that need you carry a 2px accent stripe on the left and their mark in accent, never a wash or a full ring. A card linked to a lane carries the track at card size (8px stops) with the one stop that matters in words (next: main, mixed in dev, 1↓)
