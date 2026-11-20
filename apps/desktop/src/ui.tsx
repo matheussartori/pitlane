@@ -1,6 +1,27 @@
 // Small building blocks: modal sheet, toasts, spinner.
-import { For, Show, createSignal, onMount, type JSX } from "solid-js";
+import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { Icon } from "./icons";
+
+/** A menu or popover that closes like any other: a click outside it, Escape, or the window
+ *  losing focus. Call during a component's setup; `box` is the element holding the trigger and the menu. */
+export function dismissable(box: () => HTMLElement | undefined, open: () => boolean, close: () => void) {
+  const onDown = (e: PointerEvent) => {
+    const b = box();
+    if (open() && b && !b.contains(e.target as Node)) close();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (open() && e.key === "Escape") close();
+  };
+  const onBlur = () => open() && close();
+  document.addEventListener("pointerdown", onDown, true);
+  document.addEventListener("keydown", onKey, true);
+  window.addEventListener("blur", onBlur);
+  onCleanup(() => {
+    document.removeEventListener("pointerdown", onDown, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("blur", onBlur);
+  });
+}
 
 export function Spinner() {
   return <span class="spinner" role="status" aria-label="Working" />;

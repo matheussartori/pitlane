@@ -13,7 +13,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { files, onTerm, openExternal, terms, type Lane, type TermInfo } from "./api";
 import { openInCode } from "./code";
 import { Icon } from "./icons";
-import { toast } from "./ui";
+import { dismissable, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -1086,6 +1086,8 @@ function FindBar(props: { term: number; onClose: () => void }) {
 
 export function TerminalScreen(props: { repo: string; repoName: string; lanes: Lane[] }) {
   const [menu, setMenu] = createSignal(false);
+  let menuBox: HTMLDivElement | undefined;
+  dismissable(() => menuBox, menu, () => setMenu(false));
   const [finding, setFinding] = createSignal(false);
   const places = () => [
     { cwd: props.repo, label: props.repoName, sub: "Repository", icon: "folder" },
@@ -1200,7 +1202,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
             <Show when={st.side === "left"}>
               <span class="terms-title">Terminals</span>
             </Show>
-            <div class="anchor">
+            <div class="anchor" ref={menuBox}>
               <button type="button" class="btn btn-ghost btn-icon" aria-label="New terminal" aria-expanded={menu()} title="New terminal (⌘T)" onClick={() => setMenu(!menu())}>
                 <Icon name="plus" small />
               </button>

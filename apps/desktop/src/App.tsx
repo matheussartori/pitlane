@@ -17,7 +17,7 @@ import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from 
 import { SettingsScreen } from "./settings";
 import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
-import { Toasts, toast } from "./ui";
+import { Toasts, dismissable, toast } from "./ui";
 
 type Tab = "inbox" | "board" | "lanes" | "ledger" | "code" | "terminal" | "settings";
 type SheetState =
@@ -98,6 +98,8 @@ export default function App() {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [sheet, setSheet] = createSignal<SheetState>(null);
   const [menu, setMenu] = createSignal(false);
+  let repoBox: HTMLDivElement | undefined;
+  dismissable(() => repoBox, menu, () => setMenu(false));
   const [booted, setBooted] = createSignal(false);
   const [checkingOut, setCheckingOut] = createSignal<string | null>(null);
 
@@ -242,6 +244,9 @@ export default function App() {
     setReviewView(null);
     setTab("code");
   }
+
+  // A screen change closes the repository menu.
+  createEffect(on(tab, () => setMenu(false), { defer: true }));
 
   // VS Code loads in the background on the repository, so the Code tab opens at once.
   createEffect(on(repo, (r) => r && prewarmCode(r)));
@@ -489,67 +494,69 @@ export default function App() {
 
   return (
     <div class="app">
-      <div class="strip" data-tauri-drag-region />
-      <nav class="navrail" aria-label="Pitlane">
-        <div class="anchor navrail-repo">
-          <button
-            type="button"
-            class="navrail-repo-btn"
-            aria-haspopup="menu"
-            aria-expanded={menu()}
-            aria-label={current() ? `Repository: ${current()!.name}` : "Add a repository"}
-            title={current()?.name ?? "Add a repository"}
-            onClick={() => setMenu(!menu())}
-          >
-            {(current()?.name ?? "+").slice(0, 2)}
-          </button>
-          <Show when={menu()}>
-            <div class="pop navrail-pop" role="menu">
-              <For each={settings().repos}>
-                {(r) => (
+      <div class="strip" data-tauri-drag-region>
+          <div class="anchor strip-repo" ref={repoBox}>
+            <button
+              type="button"
+              class="strip-repo-btn"
+              aria-haspopup="menu"
+              aria-expanded={menu()}
+              title={current() ? `Switch repository (${shortPath(current()!.path)})` : "Add a repository"}
+              onClick={() => setMenu(!menu())}
+            >
+              <Icon name="folder" small />
+              <span class="strip-repo-name">{current()?.name ?? "Add a repository"}</span>
+              <Icon name="chev" small />
+            </button>
+            <Show when={menu()}>
+              <div class="pop strip-pop" role="menu">
+                <For each={settings().repos}>
+                  {(r) => (
+                    <div
+                      class="menu-item"
+                      role="menuitem"
+                      tabindex="0"
+                      aria-current={r.path === repo()}
+                      onClick={() => switchTo(r.path)}
+                      onKeyDown={(e) => e.key === "Enter" && switchTo(r.path)}
+                    >
+                      <Icon name="folder" small />
+                      <span class="repo-entry">
+                        <span class="repo-name">{r.name}</span>
+                        <span class="repo-path" title={r.path}>
+                          {shortPath(r.path)}
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                </For>
+                <Show when={settings().repos.length > 0}>
+                  <div class="menu-sep" />
+                </Show>
+                <Show when={repo()}>
                   <div
                     class="menu-item"
                     role="menuitem"
                     tabindex="0"
-                    aria-current={r.path === repo()}
-                    onClick={() => switchTo(r.path)}
-                    onKeyDown={(e) => e.key === "Enter" && switchTo(r.path)}
+                    onClick={() => {
+                      setMenu(false);
+                      setSheet({ kind: "accounts" });
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && (setMenu(false), setSheet({ kind: "accounts" }))}
                   >
-                    <Icon name="branch" small />
-                    <span class="repo-entry">
-                      <span class="repo-name">{r.name}</span>
-                      <span class="repo-path" title={r.path}>
-                        {shortPath(r.path)}
-                      </span>
-                    </span>
+                    <Icon name="person" small />
+                    Accounts
                   </div>
-                )}
-              </For>
-              <Show when={settings().repos.length > 0}>
-                <div class="menu-sep" />
-              </Show>
-              <Show when={repo()}>
-                <div
-                  class="menu-item"
-                  role="menuitem"
-                  tabindex="0"
-                  onClick={() => {
-                    setMenu(false);
-                    setSheet({ kind: "accounts" });
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && (setMenu(false), setSheet({ kind: "accounts" }))}
-                >
-                  <Icon name="person" small />
-                  Accounts
+                </Show>
+                <div class="menu-item" role="menuitem" tabindex="0" onClick={addRepo} onKeyDown={(e) => e.key === "Enter" && addRepo()}>
+                  <Icon name="plus" small />
+                  Add repository
                 </div>
-              </Show>
-              <div class="menu-item" role="menuitem" tabindex="0" onClick={addRepo} onKeyDown={(e) => e.key === "Enter" && addRepo()}>
-                <Icon name="plus" small />
-                Add repository
               </div>
-            </div>
-          </Show>
-        </div>
+            </Show>
+          </div>
+      </div>
+      <nav class="navrail" aria-label="Pitlane">
         <div class="navrail-items">
           <RailItem icon="inbox" label="Inbox" keys="⌥1" current={here("inbox")} onClick={() => setTab("inbox")} count={asking()} hot />
           <RailItem icon="board" label="Board" keys="⌥2" current={here("board")} onClick={() => setTab("board")} />
