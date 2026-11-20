@@ -396,11 +396,19 @@ export const vscode = {
   /** Pitlane's colours for VS Code's dark and light themes, written into its settings. */
   theme: (t: { dark: Record<string, string>; light: Record<string, string> }) => invoke<void>("vscode_theme", t),
   /** Loads VS Code on `folder` out of sight, so the Code tab opens at once. */
-  prewarm: (folder: string, w: number, h: number) => invoke<void>("vscode_prewarm", { folder, w, h }),
-  show: (folder: string, r: { x: number; y: number; w: number; h: number }) => invoke<void>("vscode_show", { folder, ...r }),
+  prewarm: (folder: string, w: number, h: number, bg: string) => invoke<void>("vscode_prewarm", { folder, w, h, bg }),
+  /** Puts VS Code on the tab; true when it is already drawn, else it comes in by itself (onVscodeReady). */
+  show: (folder: string, r: { x: number; y: number; w: number; h: number }, bg: string) => invoke<boolean>("vscode_show", { folder, ...r, bg }),
   hide: () => invoke<void>("vscode_hide"),
   open: (path: string, line?: number, col?: number) => invoke<void>("vscode_open", { path, line: line ?? null, col: col ?? null }),
 };
+
+/** VS Code finished drawing on a folder. Nothing in the browser preview. */
+export async function onVscodeReady(cb: (folder: string) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  return listen<{ folder: string }>("vscode-ready", (e) => cb(e.payload.folder));
+}
+
 
 /** Terminal output and exits. Nothing in the browser preview. */
 export async function onTerm(onData: (id: number, data: string) => void, onExit: (id: number, code: number) => void): Promise<() => void> {

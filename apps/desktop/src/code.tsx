@@ -1,7 +1,7 @@
 // Code: VS Code (code-server, bundled with Pitlane) over the tab, on the repository or a lane's
 // worktree. Files opened elsewhere in Pitlane (a terminal path, Review, a run) open here at their line.
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
-import { vscode, type Lane } from "./api";
+import { onVscodeReady, vscode, type Lane } from "./api";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
 
@@ -137,12 +137,15 @@ export function prewarmCode(repo: string) {
   setTimeout(() => {
     void vscode
       .theme(theme())
-      .then(() => vscode.prewarm(repo, window.innerWidth, Math.max(300, window.innerHeight - 76)))
+      .then(() => vscode.prewarm(repo, window.innerWidth, Math.max(300, window.innerHeight - 76), ground()))
       .catch(() => {
         warmed = null; // it says why when the tab opens
       });
-  }, 1200);
+  }, 300);
 }
+
+/** The editor's ground, painted under VS Code while it loads, so nothing flashes white. */
+const ground = () => hex(getComputedStyle(document.documentElement).getPropertyValue("--color-paper-sunk").trim());
 
 // ---------------------------------------------------------------- the folder: the repository or a lane
 function PlacePicker(props: { places: { root: string; label: string }[]; root: string; repo: string; onPick: (root: string) => void }) {
@@ -196,6 +199,10 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
   ];
   const root = () => rootSig() ?? props.repo;
   const [state, setState] = createSignal<"starting" | "ready" | "failed">("starting");
+  // "Opening VS Code" only when it takes long enough to notice.
+  const [slow, setSlow] = createSignal(false);
+  const slowTimer = setTimeout(() => setSlow(true), 400);
+  onCleanup(() => clearTimeout(slowTimer));
   const [why, setWhy] = createSignal("");
   let covered = false;
   let alive = true;
@@ -207,8 +214,8 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
   const place = async () => {
     if (!alive || covered) return;
     try {
-      await vscode.show(root(), rect());
-      if (alive) setState("ready");
+      const ready = await vscode.show(root(), rect(), ground());
+      if (alive && ready) setState("ready");
     } catch (e) {
       setWhy(msg(e));
       setState("failed");
@@ -246,30 +253,34 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       else void place();
     });
     mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
+    let offReady: (() => void) | null = null;
+    void onVscodeReady((folder) => folder === root() && setState("ready")).then((off) => (alive ? (offReady = off) : off()));
     const onRequest = () => void openPending();
     window.addEventListener("pitlane-code-open", onRequest);
     onCleanup(() => {
       alive = false;
+      offReady?.();
       ro.disconnect();
       mo.disconnect();
       window.removeEventListener("pitlane-code-open", onRequest);
       void vscode.hide().catch(() => {});
     });
   });
-  createEffect(on(root, () => void place(), { defer: true }));
+  createEffect(on(root, () => (setState("starting"), void place()), { defer: true }));
 
   return (
     <div class="vs-screen">
       <div class="vs-bar">
         <PlacePicker places={places()} root={root()} repo={props.repo} onPick={setRootSig} />
         <span class="spacer" />
-        <Show when={state() === "starting"}>
-          <span class="vs-starting">
-            <Spinner /> Starting VS Code
-          </span>
-        </Show>
+
       </div>
       <div class="vs-host" ref={host}>
+        <Show when={state() === "starting" && slow()}>
+          <div class="vs-opening" role="status">
+            <Spinner /> Opening VS Code
+          </div>
+        </Show>
         <Show when={state() === "failed"}>
           <div class="code-empty">
             <div class="code-empty-title">VS Code did not start</div>

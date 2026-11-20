@@ -120,9 +120,10 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       return "a1b2c3d4" as T;
     case "files_list":
       return ["README.md", "package.json", "src/app.ts", "src/kart/drift.ts", "src/kart/drift.test.ts", "src/kart/physics.ts", "src/lobby/timer.ts", "src/ui/avatar.tsx"] as T;
+    case "vscode_show":
+      return true as T;
     case "vscode_theme":
     case "vscode_prewarm":
-    case "vscode_show":
     case "vscode_hide":
     case "vscode_open":
       return null as T;

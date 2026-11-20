@@ -12,7 +12,8 @@ use pit_core::runs::{self, Client, RunEvent, RunMeta};
 use std::collections::HashMap;
 use pit_core::{Repo, default_homes, trash};
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 mod files;
@@ -570,15 +571,26 @@ async fn files_list(root: String) -> CmdResult<Vec<String>> {
 
 // ---------------------------------------------------------------- VS Code (code-server) in the Code tab
 
-/// VS Code views, one per folder, most recent first. Up to three stay loaded (hidden when not
-/// shown), so coming back to the tab, or to a recent lane, is instant.
+/// VS Code views, one per folder, most recent first. Up to three stay loaded, so coming back to
+/// the tab, or to a recent lane, is instant. A view is never seen before VS Code has drawn itself:
+/// it loads (login, workbench) out of sight, and moves onto the tab once it is ready.
 #[derive(Default)]
 struct CodeView {
-    views: Mutex<Vec<(String, String)>>, // (folder, webview label)
+    views: Mutex<Vec<View>>,
+    /// The folder the tab wants shown, and where (logical pixels).
+    shown: Mutex<Option<(String, (f64, f64, f64, f64))>>,
     next: std::sync::atomic::AtomicU32,
 }
 
+struct View {
+    folder: String,
+    label: String,
+    ready: Arc<std::sync::atomic::AtomicBool>,
+}
+
 const CODE_VIEWS: usize = 3;
+/// Where a view waits: loaded and drawing, out of sight.
+const PARKED: (f64, f64) = (-20_000.0, 0.0);
 
 /// The bundled code-server, unpacked on first use (or, in a checkout without it, one on the PATH).
 fn code_server(app: &tauri::AppHandle) -> Result<PathBuf> {
@@ -600,90 +612,144 @@ async fn code_server_running(app: &tauri::AppHandle) -> CmdResult<vscode::Runnin
     .await
 }
 
-/// The view for `folder`, made (at `rect`, or out of sight when `hidden`) if there is none.
-fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, rect: (f64, f64, f64, f64), hidden: bool) -> CmdResult<tauri::Webview> {
-    use tauri::webview::{PageLoadEvent, WebviewBuilder};
+#[derive(Clone, Serialize)]
+struct CodeReady {
+    folder: String,
+}
+
+/// Puts the view of the folder the tab wants onto the tab, if it is ready; parks the others.
+fn place_views(app: &tauri::AppHandle) {
+    use tauri::{LogicalPosition, LogicalSize};
+    let state = app.state::<CodeView>();
+    let shown = state.shown.lock().unwrap().clone();
+    let views = state.views.lock().unwrap();
+    for v in views.iter() {
+        let Some(wv) = app.get_webview(&v.label) else { continue };
+        match &shown {
+            Some((folder, (x, y, w, h))) if *folder == v.folder && v.ready.load(std::sync::atomic::Ordering::SeqCst) => {
+                let _ = wv.set_size(LogicalSize::new(*w, *h));
+                let _ = wv.set_position(LogicalPosition::new(*x, *y));
+                let _ = wv.set_focus();
+            }
+            _ => {
+                let _ = wv.set_position(LogicalPosition::new(PARKED.0, PARKED.1));
+            }
+        }
+    }
+}
+
+/// Asks the page, every 120 ms, whether VS Code has drawn its workbench.
+fn watch_ready(wv: tauri::Webview, ready: Arc<std::sync::atomic::AtomicBool>, folder: String) {
+    const PROBE: &str = "(function(){var w=document.querySelector('.monaco-workbench');if(!w)return false;return !!document.querySelector('.part.sidebar .monaco-list-row, .part.editor .monaco-editor, .part.editor .editor-group-watermark')||document.querySelectorAll('.part.statusbar .statusbar-item').length>3;})()";
+    std::thread::spawn(move || {
+        let t = Instant::now();
+        while !ready.load(std::sync::atomic::Ordering::SeqCst) && t.elapsed() < Duration::from_secs(60) {
+            let (r, f, w) = (ready.clone(), folder.clone(), wv.clone());
+            let _ = wv.eval_with_callback(PROBE, move |out| {
+                if out.trim() == "true" && !r.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    eprintln!("pitlane: VS Code drawn on {f} in {} ms", t.elapsed().as_millis());
+                    let app = w.app_handle().clone();
+                    place_views(&app);
+                    let _ = app.emit("vscode-ready", CodeReady { folder: f.clone() });
+                }
+            });
+            std::thread::sleep(Duration::from_millis(120));
+        }
+    });
+}
+
+/// The view for `folder`, made out of sight if there is none. `bg` paints it while it loads.
+fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f64, f64), bg: Option<&str>) -> CmdResult<bool> {
+    use tauri::webview::{Color, PageLoadEvent, WebviewBuilder};
     use tauri::{LogicalPosition, LogicalSize, WebviewUrl};
     let e = |e: tauri::Error| e.to_string();
     let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{}/", r.port)).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("folder", folder);
     let state = app.state::<CodeView>();
     let mut views = state.views.lock().unwrap();
-    if let Some(i) = views.iter().position(|(f, _)| f == folder) {
-        let (f, label) = views.remove(i);
-        views.insert(0, (f, label.clone()));
-        if let Some(wv) = app.get_webview(&label) {
+    if let Some(i) = views.iter().position(|v| v.folder == folder) {
+        let v = views.remove(i);
+        let ready = v.ready.load(std::sync::atomic::Ordering::SeqCst);
+        if let Some(wv) = app.get_webview(&v.label) {
             // A server started again since (a new port): load the folder from it.
             if !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
+                v.ready.store(false, std::sync::atomic::Ordering::SeqCst);
                 wv.navigate(url).map_err(e)?;
+                views.insert(0, v);
+                return Ok(false);
             }
-            return Ok(wv);
+            views.insert(0, v);
+            return Ok(ready);
         }
-        views.remove(0);
     }
     let label = format!("vscode-{}", state.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let window = app.get_window("main").ok_or("no main window")?;
-    let builder = WebviewBuilder::new(&label, WebviewUrl::External(url)).on_page_load(|wv, p| {
-        // code-server's login page: type the password made for this run.
-        if p.event() == PageLoadEvent::Finished && p.url().path().starts_with("/login") {
+    let (rr, ff) = (ready.clone(), folder.to_owned());
+    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(url)).focused(false).on_page_load(move |wv, p| {
+        if p.event() != PageLoadEvent::Finished {
+            return;
+        }
+        if p.url().path().starts_with("/login") {
+            // code-server's login page: type the password made for this run.
             if let Some(r) = wv.app_handle().state::<vscode::Vscode>().current() {
                 let _ = wv.eval(vscode::login_script(&r.password));
             }
+        } else {
+            watch_ready(wv, rr.clone(), ff.clone());
         }
     });
-    let (x, y, w, h) = rect;
-    let at = if hidden { LogicalPosition::new(-20_000.0, 0.0) } else { LogicalPosition::new(x, y) };
-    let wv = window.add_child(builder, at, LogicalSize::new(w.max(400.0), h.max(300.0))).map_err(e)?;
-    if hidden {
-        wv.hide().map_err(e)?;
+    if let Some(c) = bg.and_then(hex_colour) {
+        builder = builder.background_color(Color(c.0, c.1, c.2, 255));
     }
-    views.insert(0, (folder.to_owned(), label));
+    // Drawn out of sight (not hidden: a hidden view may not draw), moved in when ready.
+    window.add_child(builder, LogicalPosition::new(PARKED.0, PARKED.1), LogicalSize::new(size.0.max(400.0), size.1.max(300.0))).map_err(e)?;
+    views.insert(0, View { folder: folder.to_owned(), label, ready });
     while views.len() > CODE_VIEWS {
-        if let Some((_, old)) = views.pop() {
-            if let Some(v) = app.get_webview(&old) {
+        if let Some(old) = views.pop() {
+            if let Some(v) = app.get_webview(&old.label) {
                 let _ = v.close();
             }
         }
     }
-    Ok(wv)
+    Ok(false)
+}
+
+fn hex_colour(s: &str) -> Option<(u8, u8, u8)> {
+    let h = s.strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    Some((p(0)?, p(2)?, p(4)?))
 }
 
 /// Starts VS Code on `folder` out of sight, so the Code tab opens at once.
 #[tauri::command]
-async fn vscode_prewarm(app: tauri::AppHandle, folder: String, w: f64, h: f64) -> CmdResult<()> {
+async fn vscode_prewarm(app: tauri::AppHandle, folder: String, w: f64, h: f64, bg: Option<String>) -> CmdResult<()> {
     let r = code_server_running(&app).await?;
-    code_view(&app, &r, &folder, (0.0, 0.0, w, h), true)?;
+    code_view(&app, &r, &folder, (w, h), bg.as_deref())?;
     Ok(())
 }
 
-/// Shows VS Code over the Code tab's area (logical pixels of the window), on `folder`.
+/// Shows VS Code over the Code tab's area (logical pixels of the window), on `folder`. Says whether
+/// it is already drawn; if not, it moves in by itself when it is (and `vscode-ready` says so).
 #[tauri::command]
-async fn vscode_show(app: tauri::AppHandle, folder: String, x: f64, y: f64, w: f64, h: f64) -> CmdResult<()> {
-    use tauri::{LogicalPosition, LogicalSize};
-    let e = |e: tauri::Error| e.to_string();
+async fn vscode_show(app: tauri::AppHandle, folder: String, x: f64, y: f64, w: f64, h: f64, bg: Option<String>) -> CmdResult<bool> {
+    *app.state::<CodeView>().shown.lock().unwrap() = Some((folder.clone(), (x, y, w, h)));
     let r = code_server_running(&app).await?;
-    let wv = code_view(&app, &r, &folder, (x, y, w, h), false)?;
-    let shown = wv.label().to_owned();
-    for (_, label) in app.state::<CodeView>().views.lock().unwrap().iter() {
-        if *label != shown {
-            if let Some(v) = app.get_webview(label) {
-                let _ = v.hide();
-            }
-        }
-    }
-    wv.set_position(LogicalPosition::new(x, y)).map_err(e)?;
-    wv.set_size(LogicalSize::new(w, h)).map_err(e)?;
-    wv.show().map_err(e)?;
-    let _ = wv.set_focus();
-    Ok(())
+    let ready = code_view(&app, &r, &folder, (w, h), bg.as_deref())?;
+    place_views(&app);
+    Ok(ready)
 }
 
+/// Takes VS Code off the tab (another tab, or an app menu over it) and gives the keyboard back.
 #[tauri::command]
 async fn vscode_hide(app: tauri::AppHandle) -> CmdResult<()> {
-    for (_, label) in app.state::<CodeView>().views.lock().unwrap().iter() {
-        if let Some(v) = app.get_webview(label) {
-            v.hide().map_err(|e| e.to_string())?;
-        }
+    *app.state::<CodeView>().shown.lock().unwrap() = None;
+    place_views(&app);
+    if let Some(main) = app.get_webview("main") {
+        let _ = main.set_focus();
     }
     Ok(())
 }
