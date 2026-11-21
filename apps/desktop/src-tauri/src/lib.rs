@@ -727,14 +727,22 @@ fn place_views(app: &tauri::AppHandle) {
 }
 
 /// Asks the page, every 120 ms, whether VS Code has drawn its workbench.
-fn watch_ready(wv: tauri::Webview, ready: Arc<std::sync::atomic::AtomicBool>, folder: String) {
-    const PROBE: &str = "(function(){var w=document.querySelector('.monaco-workbench');if(!w)return false;return !!document.querySelector('.part.sidebar .monaco-list-row, .part.editor .monaco-editor, .part.editor .editor-group-watermark')||document.querySelectorAll('.part.statusbar .statusbar-item').length>3;})()";
+fn watch_ready(wv: tauri::Webview, ready: Arc<std::sync::atomic::AtomicBool>, folder: String, expect: Option<String>) {
+    // Drawn, and with which editor background: on its very first run VS Code paints its own theme
+    // before it reads the settings, so "drawn" alone would show that theme for a moment.
+    const PROBE: &str = "(function(){var w=document.querySelector('.monaco-workbench');if(!w)return '';var drawn=!!document.querySelector('.part.sidebar .monaco-list-row, .part.editor .monaco-editor, .part.editor .editor-group-watermark')||document.querySelectorAll('.part.statusbar .statusbar-item').length>3;if(!drawn)return '';return 'bg:'+getComputedStyle(w).getPropertyValue('--vscode-editor-background').trim().toLowerCase();})()";
+    let first = Arc::new(Mutex::new(None::<Instant>));
     std::thread::spawn(move || {
         let t = Instant::now();
         while !ready.load(std::sync::atomic::Ordering::SeqCst) && t.elapsed() < Duration::from_secs(60) {
-            let (r, f, w) = (ready.clone(), folder.clone(), wv.clone());
+            let (r, f, w, expect, first) = (ready.clone(), folder.clone(), wv.clone(), expect.clone(), first.clone());
             let _ = wv.eval_with_callback(PROBE, move |out| {
-                if out.trim() == "true" && !r.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let out = out.trim().trim_matches('"').to_owned();
+                let Some(bg) = out.strip_prefix("bg:") else { return };
+                let since = *first.lock().unwrap().get_or_insert_with(Instant::now);
+                // Pitlane's ground, or (a theme of your own choosing) a few seconds after it drew.
+                let settled = expect.as_deref().is_none_or(|e| e.eq_ignore_ascii_case(bg)) || since.elapsed() > Duration::from_secs(4);
+                if settled && !r.swap(true, std::sync::atomic::Ordering::SeqCst) {
                     eprintln!("pitlane: VS Code drawn on {f} in {} ms", t.elapsed().as_millis());
                     let app = w.app_handle().clone();
                     place_views(&app);
@@ -773,7 +781,7 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     let label = format!("vscode-{}", state.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let window = app.get_window("main").ok_or("no main window")?;
-    let (rr, ff) = (ready.clone(), folder.to_owned());
+    let (rr, ff, expect) = (ready.clone(), folder.to_owned(), bg.map(|b| b.to_lowercase()));
     let places = state.places.lock().unwrap().clone();
     let nav_app = app.clone();
     let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
@@ -799,7 +807,7 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
                 let _ = wv.eval(vscode::login_script(&r.password));
             }
         } else {
-            watch_ready(wv, rr.clone(), ff.clone());
+            watch_ready(wv, rr.clone(), ff.clone(), expect.clone());
         }
     });
     if let Some(c) = bg.and_then(hex_colour) {
