@@ -27,8 +27,9 @@ fn add_list_get_update() {
     let a = cards::add(&r, NewCard { title: "Limit avatar size".into(), body: "## Goal\n\nRefuse big avatars.".into(), ..Default::default() }).unwrap();
     let b = cards::add(&r, NewCard { title: "Copiar link do convite".into(), ..Default::default() }).unwrap();
     assert_eq!((a.id, b.id), (1, 2));
-    assert!(a.path.ends_with(".pitlane/cards/0001-limit-avatar-size.md"));
-    assert!(b.path.ends_with(".pitlane/cards/0002-copiar-link-do-convite.md"));
+    assert!(a.path.ends_with("cards/0001-limit-avatar-size.md"));
+    assert!(a.path.starts_with(&r.board) && !a.path.starts_with(&r.root), "the board lives outside the repository");
+    assert!(b.path.ends_with("cards/0002-copiar-link-do-convite.md"));
 
     let (all, problems) = cards::list(&r).unwrap();
     assert_eq!(all.len(), 2);
@@ -74,7 +75,7 @@ fn concurrent_adds_never_share_an_id() {
     let mut ids: Vec<u32> = handles.into_iter().map(|h| h.join().unwrap()).collect();
     ids.sort();
     assert_eq!(ids, (1..=8).collect::<Vec<_>>());
-    assert!(!r.root.join(".pitlane/.lock").exists());
+    assert!(!r.board.join(".lock").exists());
 }
 
 #[test]
@@ -112,8 +113,62 @@ fn the_interview_becomes_decisions() {
     assert_eq!(last.card.open_questions(), 0);
     assert_eq!(last.card.state, CardState::Ready, "every question answered");
 
-    let decisions = fs::read_to_string(r.root.join(".pitlane/decisions.md")).unwrap();
+    let decisions = fs::read_to_string(cards::decisions_path(&r)).unwrap();
     assert!(decisions.contains("## D-01: Per IP or per account?\n\nPer account\n"));
     assert!(decisions.contains("From card #1 (Rate limit the invites endpoint)"));
     assert!(decisions.contains("## D-03: Log refusals?"));
+}
+
+#[test]
+fn remotes_key_the_same_board() {
+    for url in [
+        "git@github.com:Me/amity.git",
+        "https://github.com/me/amity",
+        "ssh://git@github.com/me/amity.git",
+        "https://token@github.com/me/amity.git/",
+    ] {
+        assert_eq!(cards::normalize_remote(url), "github.com/me/amity", "{url}");
+    }
+    let home = std::path::Path::new("/h/.pitlane");
+    assert_eq!(
+        cards::board_for(home, Some("git@github.com:me/amity.git"), std::path::Path::new("/x")),
+        home.join("boards/github.com-me-amity")
+    );
+}
+
+#[test]
+fn legacy_cards_in_the_repository_move_to_the_board() {
+    let tmp = TempDir::new().unwrap();
+    let work = tmp.path().join("work");
+    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&work).status().unwrap().success());
+    // Write a card the real way under another home, then put it where older versions kept it.
+    let old = Repo::open(&work, tmp.path(), &tmp.path().join("old-home")).unwrap();
+    let c = cards::add(&old, NewCard { title: "Old card".into(), ..Default::default() }).unwrap();
+    fs::create_dir_all(work.join(".pitlane/cards")).unwrap();
+    fs::rename(&c.path, work.join(".pitlane/cards").join(c.path.file_name().unwrap())).unwrap();
+    fs::write(work.join(".pitlane/decisions.md"), "# Decisions\n\n## D-01: Q?\n\nA\n").unwrap();
+
+    let r = Repo::open(&work, tmp.path(), &tmp.path().join(".pitlane")).unwrap();
+    assert!(!work.join(".pitlane/cards").exists(), "moved out of the repository");
+    assert!(!work.join(".pitlane/decisions.md").exists());
+    let (all, problems) = cards::list(&r).unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(all.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["Old card"]);
+    let next = cards::add(&r, NewCard { title: "New".into(), ..Default::default() }).unwrap();
+    assert_eq!(next.id, 2);
+    let decisions = fs::read_to_string(cards::decisions_path(&r)).unwrap();
+    assert!(decisions.contains("## D-01: Q?"));
+}
+
+#[test]
+fn every_worktree_sees_one_board() {
+    let (tmp, r) = repo();
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&r.root).args(args).status().unwrap().success());
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"]);
+    let wt = tmp.path().join("wt");
+    git(&["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
+    cards::add(&r, NewCard { title: "From main".into(), ..Default::default() }).unwrap();
+    let in_wt = Repo::open(&wt, tmp.path(), &tmp.path().join(".pitlane")).unwrap();
+    assert_eq!(in_wt.board, r.board);
+    assert_eq!(cards::list(&in_wt).unwrap().0.len(), 1);
 }

@@ -867,7 +867,7 @@ impl Supervisor {
         let prompt = (|| -> Result<String> {
             let c = cards::get(r, card)?;
             let diff = pit_core::verify::lane_diff(r, &meta.branch, 200_000, None)?;
-            let decisions = fs::read_to_string(r.root.join(cards::DECISIONS)).unwrap_or_default();
+            let decisions = fs::read_to_string(cards::decisions_path(r)).unwrap_or_default();
             Ok(pit_core::verify::judge_prompt(&c, &decisions, &diff, proofs))
         })();
         let prompt = match prompt {

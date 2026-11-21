@@ -34,6 +34,9 @@ pub struct Repo {
     /// Short name, the main worktree's folder name.
     pub name: String,
     pub flow: FlowFile,
+    /// This repository's board (cards and decisions), outside the repository:
+    /// `~/.pitlane/boards/<remote or path>`.
+    pub board: PathBuf,
     /// `~/.pitlane` (or `$PITLANE_HOME`): trash, worktrees by default.
     pub pitlane_home: PathBuf,
     /// The user's home, for `~` in paths.
@@ -77,15 +80,22 @@ impl Repo {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "repo".into());
-        Ok(Self {
-            git: Git::new(&root),
+        let git = Git::new(&root);
+        let remote_url = git.run(&["remote", "get-url", &flow.flow.remote]).ok();
+        let board = cards::board_for(pitlane_home, remote_url.as_deref(), &root);
+        let repo = Self {
+            git,
             root,
             cwd_root,
             name,
             flow,
+            board,
             pitlane_home: pitlane_home.to_path_buf(),
             home: home.to_path_buf(),
-        })
+        };
+        // Best effort: a failed move leaves the old files in place and is tried again next open.
+        let _ = cards::adopt_legacy(&repo);
+        Ok(repo)
     }
 
     pub fn remote_ref(&self, branch: &str) -> String {

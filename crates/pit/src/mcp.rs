@@ -12,10 +12,10 @@ use serde_json::{Value, json};
 
 const VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "Pitlane keeps this repository's cards as files in .pitlane/cards. \
+const INSTRUCTIONS: &str = "Pitlane keeps this repository's board (cards and decisions) outside the repository, so read and change cards only through these tools. \
 Use add_card for each piece of work. Before work starts, ask every question you have in one ask call, \
 each with options and the one you recommend; the user answers them in Pitlane's Inbox and each answer \
-becomes a recorded decision in .pitlane/decisions.md. Read get_card before working on a card.";
+becomes a recorded project decision that get_card and every run include. Read get_card before working on a card.";
 
 /// `pit mcp --approve <run>`: the server Claude Code asks, through `--permission-prompt-tool`,
 /// whenever it wants a tool no rule allows. Each call waits on the daemon for a person's answer.
@@ -212,8 +212,22 @@ fn tools() -> Value {
     ])
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests point the board and index at a temporary home instead of the user's `~/.pitlane`.
+    static TEST_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+fn open_repo(dir: &Path) -> Result<Repo> {
+    #[cfg(test)]
+    if let Some(home) = TEST_HOME.with(|h| h.borrow().clone()) {
+        return Repo::open(dir, &home, &home.join(".pitlane"));
+    }
+    Repo::open_default(dir)
+}
+
 fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
-    let repo = Repo::open_default(dir).context("pit mcp must run inside a git repository")?;
+    let repo = open_repo(dir).context("pit mcp must run inside a git repository")?;
     let id = || -> Result<u32> {
         let n = args.get("id").and_then(Value::as_u64).context("id is required")?;
         u32::try_from(n).context("id is out of range")
@@ -303,6 +317,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let dir = tmp.path().join("work");
         assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&dir).status().unwrap().success());
+        TEST_HOME.with(|h| *h.borrow_mut() = Some(tmp.path().to_path_buf()));
 
         let init = rpc(&dir, 1, "initialize", json!({ "protocolVersion": "2025-03-26", "capabilities": {} }));
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");

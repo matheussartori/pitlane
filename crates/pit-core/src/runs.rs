@@ -427,10 +427,10 @@ pub fn briefing(repo: &Repo, card: &Card) -> String {
             ));
         }
     }
-    if let Ok(d) = std::fs::read_to_string(repo.root.join(cards::DECISIONS))
+    if let Ok(d) = std::fs::read_to_string(cards::decisions_path(repo))
         && !d.trim().is_empty()
     {
-        b.push_str("\n## Project decisions (.pitlane/decisions.md)\n\n");
+        b.push_str("\n## Project decisions\n\n");
         b.push_str(d.trim());
         b.push('\n');
     }

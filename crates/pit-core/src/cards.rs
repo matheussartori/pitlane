@@ -1,7 +1,9 @@
-//! Cards: one markdown file each in `.pitlane/cards/`, a TOML frontmatter between `+++` lines
-//! and the spec as the body. Answers to a card's questions become decisions in
-//! `.pitlane/decisions.md`. CLI, MCP server and app all write here, so every write is atomic
-//! and anything that allocates an id holds `.pitlane/.lock`.
+//! Cards: one markdown file each in the repository's board folder, `~/.pitlane/boards/<repo>/cards/`,
+//! a TOML frontmatter between `+++` lines and the spec as the body. Answers to a card's questions
+//! become decisions in `decisions.md` beside them. The board lives outside the repository so it is
+//! one source of truth across branches and worktrees, and no checkout, stash or clean touches it.
+//! CLI, MCP server and app all write here, so every write is atomic and anything that allocates an
+//! id holds the board's `.lock`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,9 +15,13 @@ use serde::{Deserialize, Serialize};
 use crate::Repo;
 use crate::lanes::now_secs;
 
-pub const CARDS_DIR: &str = ".pitlane/cards";
-pub const DECISIONS: &str = ".pitlane/decisions.md";
-const LOCK: &str = ".pitlane/.lock";
+pub const CARDS_DIR: &str = "cards";
+pub const DECISIONS: &str = "decisions.md";
+const LOCK: &str = ".lock";
+/// Where cards lived before the board moved out of the repository; adopted on open.
+const LEGACY_CARDS: &str = ".pitlane/cards";
+const LEGACY_DECISIONS: &str = ".pitlane/decisions.md";
+const LEGACY_LOCK: &str = ".pitlane/.lock";
 
 /// What the card file says. The board derives more (open questions, the lane's state).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -192,9 +198,88 @@ pub struct Answered {
     pub decision: String,
 }
 
-/// The cards folder of this repository (in the main worktree).
+/// The cards folder of this repository's board.
 pub fn dir(repo: &Repo) -> PathBuf {
-    repo.root.join(CARDS_DIR)
+    repo.board.join(CARDS_DIR)
+}
+
+/// The project's decisions file, beside the cards.
+pub fn decisions_path(repo: &Repo) -> PathBuf {
+    repo.board.join(DECISIONS)
+}
+
+/// A repository's board folder: keyed by its remote's URL, so moving or re-cloning the folder keeps
+/// the board; by the main worktree's path when there is no remote.
+pub fn board_for(pitlane_home: &Path, remote_url: Option<&str>, root: &Path) -> PathBuf {
+    let key = match remote_url.map(str::trim).filter(|u| !u.is_empty()) {
+        Some(url) => normalize_remote(url),
+        None => root.to_string_lossy().into_owned(),
+    };
+    let mut slug = String::new();
+    for c in key.chars() {
+        let c = if c.is_ascii_alphanumeric() || c == '.' || c == '_' { c } else { '-' };
+        if !(c == '-' && slug.ends_with('-')) {
+            slug.push(c);
+        }
+    }
+    pitlane_home.join("boards").join(slug.trim_matches(|c| c == '-' || c == '.'))
+}
+
+/// `git@github.com:me/x.git`, `https://user@github.com/me/x` and `ssh://git@github.com/me/x.git`
+/// all become `github.com/me/x`.
+pub fn normalize_remote(url: &str) -> String {
+    let mut u = url.trim().trim_end_matches('/');
+    u = u.strip_suffix(".git").unwrap_or(u);
+    let scp_like = !u.contains("://");
+    if let Some((_, rest)) = u.split_once("://") {
+        u = rest;
+    }
+    let host_end = u.find('/').unwrap_or(u.len());
+    if let Some(at) = u[..host_end].rfind('@') {
+        u = &u[at + 1..];
+    }
+    let mut out = u.to_owned();
+    if scp_like && let Some(colon) = out.find(':') && !out[..colon].contains('/') {
+        out.replace_range(colon..=colon, "/");
+    }
+    out.to_lowercase()
+}
+
+/// Moves cards and decisions left in the repository's `.pitlane/` (the old place) into the board.
+/// A file the board already has with other content stays where it is, so nothing is lost.
+pub fn adopt_legacy(repo: &Repo) -> Result<usize> {
+    let legacy_cards = repo.root.join(LEGACY_CARDS);
+    let legacy_decisions = repo.root.join(LEGACY_DECISIONS);
+    if !legacy_cards.exists() && !legacy_decisions.exists() {
+        return Ok(0);
+    }
+    let _lock = Lock::take(repo)?;
+    let mut moved = 0;
+    let mut adopt = |src: &Path, dst: &Path| -> Result<()> {
+        let text = fs::read_to_string(src).with_context(|| format!("could not read {}", src.display()))?;
+        match fs::read_to_string(dst) {
+            Ok(existing) if existing != text => return Ok(()),
+            Ok(_) => {}
+            Err(_) => atomic_write(dst, &text)?,
+        }
+        fs::remove_file(src).with_context(|| format!("could not remove {}", src.display()))?;
+        moved += 1;
+        Ok(())
+    };
+    if let Ok(entries) = fs::read_dir(&legacy_cards) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if entry.path().extension().is_some_and(|e| e == "md") {
+                adopt(&entry.path(), &dir(repo).join(&name))?;
+            }
+        }
+        let _ = fs::remove_dir(&legacy_cards);
+    }
+    if legacy_decisions.exists() {
+        adopt(&legacy_decisions, &decisions_path(repo))?;
+    }
+    let _ = fs::remove_file(repo.root.join(LEGACY_LOCK));
+    Ok(moved)
 }
 
 /// Every card, by id. Files that fail to parse are reported, never dropped silently.
@@ -362,7 +447,7 @@ fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
 }
 
 fn next_decision_id(repo: &Repo) -> Result<String> {
-    let text = fs::read_to_string(repo.root.join(DECISIONS)).unwrap_or_default();
+    let text = fs::read_to_string(decisions_path(repo)).unwrap_or_default();
     let max = text
         .lines()
         .filter_map(|l| l.strip_prefix("## D-"))
@@ -373,7 +458,7 @@ fn next_decision_id(repo: &Repo) -> Result<String> {
 }
 
 fn append_decision(repo: &Repo, id: &str, question: &str, answer: &str, card: u32, title: &str, day: &str) -> Result<()> {
-    let path = repo.root.join(DECISIONS);
+    let path = decisions_path(repo);
     let mut text = fs::read_to_string(&path).unwrap_or_else(|_| {
         "# Decisions\n\nAnswers given while specifying cards. Agents read these before working.\n".to_owned()
     });
@@ -397,12 +482,12 @@ fn atomic_write(path: &Path, text: &str) -> Result<()> {
     fs::rename(&tmp, path).with_context(|| format!("could not write {}", path.display()))
 }
 
-/// Cross-process lock on `.pitlane/.lock`. A lock older than 10 s is taken as abandoned.
+/// Cross-process lock on the board's `.lock`. A lock older than 10 s is taken as abandoned.
 struct Lock(PathBuf);
 
 impl Lock {
     fn take(repo: &Repo) -> Result<Self> {
-        let path = repo.root.join(LOCK);
+        let path = repo.board.join(LOCK);
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }

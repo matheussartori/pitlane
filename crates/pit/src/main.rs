@@ -55,7 +55,7 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Cards: the board's work items, kept in .pitlane/cards.
+    /// Cards: the board's work items, kept outside the repository in ~/.pitlane/boards.
     #[command(subcommand)]
     Card(CardCmd),
     /// Serve the cards over MCP on stdio: claude mcp add pitlane -- pit mcp
@@ -894,7 +894,7 @@ fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
         }
         CardCmd::Answer { id, question, answer } => {
             let a = cards::answer(repo, id, question, &answer)?;
-            println!("{} recorded as {} in {}", paint(DONE, "✓"), a.decision, cards::DECISIONS);
+            println!("{} recorded as {} in {}", paint(DONE, "✓"), a.decision, cards::decisions_path(repo).display());
         }
         CardCmd::Link { id, branch, unlink } => {
             if branch.is_none() && !unlink {

@@ -128,7 +128,7 @@ export function BoardView(props: {
             <div class="empty">
               <div class="empty-title">No cards yet</div>
               <p class="empty-body">
-                Each card is a markdown file in .pitlane/cards, versioned with the code. Add one with New card, or let
+                Cards live outside the repository, so every branch and worktree sees the same board. Add one with New card, or let
                 Claude Code add them through MCP.
               </p>
             </div>
@@ -490,7 +490,7 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
             value={body()}
             onInput={(e) => setBody(e.currentTarget.value)}
           />
-          <span class="field-help">Saved as a markdown file in .pitlane/cards, versioned with the code.</span>
+          <span class="field-help">Saved to this repository's board in ~/.pitlane, the same in every branch and worktree.</span>
         </div>
       </form>
       <Show when={error()}>
