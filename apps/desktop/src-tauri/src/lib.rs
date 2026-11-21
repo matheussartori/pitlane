@@ -334,8 +334,9 @@ fn pit_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("PITLANE_PIT_BIN") {
         return Some(PathBuf::from(p));
     }
-    std::env::var_os("PATH")
-        .and_then(|p| std::env::split_paths(&p).map(|d| d.join("pit")).find(|c| c.is_file()))
+    // The one bundled beside the app's own binary (Pitlane.app/Contents/MacOS/pit), then the PATH.
+    let bundled = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("pit"))).filter(|p| p.is_file());
+    bundled.or_else(|| std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join("pit")).find(|c| c.is_file())))
 }
 
 fn daemon() -> Result<Client> {
@@ -977,8 +978,37 @@ fn term_buffer(terms: tauri::State<'_, term::Terms>, id: u32) -> CmdResult<Strin
 }
 
 /// Apps opened from Finder get a bare PATH; git, gh and setup commands live in Homebrew.
+/// The PATH your login shell sets up (nvm, asdf, Homebrew…): an app opened from the Finder only
+/// gets the system's, and agents need your tools. At most a few seconds; None when it fails.
+fn login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/zsh".into());
+    let mut child = std::process::Command::new(shell)
+        .args(["-ilc", "printf '__PITLANE_PATH__%s__END__' \"$PATH\""])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let t = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if t.elapsed() < std::time::Duration::from_secs(4) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            _ => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+    let start = out.find("__PITLANE_PATH__")? + "__PITLANE_PATH__".len();
+    let end = out[start..].find("__END__")? + start;
+    Some(out[start..end].to_owned()).filter(|p| !p.is_empty())
+}
+
 fn extend_path() {
-    let current = std::env::var("PATH").unwrap_or_default();
+    let current = login_shell_path().or_else(|| std::env::var("PATH").ok()).unwrap_or_default();
     let mut parts: Vec<String> = current.split(':').filter(|p| !p.is_empty()).map(str::to_owned).collect();
     let cargo = default_homes().0.join(".cargo/bin").to_string_lossy().into_owned();
     let local = default_homes().0.join(".local/bin").to_string_lossy().into_owned();

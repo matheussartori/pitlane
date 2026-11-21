@@ -4,3 +4,4 @@ src-tauri/gen/
 
 # code-server, fetched by scripts/code-server.mjs for the bundle
 src-tauri/resources/
+src-tauri/binaries/
