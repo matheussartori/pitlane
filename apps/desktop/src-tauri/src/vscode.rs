@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
+/// Where code-server listens when it can (then the next nine ports, then any).
+const STABLE_PORT: u16 = 47615;
+
 #[derive(Default)]
 pub struct Vscode {
     running: Mutex<Option<Running>>,
@@ -203,9 +206,18 @@ impl Vscode {
             let cmd = Command::new("ps").args(["-o", "command=", "-p", &old.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
             if cmd.contains("code-server") && cmd.contains(&dir(pitlane_home).to_string_lossy().into_owned()) {
                 let _ = Command::new("kill").arg(old.to_string()).status();
+                // Let it let go of its port, so this one takes the same.
+                let t = Instant::now();
+                while TcpListener::bind(("127.0.0.1", STABLE_PORT)).is_err() && t.elapsed() < Duration::from_secs(2) {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
             }
         }
-        let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+        // The same port each time when it is free: the page keeps one origin, so VS Code's own cache
+        // (its theme, among others) survives a restart and the first frame is already right.
+        let port = (STABLE_PORT..STABLE_PORT + 10)
+            .find(|p| TcpListener::bind(("127.0.0.1", *p)).is_ok())
+            .map_or_else(|| TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map(|a| a.port()), Ok)?;
         let pw = password();
         let log = std::fs::File::create(dir(pitlane_home).join("server.log"))?;
         let child: Child = Command::new(bin)
