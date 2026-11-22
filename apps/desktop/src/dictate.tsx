@@ -4,6 +4,7 @@ import { Show, createSignal, onCleanup } from "solid-js";
 import { dictation } from "./api";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
+import { t } from "./i18n";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -41,7 +42,7 @@ export function Dictate(props: {
       setPhase("listening");
     } catch (e) {
       release();
-      toast({ tone: "fail", title: "The microphone did not open", body: msg(e) });
+      toast({ tone: "fail", title: t("The microphone did not open"), body: msg(e) });
     }
   }
 
@@ -51,12 +52,12 @@ export function Dictate(props: {
     try {
       const text = (await dictation.stop()).trim();
       if (!text) {
-        toast({ tone: "info", title: "Nothing heard", body: "If you spoke, allow Pitlane in System Settings › Privacy & Security › Microphone." });
+        toast({ tone: "info", title: t("Nothing heard"), body: t("If you spoke, allow Pitlane in System Settings › Privacy & Security › Microphone.") });
         return;
       }
       insert(text);
     } catch (e) {
-      toast({ tone: "fail", title: "Dictation failed", body: msg(e) }, 0);
+      toast({ tone: "fail", title: t("Dictation failed"), body: msg(e) }, 0);
     } finally {
       setPhase("idle");
     }
@@ -95,7 +96,7 @@ export function Dictate(props: {
         disabled={phase() === "writing"}
         aria-busy={phase() === "writing"}
         aria-pressed={phase() === "listening"}
-        title={phase() === "listening" ? "Stop and write it down (Esc cancels)" : "Dictate: speak instead of typing, transcribed on this Mac"}
+        title={phase() === "listening" ? t("Stop and write it down (Esc cancels)") : t("Dictate: speak instead of typing, transcribed on this Mac")}
         onClick={() => void (phase() === "listening" ? stop() : start())}
         onKeyDown={(e) => {
           if (e.key === "Escape" && phase() === "listening") {
@@ -110,7 +111,7 @@ export function Dictate(props: {
         <Show when={phase() !== "writing"} fallback={<Spinner />}>
           <Icon name={phase() === "listening" ? "stop" : "mic"} small />
         </Show>
-        <Show when={phase() === "listening"} fallback={phase() === "writing" ? "Writing" : "Dictate"}>
+        <Show when={phase() === "listening"} fallback={phase() === "writing" ? t("Writing") : t("Dictate")}>
           <span class="dictate-meter" aria-hidden="true">
             <span style={{ transform: `scaleX(${Math.max(0.06, level())})` }} />
           </span>

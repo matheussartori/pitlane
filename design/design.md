@@ -53,7 +53,7 @@ Live specimen: `design/index.html`. Research behind it: `docs/research/ux-resear
 - transform and opacity only. No pulsing dots: a running agent shows its clock ticking in mono. The only loops are the spinner and the skeleton
 
 ## Voice
-- English UI (pt later via i18n). Say what happened, why, and the next step, in the user's nouns
+- English and Brazilian Portuguese UI: English strings are the keys (`t()` in apps/desktop/src/i18n.ts, translations in locales/pt). Say what happened, why, and the next step, in the user's nouns
 - Never "Oops", exclamation marks, or announcing the AI. Never a generic "waiting for input"
 
 ## Exports

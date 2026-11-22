@@ -6,6 +6,7 @@ import { clock, elapsed } from "./run";
 import { Icon } from "./icons";
 import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, syncView, track, worktreeName, type Group } from "./lane";
 import { ErrorLine, Spinner } from "./ui";
+import { lang, plural, t, tx } from "./i18n";
 
 export interface LanesProps {
   yard: Yard | null;
@@ -58,18 +59,18 @@ export function LanesView(props: LanesProps) {
   return (
     <div class="lanes">
       <header class="lanes-head">
-        <h1 class="title">Lanes</h1>
+        <h1 class="title">{t("Lanes")}</h1>
         <Show when={props.yard && props.yard.lanes.length > 0 ? props.yard : null}>
           {(y) => (
             <p class="summary">
-              {y().lanes.length} {y().lanes.length === 1 ? "lane" : "lanes"},{" "}
-              <Show when={waiting() > 0} fallback="nothing waiting on you.">
-                <b>{waiting()} waiting on you.</b>
+              {plural(y().lanes.length, "{n} lane", "{n} lanes")},{" "}
+              <Show when={waiting() > 0} fallback={t("nothing waiting on you.")}>
+                <b>{t("{n} waiting on you.", { n: waiting() })}</b>
               </Show>
               <Show when={open().length > 0}>
                 {" "}
-                <Show when={shipping()} fallback={`${open().length} in the merge queue.`}>
-                  {(j) => `Shipping ${j().branch} to ${j().target}${open().length > 1 ? `, ${open().length - 1} more in line` : ""}.`}
+                <Show when={shipping()} fallback={t("{n} in the merge queue.", { n: open().length })}>
+                  {(j) => t("Shipping {branch} to {target}.", { branch: j().branch, target: j().target }) + (open().length > 1 ? " " + t("{n} more in line.", { n: open().length - 1 }) : "")}
                 </Show>
               </Show>
             </p>
@@ -82,16 +83,16 @@ export function LanesView(props: LanesProps) {
           onClick={props.onRefresh}
           disabled={props.fetching}
           aria-busy={props.fetching}
-          title="Fetch the remote and check every lane again (⌘R)"
+          title={t("Fetch the remote and check every lane again (⌘R)")}
         >
           <Show when={props.fetching} fallback={<Icon name="refresh" small />}>
             <Spinner />
           </Show>
-          {props.fetching ? "Fetching" : props.fetchedAt ? `Fetched ${ago(props.now - props.fetchedAt)}` : "Fetch"}
+          {props.fetching ? t("Fetching") : props.fetchedAt ? t("Fetched {when}", { when: ago(props.now - props.fetchedAt) }) : tx("Fetch", "git")}
         </button>
         <button type="button" class="btn btn-primary" onClick={props.onNew}>
           <Icon name="plus" small />
-          New lane <span class="kbd">N</span>
+          {t("New lane")} <span class="kbd">N</span>
         </button>
       </header>
 
@@ -115,17 +116,17 @@ export function LanesView(props: LanesProps) {
               <thead>
                 <tr>
                   <th scope="col">
-                    <span class="visually-hidden">Lane number</span>
+                    <span class="visually-hidden">{t("Lane number")}</span>
                   </th>
-                  <th scope="col">Lane</th>
+                  <th scope="col">{t("Lane")}</th>
                   <th scope="col">
                     <span class="rail rail-head">
                       <For each={track(y().lanes[0]!, y(), props.now)}>{(n) => <span>{n.stage}</span>}</For>
                     </span>
                   </th>
-                  <th scope="col">Worktree</th>
+                  <th scope="col">{t("Worktree")}</th>
                   <th scope="col" class="end">
-                    Next
+                    {t("Next")}
                   </th>
                 </tr>
               </thead>
@@ -139,13 +140,13 @@ export function LanesView(props: LanesProps) {
                           <Show when={g.key === "release" && readyForMain().length > 1}>
                             <button type="button" class="btn" onClick={() => props.onQueueAll(readyForMain(), y().production)}>
                               <Icon name="ship" small />
-                              Queue all {readyForMain().length} for {y().production}
+                              {t("Queue all {n} for {production}", { n: readyForMain().length, production: y().production })}
                             </button>
                           </Show>
                           <Show when={g.key === "shipped" && deletable() > 0}>
                             <button type="button" class="btn" onClick={props.onClean}>
                               <Icon name="trash" small />
-                              Clean up {deletable()}
+                              {t("Clean up {n}", { n: deletable() })}
                             </button>
                           </Show>
                         </span>
@@ -166,12 +167,11 @@ export function LanesView(props: LanesProps) {
         {(y) => (
           <section class="strays" aria-labelledby="strays-title">
             <h2 id="strays-title" class="group-head">
-              <span class="group-title">Only in {y().integration}</span>
+              <span class="group-title">{t("Only in {integ}", { integ: y().integration ?? "" })}</span>
               <span class="count">{y().only_in_integration.length}</span>
             </h2>
             <p class="strays-note">
-              Committed straight to {y().integration}, outside any lane, so the flow never carries them to{" "}
-              {y().production}.
+              {t("Committed straight to {integ}, outside any lane, so the flow never carries them to {production}.", { integ: y().integration ?? "", production: y().production })}
             </p>
             <ul class="commit-list">
               <For each={y().only_in_integration}>
@@ -180,7 +180,7 @@ export function LanesView(props: LanesProps) {
                     <span class="sha selectable">{c.short}</span>
                     <span class="selectable">{c.subject}</span>
                     <span class="who">
-                      {c.author}, {c.days_ago === 0 ? "today" : `${c.days_ago}d ago`}
+                      {c.author}, {c.days_ago === 0 ? t("today") : t("{n}d ago", { n: c.days_ago })}
                     </span>
                   </li>
                 )}
@@ -202,12 +202,12 @@ export function queuedGroup(l: Lane, jobs: ShipJob[], reviewing: string[] = []):
   return group(l);
 }
 
-const ordinal = (n: number) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
+const ordinal = (n: number) => (lang() === "pt-BR" ? `${n}º` : `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`);
 
 function GroupTitle(props: { group: Group; count: number }) {
   return (
     <>
-      <span class="group-title">{groupTitle[props.group]}</span>
+      <span class="group-title">{t(groupTitle[props.group])}</span>
       <span class={props.group === "waiting" ? "count count-hot" : "count"}>{props.count}</span>
     </>
   );
@@ -247,7 +247,7 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
         <Show when={p.props.checkingOut === l.branch} fallback={<Icon name="branch" small />}>
           <Spinner />
         </Show>
-        Check out
+        {t("Check out")}
       </button>
     );
   }
@@ -267,13 +267,13 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
             when={l.tracks_other}
             fallback={
               <span class="subject" title={l.status === "new" ? undefined : l.subject}>
-                {l.status === "new" ? `No commits yet, started from ${p.yard.production}` : l.subject}
+                {l.status === "new" ? t("No commits yet, started from {production}", { production: p.yard.production }) : l.subject}
               </span>
             }
           >
             {(other) => (
-              <span class="subject subject-warn" title={`git pull and git push on this branch go to ${other()}, another branch`}>
-                Tracks {other()}, not its own branch
+              <span class="subject subject-warn" title={t("git pull and git push on this branch go to {other}, another branch", { other: other() })}>
+                {t("Tracks {other}, not its own branch", { other: other() })}
               </span>
             )}
           </Show>
@@ -302,13 +302,13 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
         <Show when={wt()}>
           <span class="wt-cell">
             <span class="wt" title={l.worktree!.path} data-dirty={l.worktree!.dirty > 0 ? "" : undefined}>
-              {l.worktree!.dirty > 0 ? `${l.worktree!.dirty} changed` : "Clean"}
+              {l.worktree!.dirty > 0 ? t("{n} changed", { n: l.worktree!.dirty }) : t("Clean")}
             </span>
             <button
               type="button"
               class="btn btn-ghost btn-icon wt-term"
-              aria-label={`Open a terminal in ${l.branch}`}
-              title="Open a terminal here"
+              aria-label={t("Open a terminal in {branch}", { branch: l.branch })}
+              title={t("Open a terminal here")}
               onClick={(e) => {
                 e.stopPropagation();
                 props.onTerminal(l);
@@ -335,12 +335,12 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
                   <Icon name="fail" small />
                 </Show>
                 {j().state === "shipping"
-                  ? `Shipping to ${j().target}`
+                  ? t("Shipping to {target}", { target: j().target })
                   : j().state === "queued"
-                    ? `${ordinal(place())} in line for ${j().target}`
+                    ? t("{place} in line for {target}", { place: ordinal(place()), target: j().target })
                     : j().state === "conflict"
-                      ? `Conflicts with ${j().target} in ${j().conflicts.map((c) => c.split("/").pop()).join(", ")}`
-                      : `Did not ship to ${j().target}`}
+                      ? t("Conflicts with {target} in {files}", { target: j().target, files: j().conflicts.map((c) => c.split("/").pop()).join(", ") })
+                      : t("Did not ship to {target}", { target: j().target })}
               </span>
             )}
           </Show>
@@ -355,7 +355,7 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
                   p.props.onDequeue(j().id);
                 }}
               >
-                Clear
+                {t("Clear")}
               </button>
             )}
           </Show>
@@ -370,17 +370,17 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
             )}
           </Show>
           <Show when={target()}>
-            {(t) => (
+            {(to) => (
               <button
                 type="button"
                 class="btn"
                 onClick={(e) => {
                   e.stopPropagation();
-                  props.onShip(l, t());
+                  props.onShip(l, to());
                 }}
               >
                 <Icon name="ship" small />
-                Ship to {t()}
+                {t("Ship to {target}", { target: to() })}
               </button>
             )}
           </Show>
@@ -394,11 +394,11 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
 function Empty(props: { base: string; onNew: () => void }) {
   return (
     <div class="empty">
-      <div class="empty-title">No lanes yet</div>
-      <p class="empty-body">A lane is a branch with its own worktree, started from a fresh origin/{props.base}.</p>
+      <div class="empty-title">{t("No lanes yet")}</div>
+      <p class="empty-body">{t("A lane is a branch with its own worktree, started from a fresh origin/{base}.", { base: props.base })}</p>
       <button type="button" class="btn" onClick={props.onNew}>
         <Icon name="plus" small />
-        Start the first lane
+        {t("Start the first lane")}
       </button>
     </div>
   );
@@ -407,7 +407,7 @@ function Empty(props: { base: string; onNew: () => void }) {
 /** Same table, same columns and row height as the loaded yard, so nothing jumps when data lands. */
 function Skeleton() {
   return (
-    <table class="yard" aria-busy="true" aria-label="Loading lanes">
+    <table class="yard" aria-busy="true" aria-label={t("Loading lanes")}>
       <colgroup>
         <col class="c-no" />
         <col class="c-lane" />
@@ -418,13 +418,13 @@ function Skeleton() {
       <thead>
         <tr>
           <th scope="col">
-            <span class="visually-hidden">Lane number</span>
+            <span class="visually-hidden">{t("Lane number")}</span>
           </th>
-          <th scope="col">Lane</th>
+          <th scope="col">{t("Lane")}</th>
           <th scope="col" />
-          <th scope="col">Worktree</th>
+          <th scope="col">{t("Worktree")}</th>
           <th scope="col" class="end">
-            Next
+            {t("Next")}
           </th>
         </tr>
       </thead>
@@ -482,14 +482,14 @@ export function Tower(props: {
         props.runs.some((r) => r.branch === l.branch && isLive(r.state) && r.waiting.length > 0),
     ).length ?? 0;
   return (
-    <aside class="tower-pane" aria-label="Tower">
+    <aside class="tower-pane" aria-label={t("Tower")}>
       <div class="panel-head">
-        <span class="panel-title">Tower</span>
-        <span class="panel-meta">{props.yard ? `${props.yard.lanes.length} lanes` : ""}</span>
+        <span class="panel-title">{t("Tower")}</span>
+        <span class="panel-meta">{props.yard ? plural(props.yard.lanes.length, "{n} lane", "{n} lanes") : ""}</span>
       </div>
-      <div class="tower" role="listbox" aria-label="Lanes">
+      <div class="tower" role="listbox" aria-label={t("Lanes")}>
         <Show when={props.yard && props.yard.lanes.length === 0}>
-          <p class="tower-empty">No lanes yet. Branches with their own worktree show here, numbered.</p>
+          <p class="tower-empty">{t("No lanes yet. Branches with their own worktree show here, numbered.")}</p>
         </Show>
         <For each={props.yard?.lanes ?? []}>
           {(l) => {
@@ -513,7 +513,7 @@ export function Tower(props: {
                   <span class="tower-sub" title={syncView(l, props.now).detail}>
                     <span>{syncView(l, props.now).label.toLowerCase()}</span>
                     <Show when={l.worktree && l.worktree.dirty > 0}>
-                      <span>+{l.worktree!.dirty} changed</span>
+                      <span>+{t("{n} changed", { n: l.worktree!.dirty })}</span>
                     </Show>
                     <Show when={l.idle_days > 0}>
                       <span>{l.idle_days}d</span>
@@ -528,7 +528,7 @@ export function Tower(props: {
                       <Show when={waiting() || v().chip === "done" || v().chip === "failed"}>
                         <span class="chip" data-state={chip()}>
                           <Icon name={waiting() && v().chip !== "failed" ? "needs" : v().icon} small />
-                          {waiting() ? "You" : v().chip === "done" ? "Done" : "Failed"}
+                          {waiting() ? t("You") : v().chip === "done" ? t("Done") : t("Failed")}
                         </span>
                       </Show>
                     }
@@ -539,7 +539,7 @@ export function Tower(props: {
                         fallback={
                           <span class="chip" data-state="needs">
                             <Icon name="needs" small />
-                            You
+                            {t("You")}
                           </span>
                         }
                       >
@@ -557,8 +557,8 @@ export function Tower(props: {
         </For>
       </div>
       <div class="tower-foot">
-        <Show when={needs() > 0} fallback="Nothing waiting on you.">
-          <b>{needs()}</b> waiting on you.
+        <Show when={needs() > 0} fallback={t("Nothing waiting on you.")}>
+          <b>{needs()}</b> {t("waiting on you.")}
         </Show>
       </div>
     </aside>

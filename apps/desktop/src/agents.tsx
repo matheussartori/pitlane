@@ -6,6 +6,7 @@ import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMou
 import { createStore, reconcile } from "solid-js/store";
 import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
+import { plural, t, tx } from "./i18n";
 import { toast } from "./ui";
 import { ApprovalBlock } from "./approvals";
 import { Prose } from "./prose";
@@ -82,18 +83,18 @@ export const agentSelected = () => (selected() && agentSessions().some((m) => m.
 export async function stopAllAgents(): Promise<void> {
   try {
     const n = await api.runsStopAll();
-    toast({ tone: "info", title: n > 0 ? `Stopping ${n} agent${n > 1 ? "s" : ""}` : "Nothing was running", body: n > 0 ? "Each ends its current step; anything still there after a few seconds is killed." : undefined });
+    toast({ tone: "info", title: n > 0 ? plural(n, "Stopping {n} agent", "Stopping {n} agents") : t("Nothing was running"), body: n > 0 ? t("Each ends its current step; anything still there after a few seconds is killed.") : undefined });
     void refreshAgents();
   } catch (e) {
-    toast({ tone: "fail", title: "Could not stop the agents", body: msg(e) });
+    toast({ tone: "fail", title: t("Could not stop the agents"), body: msg(e) });
   }
 }
 
 function StopAll() {
   return (
     <Show when={agentsWorking() > 0}>
-      <button type="button" class="btn btn-ghost ag-stop-all" title="Stop every agent Pitlane started" onClick={() => void stopAllAgents()}>
-        <Icon name="stop" small /> Stop all
+      <button type="button" class="btn btn-ghost ag-stop-all" title={t("Stop every agent Pitlane started")} onClick={() => void stopAllAgents()}>
+        <Icon name="stop" small /> {t("Stop all")}
       </button>
     </Show>
   );
@@ -189,18 +190,18 @@ export async function startAgents() {
 
 const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant" };
 export function kindLabel(m: RunMeta): string {
-  const k = KIND[m.kind ?? "run"] ?? "Run";
-  return m.kind === "run" || !m.kind ? ((m.round ?? 0) > 0 ? `${k} · round ${(m.round ?? 0) + 1}` : k) : k;
+  const k = tx(KIND[m.kind ?? "run"] ?? "Run", "kind");
+  return m.kind === "run" || !m.kind ? ((m.round ?? 0) > 0 ? t("{kind} · round {n}", { kind: k, n: (m.round ?? 0) + 1 }) : k) : k;
 }
 
 type Look = { icon: IconName; word: string; s: "work" | "needs" | "done" | "fail" | "stopped" };
 export function look(m: RunMeta): Look {
-  if (live(m) && m.waiting.length > 0) return { icon: "needs", word: "Needs you", s: "needs" };
-  if (m.state === "verifying") return { icon: "verify", word: "Checking", s: "work" };
-  if (live(m)) return { icon: "run", word: "Working", s: "work" };
-  if (m.state === "done") return { icon: "done", word: "Done", s: "done" };
-  if (m.state === "stopped") return { icon: "stop", word: "Stopped", s: "stopped" };
-  return { icon: "fail", word: m.state === "interrupted" ? "Interrupted" : "Failed", s: "fail" };
+  if (live(m) && m.waiting.length > 0) return { icon: "needs", word: t("Needs you"), s: "needs" };
+  if (m.state === "verifying") return { icon: "verify", word: t("Checking"), s: "work" };
+  if (live(m)) return { icon: "run", word: t("Working"), s: "work" };
+  if (m.state === "done") return { icon: "done", word: t("Done"), s: "done" };
+  if (m.state === "stopped") return { icon: "stop", word: t("Stopped"), s: "stopped" };
+  return { icon: "fail", word: m.state === "interrupted" ? t("Interrupted") : t("Failed"), s: "fail" };
 }
 
 const isSpawn = (e: RunEvent): e is Extract<RunEvent, { kind: "tool" }> => e.kind === "tool" && (e.name === "Task" || e.name === "Agent");
@@ -232,15 +233,15 @@ export function subagentsOf(m: RunMeta): Subagent[] {
 
 /** The last thing a session did, in one line. */
 export function lastLine(m: RunMeta): string {
-  const t = timelines[m.id] ?? [];
-  for (let i = t.length - 1; i >= 0; i--) {
-    const e = t[i]!;
+  const tl = timelines[m.id] ?? [];
+  for (let i = tl.length - 1; i >= 0; i--) {
+    const e = tl[i]!;
     if (e.kind === "text") return e.text.trim().split("\n").pop() ?? "";
     if (e.kind === "tool") return `${e.name} ${e.detail}`.trim();
     if (e.kind === "note") return e.text;
-    if (e.kind === "said") return `you: ${e.text}`;
+    if (e.kind === "said") return t("you: {text}", { text: e.text });
   }
-  return m.state === "starting" ? "Preparing the worktree" : "Starting";
+  return m.state === "starting" ? t("Preparing the worktree") : t("Starting");
 }
 
 function since(m: RunMeta): string {
@@ -271,11 +272,11 @@ export function AgentList(props: { compact: boolean }) {
           </For>
         }
       >
-        <div class="ag-list" role="tablist" aria-label="Agents" aria-orientation="vertical">
+        <div class="ag-list" role="tablist" aria-label={t("Agents")} aria-orientation="vertical">
           <div class="ag-head">
-            <span class="terms-title">Agents</span>
+            <span class="terms-title">{t("Agents")}</span>
             <Show when={agentsWorking() > 0}>
-              <span class="ag-working">{agentsWorking()} working</span>
+              <span class="ag-working">{t("{n} working", { n: agentsWorking() })}</span>
             </Show>
             <span class="ag-bar-fill" />
             <StopAll />
@@ -337,7 +338,7 @@ function SessionRow(props: { m: RunMeta }) {
         </span>
       </button>
       <Show when={!live(props.m)}>
-        <button type="button" class="tt-close" aria-label="Close this session" title="Close" onClick={() => close(props.m.id)}>
+        <button type="button" class="tt-close" aria-label={t("Close this session")} title={t("Close")} onClick={() => close(props.m.id)}>
           <Icon name="close" small />
         </button>
       </Show>
@@ -355,7 +356,7 @@ function SubRow(props: { m: RunMeta; s: Subagent }) {
           <span class="tt-name ag-sub-name">{props.s.label}</span>
         </span>
         <span class="tt-status ag-status" data-s={props.s.state}>
-          {props.s.state === "work" ? "Working" : props.s.state === "done" ? "Done" : props.s.state === "fail" ? "Failed" : "Ended"}
+          {props.s.state === "work" ? t("Working") : props.s.state === "done" ? t("Done") : props.s.state === "fail" ? t("Failed") : t("Ended")}
         </span>
       </button>
     </div>
@@ -376,7 +377,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
   const subLabel = () => {
     const s = sub();
     const mm = m();
-    return s && mm ? (subagentsOf(mm).find((x) => x.id === s)?.label ?? "subagent") : null;
+    return s && mm ? (subagentsOf(mm).find((x) => x.id === s)?.label ?? t("subagent")) : null;
   };
   const events = createMemo(() => {
     const mm = m();
@@ -424,14 +425,14 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
 
   const send = async () => {
     const mm = m();
-    const t = text().trim();
-    if (!mm || !t) return;
+    const msgText = text().trim();
+    if (!mm || !msgText) return;
     try {
-      await api.runSay(mm.id, t);
+      await api.runSay(mm.id, msgText);
       setText("");
       keep(mm.id, true);
     } catch (e) {
-      toast({ tone: "fail", title: "The agent did not get it", body: msg(e) });
+      toast({ tone: "fail", title: t("The agent did not get it"), body: msg(e) });
     }
   };
   const stop = async () => {
@@ -439,9 +440,9 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
     if (!mm || !live(mm)) return;
     try {
       await api.runStop(mm.id);
-      toast({ tone: "info", title: `Stopping #${mm.card} ${kindLabel(mm)}`, body: "It ends its current step, then stops." });
+      toast({ tone: "info", title: t("Stopping #{card} {kind}", { card: mm.card, kind: kindLabel(mm) }), body: t("It ends its current step, then stops.") });
     } catch (e) {
-      toast({ tone: "fail", title: "Could not stop it", body: msg(e) });
+      toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) });
     }
   };
   const onKey = (e: KeyboardEvent) => {
@@ -475,24 +476,24 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
             <span class="ag-bar-fill" />
             <Show when={(mm().kind ?? "run") === "run"}>
               <button type="button" class="btn btn-ghost" onClick={() => props.onOpenRun(mm().id)}>
-                Open run
+                {t("Open run")}
               </button>
             </Show>
             <Show
               when={live(mm())}
               fallback={
                 <button type="button" class="btn btn-ghost" onClick={() => close(mm().id)}>
-                  Close
+                  {t("Close")}
                 </button>
               }
             >
-              <button type="button" class="btn btn-ghost" title="Stop this agent (Ctrl+C)" onClick={() => void stop()}>
-                <Icon name="stop" small /> Stop <span class="kbd">⌃C</span>
+              <button type="button" class="btn btn-ghost" title={t("Stop this agent (Ctrl+C)")} onClick={() => void stop()}>
+                <Icon name="stop" small /> {t("Stop")} <span class="kbd">⌃C</span>
               </button>
             </Show>
           </div>
           <div class="ag-log" ref={log} onScroll={(e) => (stick = e.currentTarget.scrollTop + e.currentTarget.clientHeight >= e.currentTarget.scrollHeight - 24)}>
-            <For each={events()} fallback={<div class="ag-line ag-muted">{live(mm()) ? "Starting…" : "Nothing recorded."}</div>}>
+            <For each={events()} fallback={<div class="ag-line ag-muted">{live(mm()) ? t("Starting…") : t("Nothing recorded.")}</div>}>
               {(e) => <Line e={e} m={mm()} done={e.kind === "tool" ? results().get(e.id) : undefined} />}
             </For>
             <Show when={live(mm())}>
@@ -510,11 +511,11 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
               placeholder={
                 live(mm())
                   ? sub()
-                    ? "Message the agent that opened this subagent (Enter). Ctrl+C stops it"
-                    : "Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it"
-                  : `This session ended (${look(mm()).word.toLowerCase()})`
+                    ? t("Message the agent that opened this subagent (Enter). Ctrl+C stops it")
+                    : t("Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it")
+                  : t("This session ended ({state})", { state: look(mm()).word.toLowerCase() })
               }
-              aria-label="Message the agent"
+              aria-label={t("Message the agent")}
               value={text()}
               onInput={(e) => setText(e.currentTarget.value)}
               onKeyDown={(e) => {
@@ -536,12 +537,12 @@ const TOOL_LABEL: Record<string, string> = { Edit: "Update", MultiEdit: "Update"
 /** What a finished tool came to, in one line, the way Claude Code sums it up. */
 function resultLine(name: string, d: Extract<RunEvent, { kind: "tool-done" }>): string {
   const n = d.lines ?? (d.detail ? 1 : 0);
-  if (!d.ok) return d.detail || "Failed";
-  if (name === "Read") return `Read ${n} line${n === 1 ? "" : "s"}`;
-  if (name === "Edit" || name === "MultiEdit" || name === "Write" || name === "NotebookEdit") return d.detail || "Done";
-  if (name === "Grep" || name === "Glob") return n > 1 ? `Found ${n} results` : d.detail || "No matches";
-  const more = n > 1 ? `  … +${n - 1} lines` : "";
-  return `${d.detail || "Done"}${more}`;
+  if (!d.ok) return d.detail || t("Failed");
+  if (name === "Read") return plural(n, "Read {n} line", "Read {n} lines");
+  if (name === "Edit" || name === "MultiEdit" || name === "Write" || name === "NotebookEdit") return d.detail || t("Done");
+  if (name === "Grep" || name === "Glob") return n > 1 ? t("Found {n} results", { n }) : d.detail || t("No matches");
+  const more = n > 1 ? `  … ${plural(n - 1, "+{n} line", "+{n} lines")}` : "";
+  return `${d.detail || t("Done")}${more}`;
 }
 
 /** An edit as Claude Code shows it: removed lines, then added ones. */
@@ -553,7 +554,7 @@ function Diff(props: { change: { old: string; new: string; cut: number } }) {
       <For each={old()}>{(l) => <div class="cc-del"><span class="cc-sign">-</span>{l || " "}</div>}</For>
       <For each={add()}>{(l) => <div class="cc-add"><span class="cc-sign">+</span>{l || " "}</div>}</For>
       <Show when={props.change.cut > 0}>
-        <div class="cc-more">… {props.change.cut} more line{props.change.cut === 1 ? "" : "s"}</div>
+        <div class="cc-more">… {plural(props.change.cut, "{n} more line", "{n} more lines")}</div>
       </Show>
     </div>
   );
@@ -578,7 +579,7 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind:
             <span class="cc-dot" data-s={props.done ? (props.done.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
             <span>
               <b class="cc-name">Task</b>
-              <span class="cc-arg">({e.detail || e.name})</span> <span class="ag-muted">› open</span>
+              <span class="cc-arg">({e.detail || e.name})</span> <span class="ag-muted">› {t("open")}</span>
             </span>
           </button>
         );
@@ -588,14 +589,14 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind:
           <div class="cc-call">
             <span class="cc-dot" data-s={d ? (d.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
             <span>
-              <b class="cc-name">{TOOL_LABEL[e.name] ?? e.name}</b>
+              <b class="cc-name">{t(TOOL_LABEL[e.name] ?? e.name)}</b>
               <Show when={e.detail}>
                 <span class="cc-arg">({e.detail})</span>
               </Show>
             </span>
           </div>
           <Show when={e.change}>{(c) => <Diff change={c()} />}</Show>
-          <Show when={d} fallback={<Show when={live(props.m)}><div class="cc-result ag-muted">⎿  Running…</div></Show>}>
+          <Show when={d} fallback={<Show when={live(props.m)}><div class="cc-result ag-muted">⎿  {t("Running…")}</div></Show>}>
             {(d) => <div class={`cc-result ${d().ok ? "ag-muted" : "ag-fail"}`}>⎿  {resultLine(e.name, d())}</div>}
           </Show>
         </div>
@@ -616,15 +617,15 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind:
     case "note":
       return <div class="ag-line ag-muted">{e.text}</div>;
     case "started":
-      return <div class="ag-line ag-muted">Session started{e.model ? ` on ${e.model}` : ""}</div>;
+      return <div class="ag-line ag-muted">{e.model ? t("Session started on {model}", { model: e.model }) : t("Session started")}</div>;
     case "approval":
       return (
         <div class="ag-line ag-needs">
-          <span class="ag-glyph">?</span> Asks to use {e.approval.tool}: {e.approval.detail}
+          <span class="ag-glyph">?</span> {t("Asks to use {tool}: {detail}", { tool: e.approval.tool, detail: e.approval.detail })}
         </div>
       );
     case "decided":
-      return <div class="ag-line ag-muted">You answered: {e.decision}</div>;
+      return <div class="ag-line ag-muted">{t("You answered: {decision}", { decision: e.decision })}</div>;
     case "proof":
       return (
         <div class={`ag-line ${e.ok ? "ag-muted" : "ag-fail"}`}>
@@ -634,19 +635,19 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind:
     case "judged":
       return (
         <div class="ag-line ag-text">
-          Judge: {e.verdict === "approve" ? "approves" : "asks for changes"}. {e.summary}
+          {e.verdict === "approve" ? t("Judge: approves. {summary}", { summary: e.summary }) : t("Judge: asks for changes. {summary}", { summary: e.summary })}
         </div>
       );
     case "limited":
-      return <div class="ag-line ag-fail">Hit the {e.window.replace("_", "-")} usage limit.</div>;
+      return <div class="ag-line ag-fail">{t("Hit the {window} usage limit.", { window: e.window.replace("_", "-") })}</div>;
     case "finished":
       return (
         <div class="ag-line ag-muted">
-          — {e.ok ? "finished" : "stopped with an error"} · {e.turns} turns · ${e.cost_usd.toFixed(2)}
+          — {e.ok ? t("finished") : t("stopped with an error")} · {plural(e.turns, "{n} turn", "{n} turns")} · ${e.cost_usd.toFixed(2)}
         </div>
       );
     case "exited":
-      return <div class="ag-line ag-muted">— session ended: {e.state}</div>;
+      return <div class="ag-line ag-muted">— {t("session ended: {state}", { state: e.state })}</div>;
     default:
       return null;
   }
@@ -702,7 +703,7 @@ function DockGrip() {
       class="ag-dock-grip"
       role="separator"
       aria-orientation="horizontal"
-      aria-label="Resize the agents dock"
+      aria-label={t("Resize the agents dock")}
       aria-valuenow={dockH()}
       aria-valuemin={DOCK_H.min}
       tabindex="0"
@@ -738,21 +739,21 @@ export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () =
   };
   return (
     <Show when={agentSessions().length > 0}>
-      <section class="ag-dock" aria-label="Agents" data-open={dockOpen() ? "" : undefined}>
+      <section class="ag-dock" aria-label={t("Agents")} data-open={dockOpen() ? "" : undefined}>
         <DockGrip />
         <div class="ag-dock-head">
           <button type="button" class="ag-dock-toggle" aria-expanded={dockOpen()} onClick={toggle}>
             <Icon name="chev" small class={dockOpen() ? "ag-chev-open" : undefined} />
-            <span class="terms-title">Agents</span>
+            <span class="terms-title">{t("Agents")}</span>
             <span class="ag-working">
-              {agentsWorking() > 0 ? `${agentsWorking()} working` : "all ended"}
-              {agentsWanting() > 0 ? ` · ${agentsWanting()} need you` : ""}
+              {agentsWorking() > 0 ? t("{n} working", { n: agentsWorking() }) : t("all ended")}
+              {agentsWanting() > 0 ? ` · ${t("{n} need you", { n: agentsWanting() })}` : ""}
             </span>
           </button>
           <span class="ag-bar-fill" />
           <StopAll />
           <button type="button" class="btn btn-ghost" onClick={props.onOpenAll}>
-            <Icon name="term" small /> Open in Terminal
+            <Icon name="term" small /> {t("Open in Terminal")}
           </button>
         </div>
         <Show when={dockOpen()}>
@@ -774,7 +775,7 @@ export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () =
                     </span>
                     <span class="ag-cell-title">{m.card_title}</span>
                     <span class="ag-cell-last">
-                      {subs() > 0 ? `${subs()} subagent${subs() > 1 ? "s" : ""} · ` : ""}
+                      {subs() > 0 ? `${plural(subs(), "{n} subagent", "{n} subagents")} · ` : ""}
                       {lastLine(m)}
                     </span>
                   </button>

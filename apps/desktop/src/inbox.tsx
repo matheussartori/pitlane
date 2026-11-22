@@ -6,6 +6,7 @@ import { Dictate } from "./dictate";
 import { Prose, inline } from "./prose";
 import { openQuestions, type OpenQuestion } from "./cards";
 import { Icon } from "./icons";
+import { plural, t } from "./i18n";
 import { Spinner, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -44,7 +45,7 @@ export function QuestionBlock(props: {
             <span class="kbd">{i() + 1}</span>
             <span>{o}</span>
             <Show when={props.q.recommended === i()}>
-              <small>Recommended</small>
+              <small>{t("Recommended")}</small>
             </Show>
           </button>
         )}
@@ -60,13 +61,13 @@ export function QuestionBlock(props: {
         }}
       >
         <label class="visually-hidden" for={`other-${props.q.card.id}-${props.q.id}`}>
-          Another answer
+          {t("Another answer")}
         </label>
         <input
           ref={field}
           id={`other-${props.q.card.id}-${props.q.id}`}
           class="input"
-          placeholder={props.q.options.length ? "Or answer in your own words" : "Your answer"}
+          placeholder={props.q.options.length ? t("Or answer in your own words") : t("Your answer")}
           autocomplete="off"
           value={other()}
           disabled={props.busy}
@@ -74,7 +75,7 @@ export function QuestionBlock(props: {
         />
         <Dictate field={() => field} value={other} onChange={write} />
         <button type="submit" class="btn" disabled={props.busy || !other().trim()}>
-          Answer
+          {t("Answer")}
         </button>
       </form>
     </div>
@@ -95,15 +96,15 @@ export function QuestionAbout(props: { q: OpenQuestion; card?: boolean }) {
       <Show when={props.card !== false && (props.q.card.body.trim() || notes().length)}>
         <details class="q-card">
           <summary>
-            Read card #{props.q.card.id}
-            <Show when={(props.q.card.images ?? []).length}> · {(props.q.card.images ?? []).length} images</Show>
+            {t("Read card #{id}", { id: props.q.card.id })}
+            <Show when={(props.q.card.images ?? []).length}> · {plural((props.q.card.images ?? []).length, "{n} image", "{n} images")}</Show>
           </summary>
           <div class="q-card-body">
             <Show when={props.q.card.body.trim()}>
               <Prose text={props.q.card.body} />
             </Show>
             <Show when={notes().length}>
-              <p class="cs-label">What Claude found</p>
+              <p class="cs-label">{t("What Claude found")}</p>
               <For each={notes()}>{(n) => <Prose text={n.text} />}</For>
             </Show>
           </div>
@@ -130,11 +131,11 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
     setBusy(true);
     try {
       const r = await api.cardReanswer(props.repo, props.card.id, props.q.id, text);
-      toast({ tone: "done", title: `${r.decision} changed`, body: text });
+      toast({ tone: "done", title: t("{decision} changed", { decision: r.decision }), body: text });
       setEditing(false);
       props.onChanged();
     } catch (e) {
-      toast({ tone: "fail", title: "The decision did not change", body: msg(e) }, 0);
+      toast({ tone: "fail", title: t("The decision did not change"), body: msg(e) }, 0);
     } finally {
       setBusy(false);
     }
@@ -154,7 +155,7 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
           disabled={busy()}
           onClick={() => setEditing(!editing())}
         >
-          {editing() ? "Keep" : "Change"}
+          {editing() ? t("Keep") : t("Change")}
         </button>
       </dd>
       <Show when={editing()}>
@@ -198,10 +199,10 @@ export function InboxView(props: {
     setBusy(true);
     try {
       const r = await api.cardAnswer(props.repo, q.card.id, q.id, text);
-      toast({ tone: "done", title: `Recorded as ${r.decision}`, body: `#${q.card.id} ${q.card.title}: ${text}` });
+      toast({ tone: "done", title: t("Recorded as {decision}", { decision: r.decision }), body: `#${q.card.id} ${q.card.title}: ${text}` });
       props.onChanged();
     } catch (e) {
-      toast({ tone: "fail", title: "Not recorded", body: msg(e) });
+      toast({ tone: "fail", title: t("Not recorded"), body: msg(e) });
     } finally {
       setBusy(false);
     }
@@ -255,57 +256,59 @@ export function InboxView(props: {
   return (
     <div class="inbox">
       <header class="screen-head">
-        <h1 class="title">Inbox</h1>
+        <h1 class="title">{t("Inbox")}</h1>
         <Show when={questions().length > 0 || props.approvals.length > 0}>
           <p class="summary">
             <Show when={props.approvals.length > 0}>
               <b>
-                {props.approvals.length} {props.approvals.length === 1 ? "agent waits" : "agents wait"} for you.
+                {plural(props.approvals.length, "{n} agent waits for you.", "{n} agents wait for you.")}
               </b>{" "}
             </Show>
             <Show when={questions().length > 0}>
-              {questions().length} {questions().length === 1 ? "question" : "questions"} on {cardsAsking()}{" "}
-              {cardsAsking() === 1 ? "card" : "cards"}.
+              {t("{questions} on {cards}.", {
+                questions: plural(questions().length, "{n} question", "{n} questions"),
+                cards: plural(cardsAsking(), "{n} card", "{n} cards"),
+              })}
             </Show>
           </p>
         </Show>
         <span class="spacer" />
         <Show when={questions().length > 0}>
           <p class="keys">
-            <span class="kbd">1</span> to <span class="kbd">9</span> answers, <span class="kbd">↵</span> takes the
-            recommended, <span class="kbd">J</span> <span class="kbd">K</span> move
+            <span class="kbd">1</span> {t("to")} <span class="kbd">9</span> {t("answers,")} <span class="kbd">↵</span> {t("takes the recommended,")}{" "}
+            <span class="kbd">J</span> <span class="kbd">K</span> {t("move")}
           </p>
         </Show>
       </header>
 
       <For each={props.approvals}>
         {(w) => (
-          <section class="inbox-card" aria-label={`Card ${w.run.card}: ${w.run.card_title}`}>
+          <section class="inbox-card" aria-label={t("Card {id}: {title}", { id: w.run.card, title: w.run.card_title })}>
             <header class="inbox-card-head">
               <button type="button" class="card-link" onClick={() => props.onOpenRun(w.run.id)}>
                 <span class="card-id">#{w.run.card}</span>
                 {w.run.card_title}
               </button>
-              <span class="caption">Its agent waits, mid-run</span>
+              <span class="caption">{t("Its agent waits, mid-run")}</span>
             </header>
             <ApprovalBlock run={w.run.id} approval={w.approval} />
           </section>
         )}
       </For>
 
-      <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> Reading the cards</div>}>
+      <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> {t("Reading the cards")}</div>}>
         <Show when={questions().length > 0} fallback={<Show when={props.approvals.length === 0}><InboxEmpty /></Show>}>
           <div class="inbox-list">
             <For each={byCard()}>
               {(g) => (
-                <section class="inbox-card" aria-label={`Card ${g.card.id}: ${g.card.title}`}>
+                <section class="inbox-card" aria-label={t("Card {id}: {title}", { id: g.card.id, title: g.card.title })}>
                   <header class="inbox-card-head">
                     <button type="button" class="card-link" onClick={() => props.onOpenCard(g.card.id)}>
                       <span class="card-id">#{g.card.id}</span>
                       {g.card.title}
                     </button>
                     <span class="caption">
-                      {g.qs.length} open of {g.total}
+                      {t("{open} open of {total}", { open: g.qs.length, total: g.total })}
                     </span>
                   </header>
                   <Show when={g.decided.length > 0}>
@@ -345,9 +348,9 @@ export function InboxView(props: {
 function InboxEmpty() {
   return (
     <div class="empty">
-      <div class="empty-title">Nothing to answer</div>
+      <div class="empty-title">{t("Nothing to answer")}</div>
       <p class="empty-body">
-        Agents ask here before they start, all their questions at once. Connect Claude Code to this repository’s cards:
+        {t("Agents ask here before they start, all their questions at once. Connect Claude Code to this repository’s cards:")}
       </p>
       <div class="install">
         <code class="selectable">{MCP_INSTALL}</code>
@@ -356,11 +359,11 @@ function InboxEmpty() {
           class="btn"
           onClick={() => {
             void navigator.clipboard.writeText(MCP_INSTALL);
-            toast({ tone: "done", title: "Copied", body: "Run it in a terminal, then ask Claude Code to plan a card." });
+            toast({ tone: "done", title: t("Copied"), body: t("Run it in a terminal, then ask Claude Code to plan a card.") });
           }}
         >
           <Icon name="copy" small />
-          Copy
+          {t("Copy")}
         </button>
       </div>
     </div>

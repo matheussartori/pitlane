@@ -13,6 +13,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { files, onTerm, openExternal, terms, type Lane, type TermInfo } from "./api";
 import { AgentList, AgentPane, agentGroups, agentSelected, selectAgent } from "./agents";
 import { openInCode } from "./code";
+import { t } from "./i18n";
 import { Icon } from "./icons";
 import { dismissable, toast } from "./ui";
 
@@ -265,8 +266,8 @@ function lastLine(t: Terminal): string {
 }
 
 function placeName(term: number) {
-  const t = tabOf(term);
-  return t?.name || meta[term]?.label || "A terminal";
+  const tb = tabOf(term);
+  return tb?.name || meta[term]?.label || t("A terminal");
 }
 
 async function systemNotify(title: string, body: string) {
@@ -308,7 +309,7 @@ function attend(term: number, status: "bell" | "waiting", note: string) {
   if ((m.status === "bell" || m.status === "waiting") && Date.now() - m.at < 3000) return;
   setMeta(term, { status, note, at: Date.now() });
   if (!document.hasFocus() && notifyOn) {
-    void systemNotify(status === "bell" ? `${placeName(term)} needs you` : `${placeName(term)} is waiting`, note || "The program stopped and may be waiting for you.");
+    void systemNotify(status === "bell" ? t("{name} needs you", { name: placeName(term) }) : t("{name} is waiting", { name: placeName(term) }), note || t("The program stopped and may be waiting for you."));
   }
 }
 
@@ -559,27 +560,27 @@ export async function openTerminal(cwd: string, label: string): Promise<boolean>
     save();
     return true;
   } catch (e) {
-    toast({ tone: "fail", title: "No terminal", body: msg(e) });
+    toast({ tone: "fail", title: t("No terminal"), body: msg(e) });
     return false;
   }
 }
 
 async function split(dir: Dir) {
-  const t = activeTab();
-  if (!t) return;
-  const from = meta[t.focus];
+  const tb = activeTab();
+  if (!tb) return;
+  const from = meta[tb.focus];
   try {
     const info = await terms.open(from?.cwd ?? "", from?.label ?? "terminal", 100, 30);
     make(info);
     // As in Warp: the panes along the split share the room equally, however many there are.
-    setTab(t.id, (x) => {
+    setTab(tb.id, (x) => {
       const root = insert(x.root, x.focus, pane(info.id), dir === "row" ? "right" : "bottom");
       const o = owner(root, info.id, dir);
       if (o) o.split.sizes = o.split.children.map(() => 1 / o.split.children.length);
       return { root, focus: info.id, zoom: false };
     });
   } catch (e) {
-    toast({ tone: "fail", title: "No terminal", body: msg(e) });
+    toast({ tone: "fail", title: t("No terminal"), body: msg(e) });
   }
 }
 
@@ -810,7 +811,7 @@ const STATUS: Record<Exclude<Status, "idle">, { icon: string; word: string }> = 
 function TabRow(props: { tab: Tab; index: number }) {
   const [editing, setEditing] = createSignal(false);
   const focusMeta = () => meta[props.tab.focus];
-  const name = () => props.tab.name || focusMeta()?.label || "terminal";
+  const name = () => props.tab.name || focusMeta()?.label || t("terminal");
   const sub = () => {
     const m = focusMeta();
     if (!m) return "";
@@ -841,7 +842,7 @@ function TabRow(props: { tab: Tab; index: number }) {
           <input
             class="input input-mono tt-rename"
             value={props.tab.name ?? name()}
-            aria-label="Tab name"
+            aria-label={t("Tab name")}
             ref={(el) => requestAnimationFrame(() => (el.focus(), el.select()))}
             onKeyDown={(e) => {
               if (e.key === "Enter") rename(e.currentTarget.value);
@@ -857,7 +858,7 @@ function TabRow(props: { tab: Tab; index: number }) {
           role="tab"
           class="tt-main"
           aria-selected={st.active === props.tab.id}
-          title={`${focusMeta()?.cwd ?? ""}${props.index < 9 ? `  ⌘${props.index + 1}` : ""}\nDouble-click to rename`}
+          title={`${focusMeta()?.cwd ?? ""}${props.index < 9 ? `  ⌘${props.index + 1}` : ""}\n${t("Double-click to rename")}`}
           onPointerDown={(e) => startDrag(e, { kind: "tab", id: props.tab.id })}
           onClick={() => selectTab(props.tab.id)}
           onDblClick={() => setEditing(true)}
@@ -872,15 +873,15 @@ function TabRow(props: { tab: Tab; index: number }) {
           <Show when={status().s !== "idle"}>
             <span class="tt-status" data-s={status().s} title={status().note || undefined}>
               <Icon name={STATUS[status().s as Exclude<Status, "idle">].icon} small />
-              <Show when={st.side === "left"}>{STATUS[status().s as Exclude<Status, "idle">].word}</Show>
+              <Show when={st.side === "left"}>{t(STATUS[status().s as Exclude<Status, "idle">].word)}</Show>
             </span>
           </Show>
           <Show when={count() > 1 && status().s === "idle"}>
-            <span class="tt-count" title={`${count()} panes`}>{count()}</span>
+            <span class="tt-count" title={t("{n} panes", { n: count() })}>{count()}</span>
           </Show>
         </button>
       </Show>
-      <button type="button" class="tt-close" aria-label={`Close ${name()}`} title="Close tab" onClick={() => closeTab(props.tab.id)}>
+      <button type="button" class="tt-close" aria-label={t("Close {name}", { name: name() })} title={t("Close tab")} onClick={() => closeTab(props.tab.id)}>
         <Icon name="close" small />
       </button>
     </div>
@@ -928,7 +929,7 @@ function PaneView(props: { term: number; tab: Tab; alone: boolean }) {
   return (
     <div class="pane" data-pane={props.term} data-focus={focused() ? "" : undefined} data-drop={over()} onPointerDown={() => !focused() && focusPane(props.term)}>
       <Show when={!props.alone || props.tab.zoom}>
-        <div class="pane-bar" onPointerDown={(e) => startDrag(e, { kind: "pane", term: props.term })} title="Drag onto another pane to move it">
+        <div class="pane-bar" onPointerDown={(e) => startDrag(e, { kind: "pane", term: props.term })} title={t("Drag onto another pane to move it")}>
           <span class="pane-name" title={m()?.cwd}>{m()?.label}</span>
           <span class="pane-place">{m()?.title}</span>
           <Show when={m() && m()!.status !== "idle"}>
@@ -939,15 +940,15 @@ function PaneView(props: { term: number; tab: Tab; alone: boolean }) {
           <button
             type="button"
             class="pane-btn"
-            aria-label={props.tab.zoom ? "Show all panes" : "Zoom this pane"}
-            title={props.tab.zoom ? "Show all panes (⌘⇧↩)" : "Zoom (⌘⇧↩)"}
+            aria-label={props.tab.zoom ? t("Show all panes") : t("Zoom this pane")}
+            title={props.tab.zoom ? t("Show all panes (⌘⇧↩)") : t("Zoom (⌘⇧↩)")}
             aria-pressed={props.tab.zoom}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setTab(props.tab.id, (x) => ({ zoom: !x.zoom, focus: props.term }))}
           >
             <Icon name={props.tab.zoom ? "unzoom" : "zoom"} small />
           </button>
-          <button type="button" class="pane-btn" aria-label="Close pane" title="Close pane (⌘W)" onPointerDown={(e) => e.stopPropagation()} onClick={() => closePane(props.term)}>
+          <button type="button" class="pane-btn" aria-label={t("Close pane")} title={t("Close pane (⌘W)")} onPointerDown={(e) => e.stopPropagation()} onClick={() => closePane(props.term)}>
             <Icon name="close" small />
           </button>
         </div>
@@ -1003,7 +1004,7 @@ function SplitView(props: { node: Split; tab: Tab; path: number[] }) {
                 class="split-handle"
                 role="separator"
                 aria-orientation={props.node.dir === "row" ? "vertical" : "horizontal"}
-                title="Drag to resize, double-click to share the room equally"
+                title={t("Drag to resize, double-click to share the room equally")}
                 onPointerDown={(e) => resize(e, i())}
                 onDblClick={() => setSizes(props.tab.id, props.path, (s) => s.forEach((_, j) => (s[j] = 1 / s.length)))}
               />
@@ -1063,8 +1064,8 @@ function FindBar(props: { term: number; onClose: () => void }) {
       <Icon name="search" small />
       <input
         class="find-input"
-        placeholder="Find in this pane"
-        aria-label="Find in this pane"
+        placeholder={t("Find in this pane")}
+        aria-label={t("Find in this pane")}
         value={q()}
         ref={(el) => requestAnimationFrame(() => el.focus())}
         onInput={(e) => (setQ(e.currentTarget.value), go())}
@@ -1075,15 +1076,15 @@ function FindBar(props: { term: number; onClose: () => void }) {
         }}
       />
       <span class="find-count" aria-live="polite">
-        {res() ? (res()!.n ? `${res()!.i} of ${res()!.n}` : "No match") : ""}
+        {res() ? (res()!.n ? t("{i} of {n}", { i: res()!.i, n: res()!.n }) : t("No match")) : ""}
       </span>
-      <button type="button" class="pane-btn" aria-label="Previous match" title="Previous (⇧↩)" onClick={() => go(true)}>
+      <button type="button" class="pane-btn" aria-label={t("Previous match")} title={t("Previous (⇧↩)")} onClick={() => go(true)}>
         <Icon name="up" small />
       </button>
-      <button type="button" class="pane-btn" aria-label="Next match" title="Next (↩)" onClick={() => go()}>
+      <button type="button" class="pane-btn" aria-label={t("Next match")} title={t("Next (↩)")} onClick={() => go()}>
         <Icon name="chev" small />
       </button>
-      <button type="button" class="pane-btn" aria-label="Close find" title="Close (Esc)" onClick={props.onClose}>
+      <button type="button" class="pane-btn" aria-label={t("Close find")} title={t("Close (Esc)")} onClick={props.onClose}>
         <Icon name="close" small />
       </button>
     </div>
@@ -1211,10 +1212,10 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
           </div>
           <div class="terms-head">
             <Show when={st.side === "left"}>
-              <span class="terms-title">Terminals</span>
+              <span class="terms-title">{t("Terminals")}</span>
             </Show>
             <div class="anchor" ref={menuBox}>
-              <button type="button" class="btn btn-ghost btn-icon" aria-label="New terminal" aria-expanded={menu()} title="New terminal (⌘T)" onClick={() => setMenu(!menu())}>
+              <button type="button" class="btn btn-ghost btn-icon" aria-label={t("New terminal")} aria-expanded={menu()} title={t("New terminal (⌘T)")} onClick={() => setMenu(!menu())}>
                 <Icon name="plus" small />
               </button>
               <Show when={menu()}>
@@ -1225,7 +1226,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
                         <Icon name={p.icon} small />
                         <span class="repo-entry">
                           <span class="repo-name">{p.label}</span>
-                          <span class="repo-path">{p.sub}</span>
+                          <span class="repo-path">{t(p.sub)}</span>
                         </span>
                       </button>
                     )}
@@ -1236,14 +1237,14 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
             <button
               type="button"
               class="btn btn-ghost btn-icon"
-              aria-label={st.side === "left" ? "Put the tabs on top" : "Put the tabs at the side"}
-              title={st.side === "left" ? "Tabs on top" : "Tabs at the side"}
+              aria-label={st.side === "left" ? t("Put the tabs on top") : t("Put the tabs at the side")}
+              title={st.side === "left" ? t("Tabs on top") : t("Tabs at the side")}
               onClick={() => (setSt("side", st.side === "left" ? "top" : "left"), save())}
             >
               <Icon name={st.side === "left" ? "tabs-top" : "tabs-side"} small />
             </button>
           </div>
-          <div class="terms-list" role="tablist" aria-label="Terminals" aria-orientation={st.side === "left" ? "vertical" : "horizontal"} data-tablist data-drop={drag()?.over?.kind === "list" ? "" : undefined}>
+          <div class="terms-list" role="tablist" aria-label={t("Terminals")} aria-orientation={st.side === "left" ? "vertical" : "horizontal"} data-tablist data-drop={drag()?.over?.kind === "list" ? "" : undefined}>
             <For each={st.tabs}>{(t, i) => <TabRow tab={t} index={i()} />}</For>
           </div>
         </div>
@@ -1255,21 +1256,21 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
           keyed
           fallback={
             <div class="terms-empty">
-              <div class="terms-empty-title">No terminal open</div>
-              <p class="terms-empty-body">Your own shell, in the repository or in a lane’s worktree.</p>
+              <div class="terms-empty-title">{t("No terminal open")}</div>
+              <p class="terms-empty-body">{t("Your own shell, in the repository or in a lane’s worktree.")}</p>
               <div class="terms-places">
                 <For each={places()}>
                   {(p) => (
                     <button type="button" class="terms-place" onClick={() => void open(p.cwd, p.label)}>
                       <Icon name={p.icon} small />
                       <span class="terms-place-name">{p.label}</span>
-                      <span class="terms-place-sub">{p.sub}</span>
+                      <span class="terms-place-sub">{t(p.sub)}</span>
                     </button>
                   )}
                 </For>
               </div>
               <p class="terms-empty-keys">
-                <span class="kbd">⌘T</span> new tab <span class="kbd">⌘D</span> split <span class="kbd">⌘⇧D</span> split down
+                <span class="kbd">⌘T</span> {t("new tab")} <span class="kbd">⌘D</span> {t("split")} <span class="kbd">⌘⇧D</span> {t("split down")}
               </p>
             </div>
           }

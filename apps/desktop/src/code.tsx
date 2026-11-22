@@ -2,6 +2,7 @@
 // worktree. Files opened elsewhere in Pitlane (a terminal path, Review, a run) open here at their line.
 import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { onVscodePlace, onVscodeReady, vscode, type Lane } from "./api";
+import { t } from "./i18n";
 import { prefs } from "./prefs";
 import { Spinner, toast } from "./ui";
 
@@ -202,7 +203,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     try {
       await vscode.open(`${p.root}/${p.path}`, p.line, p.col);
     } catch (e) {
-      toast({ tone: "fail", title: `Could not open ${p.path} in VS Code`, body: msg(e) });
+      toast({ tone: "fail", title: t("Could not open {path} in VS Code", { path: p.path }), body: msg(e) });
     }
   };
 
@@ -249,16 +250,16 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       <div class="vs-host" ref={host}>
         <Show when={state() === "starting" && slow()}>
           <div class="vs-opening" role="status">
-            <Spinner /> Opening VS Code
+            <Spinner /> {t("Opening VS Code")}
           </div>
         </Show>
         <Show when={state() === "failed"}>
           <div class="code-empty">
-            <div class="code-empty-title">VS Code did not start</div>
+            <div class="code-empty-title">{t("VS Code did not start")}</div>
             <p class="code-empty-body selectable">{why()}</p>
             <div class="vs-actions">
               <button type="button" class="btn" onClick={() => (setState("starting"), void place())}>
-                Try again
+                {t("Try again")}
               </button>
             </div>
           </div>

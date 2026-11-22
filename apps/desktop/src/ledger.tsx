@@ -4,6 +4,7 @@ import type { RunMeta } from "./api";
 import { Icon } from "./icons";
 import { ago } from "./lane";
 import { clock, elapsed, kTokens, money, runStateView } from "./run";
+import { plural, t } from "./i18n";
 import { Spinner } from "./ui";
 
 export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen: (id: string) => void }) {
@@ -19,22 +20,21 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
   return (
     <div class="ledger">
       <header class="screen-head">
-        <h1 class="title">Ledger</h1>
+        <h1 class="title">{t("Ledger")}</h1>
         <Show when={(props.runs?.length ?? 0) > 0}>
           <p class="summary">
-            {props.runs!.length} {props.runs!.length === 1 ? "run" : "runs"}, {money(total().cost)} in all.
+            {t("{runs}, {cost} in all.", { runs: plural(props.runs!.length, "{n} run", "{n} runs"), cost: money(total().cost) })}
           </p>
         </Show>
       </header>
-      <Show when={props.runs} fallback={<div class="loading-line"><Spinner /> Reading the runs</div>}>
+      <Show when={props.runs} fallback={<div class="loading-line"><Spinner /> {t("Reading the runs")}</div>}>
         <Show
           when={props.runs!.length > 0}
           fallback={
             <div class="empty">
-              <div class="empty-title">No runs yet</div>
+              <div class="empty-title">{t("No runs yet")}</div>
               <p class="empty-body">
-                Each run of an agent on a card lands here with its time, turns, tokens and cost, as the agent reported them.
-                Start one from a ready card on the Board.
+                {t("Each run of an agent on a card lands here with its time, turns, tokens and cost, as the agent reported them. Start one from a ready card on the Board.")}
               </p>
             </div>
           }
@@ -42,21 +42,21 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
           <table class="table ledger-table">
             <thead>
               <tr>
-                <th scope="col">Card</th>
-                <th scope="col">Lane</th>
-                <th scope="col">Result</th>
-                <th scope="col">Started</th>
+                <th scope="col">{t("Card")}</th>
+                <th scope="col">{t("Lane")}</th>
+                <th scope="col">{t("Result")}</th>
+                <th scope="col">{t("Started")}</th>
                 <th scope="col" class="end">
-                  Time
+                  {t("Time")}
                 </th>
                 <th scope="col" class="end">
-                  Turns
+                  {t("Turns")}
                 </th>
                 <th scope="col" class="end">
-                  Tokens
+                  {t("Tokens")}
                 </th>
                 <th scope="col" class="end">
-                  Cost
+                  {t("Cost")}
                 </th>
               </tr>
             </thead>
@@ -70,8 +70,8 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
                           <span class="card-id">#{r.card}</span> {r.card_title}
                         </span>
                         <span class="subject">
-                          {r.model ?? "default model"}
-                          {r.account ? ` on ${r.account}` : ""}
+                          {r.model ?? t("default model")}
+                          {r.account ? ` ${t("on {account}", { account: r.account })}` : ""}
                         </span>
                       </span>
                     </td>
@@ -79,7 +79,7 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
                     <td>
                       <span class="chip" data-state={runStateView[r.state].chip}>
                         <Icon name={runStateView[r.state].icon} small />
-                        {runStateView[r.state].label}
+                        {t(runStateView[r.state].label)}
                       </span>
                     </td>
                     <td class="muted">{ago(props.now - r.started_at * 1000)}</td>
@@ -94,7 +94,7 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
             <tfoot>
               <tr>
                 <th scope="row" colspan="4">
-                  All runs
+                  {t("All runs")}
                 </th>
                 <td class="num">{clock(total().seconds)}</td>
                 <td class="num">{total().turns}</td>

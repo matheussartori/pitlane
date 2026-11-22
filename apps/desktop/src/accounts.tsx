@@ -4,6 +4,7 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api, type AccountKind, type AccountView } from "./api";
 import { Icon } from "./icons";
+import { t } from "./i18n";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -15,8 +16,8 @@ const kindLabel: Record<AccountKind, string> = { subscription: "Subscription", t
 /** `opus@repo` → `opus on this repository's account`. */
 function routeLabel(entry: string, here: string | undefined): string {
   const [model, account] = entry.split("@");
-  const who = account === "repo" ? (here ? `${here}, this repository's account` : "this repository's account") : account;
-  return `${model || "The default model"} on ${who}`;
+  const who = account === "repo" ? (here ? t("{here}, this repository's account", { here: here! }) : t("this repository's account")) : account;
+  return t("{model} on {who}", { model: model || t("The default model"), who: who ?? "" });
 }
 
 function Meter(props: { label: string; used: number | null | undefined; at: number }) {
@@ -44,11 +45,11 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
     setBusy(a.id);
     try {
       await api.accountUse(props.repo, a.id);
-      toast({ tone: "done", title: `${props.repoName} uses ${a.id}`, body: "From its next run. Runs already going keep their account." });
+      toast({ tone: "done", title: t("{repo} uses {id}", { repo: props.repoName, id: a.id }), body: t("From its next run. Runs already going keep their account.") });
       await refetch();
       props.onChanged();
     } catch (e) {
-      toast({ tone: "fail", title: "Not changed", body: msg(e) });
+      toast({ tone: "fail", title: t("Not changed"), body: msg(e) });
     } finally {
       setBusy(null);
     }
@@ -56,29 +57,29 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
 
   const copy = (text: string) => {
     void navigator.clipboard.writeText(text);
-    toast({ tone: "done", title: "Copied", body: "Run it in a terminal." });
+    toast({ tone: "done", title: t("Copied"), body: t("Run it in a terminal.") });
   };
 
   return (
     <Sheet
-      title="Accounts"
+      title={t("Accounts")}
       wide
       onClose={props.onClose}
       foot={
         <>
           <span class="sheet-note">{data()?.file}</span>
           <button type="button" class="btn btn-primary" onClick={props.onClose}>
-            Done
+            {t("Done")}
           </button>
         </>
       }
     >
-      <Show when={!data.loading} fallback={<p class="loading-line"><Spinner /> Asking Claude Code about each account</p>}>
+      <Show when={!data.loading} fallback={<p class="loading-line"><Spinner /> {t("Asking Claude Code about each account")}</p>}>
         <Show when={!data.error} fallback={<ErrorLine>{msg(data.error)}</ErrorLine>}>
           <p class="accounts-rule">
-            Switching between your subscription accounts is always yours: here or <code>pit account use</code>.
+            {t("Switching between your subscription accounts is always yours: here or")} <code>pit account use</code>.
           </p>
-          <ul class="accounts" role="radiogroup" aria-label={`Account for ${props.repoName}`}>
+          <ul class="accounts" role="radiogroup" aria-label={t("Account for {repo}", { repo: props.repoName })}>
             <For each={data()?.accounts}>
               {(a) => (
                 <li class="account" data-here={a.here ? "" : undefined}>
@@ -88,7 +89,7 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                         type="radio"
                         class="check"
                         name="account"
-                        aria-label={`Use ${a.id} for ${props.repoName}`}
+                        aria-label={t("Use {id} for {repo}", { id: a.id, repo: props.repoName })}
                         checked={a.here}
                         disabled={busy() !== null}
                         onChange={() => void use(a)}
@@ -97,8 +98,8 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                     <span class="account-name">
                       <b>{a.id}</b>
                       <span class="account-kind">
-                        {kindLabel[a.kind]}
-                        {a.id === "default" ? ", your normal Claude Code login" : ""}
+                        {t(kindLabel[a.kind])}
+                        {a.id === "default" ? t(", your normal Claude Code login") : ""}
                       </span>
                     </span>
                   </label>
@@ -108,7 +109,7 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                       fallback={
                         <Show
                           when={!a.status.problem}
-                          fallback={<span class="chip" data-state="queued">Unknown</span>}
+                          fallback={<span class="chip" data-state="queued">{t("Unknown")}</span>}
                         >
                           <button type="button" class="btn account-signin" onClick={() => copy(`pit account login ${a.id}`)}>
                             <Icon name="copy" small />
@@ -119,12 +120,12 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                     >
                       <span class="chip" data-state="done">
                         <Icon name="done" small />
-                        {a.kind === "api-key" ? "Key set" : "Signed in"}
+                        {a.kind === "api-key" ? t("Key set") : t("Signed in")}
                       </span>
                     </Show>
                   </span>
                   <span class="account-usage">
-                    <Show when={a.usage} fallback={<span class="account-hint">{a.kind === "api-key" ? "Only after you agree" : "No runs yet"}</span>}>
+                    <Show when={a.usage} fallback={<span class="account-hint">{a.kind === "api-key" ? t("Only after you agree") : t("No runs yet")}</span>}>
                       {(u) => (
                         <>
                           <Meter label="5h" used={u().five_hour} at={data()!.five_hour_at} />
@@ -139,22 +140,22 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
           </ul>
 
           <div class="sheet-sub-row">
-            <h3 class="sheet-sub">The route</h3>
+            <h3 class="sheet-sub">{t("The route")}</h3>
             <span class="sheet-sub-note">
-              under {data()?.five_hour_at}% of 5h and {data()?.seven_day_at}% of 7d
+              {t("under {a}% of 5h and {b}% of 7d", { a: data()?.five_hour_at ?? "", b: data()?.seven_day_at ?? "" })}
             </span>
           </div>
-          <p class="side-hint">An API key always asks first.</p>
+          <p class="side-hint">{t("An API key always asks first.")}</p>
           <ol class="route">
             <For each={data()?.route}>{(r) => <li>{routeLabel(r, here())}</li>}</For>
           </ol>
 
-          <h3 class="sheet-sub">Add an account</h3>
+          <h3 class="sheet-sub">{t("Add an account")}</h3>
           <div class="install">
             <code class="selectable">{ADD}</code>
             <button type="button" class="btn" onClick={() => copy(ADD)}>
               <Icon name="copy" small />
-              Copy
+              {t("Copy")}
             </button>
           </div>
         </Show>

@@ -4,6 +4,7 @@ import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { api, type Card, type Finding, type LaneDiff, type RunMeta, type Verification } from "./api";
 import { reviewSummary } from "./cards";
 import { Icon } from "./icons";
+import { plural, t } from "./i18n";
 import { clock, elapsed, money } from "./run";
 import { ErrorLine, Spinner, toast } from "./ui";
 
@@ -149,11 +150,11 @@ function DiffView(props: {
                 </button>
                 <Show when={count() > 0}>
                   <span class="diff-noted">
-                    {count()} {count() === 1 ? "finding" : "findings"}
+                    {plural(count(), "{n} finding", "{n} findings")}
                   </span>
                 </Show>
-                <button type="button" class="link-btn diff-open" title="Open this file in Code" onClick={() => props.onOpen(f.path)}>
-                  Open
+                <button type="button" class="link-btn diff-open" title={t("Open this file in Code")} onClick={() => props.onOpen(f.path)}>
+                  {t("Open")}
                 </button>
                 <label class="diff-viewed">
                   <input
@@ -170,11 +171,11 @@ function DiffView(props: {
                       saveViewed(props.viewedKey, v);
                     }}
                   />
-                  Viewed
+                  {t("Viewed")}
                 </label>
               </div>
               <Show when={open()}>
-                <Show when={!f.binary} fallback={<p class="diff-empty">A binary file changed.</p>}>
+                <Show when={!f.binary} fallback={<p class="diff-empty">{t("A binary file changed.")}</p>}>
                   <For each={f.hunks}>
                     {(h) => (
                       <>
@@ -188,7 +189,7 @@ function DiffView(props: {
                                   <button
                                     type="button"
                                     class="btn btn-ghost hunk-kept"
-                                    title="Undo: mark this change as not decided"
+                                    title={t("Undo: mark this change as not decided")}
                                     onClick={() => {
                                       const k = new Set(kept());
                                       k.delete(hunkKey(f.path, h.head));
@@ -197,14 +198,14 @@ function DiffView(props: {
                                     }}
                                   >
                                     <Icon name="done" small />
-                                    Kept
+                                    {t("Kept")}
                                   </button>
                                 }
                               >
                                 <button
                                   type="button"
                                   class="btn btn-ghost"
-                                  title="Keep this change"
+                                  title={t("Keep this change")}
                                   onClick={() => {
                                     const k = new Set(kept());
                                     k.add(hunkKey(f.path, h.head));
@@ -212,12 +213,12 @@ function DiffView(props: {
                                     saveViewed(`${props.viewedKey}.kept`, k);
                                   }}
                                 >
-                                  Keep
+                                  {t("Keep")}
                                 </button>
                                 <button
                                   type="button"
                                   class="btn btn-ghost btn-danger"
-                                  title="Take this change out of the lane, as a commit"
+                                  title={t("Take this change out of the lane, as a commit")}
                                   disabled={dropping() != null}
                                   aria-busy={dropping() === hunkKey(f.path, h.head)}
                                   onClick={async () => {
@@ -232,7 +233,7 @@ function DiffView(props: {
                                   <Show when={dropping() === hunkKey(f.path, h.head)}>
                                     <Spinner />
                                   </Show>
-                                  Drop
+                                  {t("Drop")}
                                 </button>
                               </Show>
                             </span>
@@ -264,10 +265,10 @@ function DiffView(props: {
         }}
       </For>
       <Show when={props.diff.truncated}>
-        <p class="diff-empty">The patch is cut here for size; the counts above are complete.</p>
+        <p class="diff-empty">{t("The patch is cut here for size; the counts above are complete.")}</p>
       </Show>
       <Show when={files().length === 0}>
-        <p class="diff-empty">Nothing changed in this range.</p>
+        <p class="diff-empty">{t("Nothing changed in this range.")}</p>
       </Show>
     </div>
   );
@@ -329,13 +330,13 @@ export function ReviewScreen(props: {
     try {
       const r = await api.cardReview(props.repo, c.id, action, action === "changes" ? message() : undefined);
       if (action === "approve")
-        toast({ tone: "done", title: `#${c.id} is in line for ${r.shipped_to ?? "its next stage"}`, body: "The merge queue ships it next; the card moves when it lands." });
-      if (action === "discard") toast({ tone: "done", title: `#${c.id} is ready again`, body: "Its lane stays as it is." });
+        toast({ tone: "done", title: t("#{id} is in line for {to}", { id: c.id, to: r.shipped_to ?? t("its next stage") }), body: t("The merge queue ships it next; the card moves when it lands.") });
+      if (action === "discard") toast({ tone: "done", title: t("#{id} is ready again", { id: c.id }), body: t("Its lane stays as it is.") });
       props.onChanged();
       if (action === "changes" && r.run) props.onOpenRun(r.run.id);
       else props.onBack();
     } catch (e) {
-      toast({ tone: "fail", title: action === "approve" ? "Not shipped" : "Not sent", body: msg(e) });
+      toast({ tone: "fail", title: action === "approve" ? t("Not shipped") : t("Not sent"), body: msg(e) });
     } finally {
       setBusy(null);
     }
@@ -350,9 +351,9 @@ export function ReviewScreen(props: {
       when={props.card}
       fallback={
         <div class="empty">
-          <div class="empty-title">Card not found</div>
+          <div class="empty-title">{t("Card not found")}</div>
           <button type="button" class="btn" onClick={props.onBack}>
-            Back to the board
+            {t("Back to the board")}
           </button>
         </div>
       }
@@ -360,7 +361,7 @@ export function ReviewScreen(props: {
       {(c) => (
         <div class="review-screen">
           <header class="screen-head">
-            <button type="button" class="btn btn-ghost btn-icon back" aria-label="Back to the board" onClick={props.onBack}>
+            <button type="button" class="btn btn-ghost btn-icon back" aria-label={t("Back to the board")} onClick={props.onBack}>
               <Icon name="chev" small />
             </button>
             <h1 class="title">
@@ -369,17 +370,17 @@ export function ReviewScreen(props: {
             <span class="spacer" />
             <Show when={c().state === "review"}>
               <button type="button" class="btn btn-ghost" disabled={!!busy()} onClick={() => void act("discard")}>
-                Discard
+                {t("Discard")}
               </button>
               <Show when={!asking()}>
                 <button
                   type="button"
                   class={needsChanges() ? "btn btn-primary" : "btn"}
                   disabled={!!busy() || roundsLeft() <= 0}
-                  title={roundsLeft() <= 0 ? `All ${maxRounds()} rounds of changes are used` : undefined}
+                  title={roundsLeft() <= 0 ? t("All {n} rounds of changes are used", { n: maxRounds() }) : undefined}
                   onClick={() => setAsking(true)}
                 >
-                  Ask for changes
+                  {t("Ask for changes")}
                 </button>
                 <button
                   type="button"
@@ -391,7 +392,7 @@ export function ReviewScreen(props: {
                   <Show when={busy() === "approve"} fallback={<Icon name="ship" small />}>
                     <Spinner />
                   </Show>
-                  Approve, ship to {props.integration ?? "main"}
+                  {t("Approve, ship to {to}", { to: props.integration ?? "main" })}
                 </button>
               </Show>
             </Show>
@@ -405,42 +406,42 @@ export function ReviewScreen(props: {
             <Show when={props.run}>
               {(r) => (
                 <button type="button" class="link-btn" onClick={() => props.onOpenRun(r().id)}>
-                  Run {clock(elapsed(r(), props.now))}, {money(r().cost_usd ?? 0)}, {r().model ?? "default model"}
+                  {t("Run {time}, {cost}, {model}", { time: clock(elapsed(r(), props.now)), cost: money(r().cost_usd ?? 0), model: r().model ?? t("default model") })}
                 </button>
               )}
             </Show>
             <Show when={round() > 0}>
               <span>
-                Changes round {round()} of {maxRounds()}
+                {t("Changes round {n} of {max}", { n: round(), max: maxRounds() })}
               </span>
             </Show>
           </p>
 
           <div class="review-body">
             <div class="review-main">
-              <section class="walkthrough" aria-label="What the agent says it did">
-                <h2 class="side-title">What changed</h2>
-                <p class="selectable">{h()?.summary ?? "The agent left no summary."}</p>
+              <section class="walkthrough" aria-label={t("What the agent says it did")}>
+                <h2 class="side-title">{t("What changed")}</h2>
+                <p class="selectable">{h()?.summary ?? t("The agent left no summary.")}</p>
                 <Show when={(h()?.next_steps?.length ?? 0) > 0}>
-                  <h3 class="side-sub">It suggests next</h3>
+                  <h3 class="side-sub">{t("It suggests next")}</h3>
                   <ul class="side-list">
                     <For each={h()?.next_steps}>{(s) => <li>{s}</li>}</For>
                   </ul>
                 </Show>
               </section>
               <Show when={round() > 0 && props.run?.base_sha}>
-                <div class="seg" role="group" aria-label="Diff range">
+                <div class="seg" role="group" aria-label={t("Diff range")}>
                   <button type="button" aria-pressed={scope() === "round"} onClick={() => setScope("round")}>
-                    This round
+                    {t("This round")}
                   </button>
                   <button type="button" aria-pressed={scope() === "card"} onClick={() => setScope("card")}>
-                    Whole card
+                    {t("Whole card")}
                   </button>
                 </div>
               </Show>
               {/* A re-read keeps the diff on screen (and your scroll); only the first read shows the spinner. */}
-              <Show when={diff.latest !== undefined || !diff.loading} fallback={<p class="loading-line"><Spinner /> Reading the diff</p>}>
-                <Show when={diff.latest} fallback={<ErrorLine>{diff.error ? msg(diff.error) : "No lane to compare."}</ErrorLine>}>
+              <Show when={diff.latest !== undefined || !diff.loading} fallback={<p class="loading-line"><Spinner /> {t("Reading the diff")}</p>}>
+                <Show when={diff.latest} fallback={<ErrorLine>{diff.error ? msg(diff.error) : t("No lane to compare.")}</ErrorLine>}>
                   {(d) => (
                     <DiffView
                       diff={d()}
@@ -454,11 +455,11 @@ export function ReviewScreen(props: {
                           ? async (file, header) => {
                               try {
                                 await api.dropHunk(props.repo, c().lane!, d().base, d().head, file, header);
-                                toast({ tone: "done", title: `Dropped a change in ${file}`, body: "Committed on the lane as review: drop a change." });
+                                toast({ tone: "done", title: t("Dropped a change in {file}", { file }), body: t("Committed on the lane as review: drop a change.") });
                                 await rereadDiff();
                                 props.onChanged();
                               } catch (e) {
-                                toast({ tone: "fail", title: "Not dropped", body: msg(e) });
+                                toast({ tone: "fail", title: t("Not dropped"), body: msg(e) });
                               }
                             }
                           : undefined
@@ -469,21 +470,21 @@ export function ReviewScreen(props: {
               </Show>
             </div>
 
-            <aside class="review-side" aria-label="What the checks found">
+            <aside class="review-side" aria-label={t("What the checks found")}>
               <div class="sheet-sub-row">
-                <h2 class="side-title">Checks</h2>
+                <h2 class="side-title">{t("Checks")}</h2>
                 <Show when={(v()?.proofs.length ?? 0) > 0}>
                   <span class="sheet-sub-note">
-                    {passing()} of {v()!.proofs.length} pass
+                    {t("{n} of {total} pass", { n: passing(), total: v()!.proofs.length })}
                   </span>
                 </Show>
               </div>
-              <Show when={!verification.loading} fallback={<p class="loading-line"><Spinner /> Reading the checks</p>}>
-                <Show when={v()} fallback={<p class="side-hint">No checks ran for this run.</p>}>
+              <Show when={!verification.loading} fallback={<p class="loading-line"><Spinner /> {t("Reading the checks")}</p>}>
+                <Show when={v()} fallback={<p class="side-hint">{t("No checks ran for this run.")}</p>}>
                   {(vv) => (
                     <>
                       <Show when={vv().no_commands}>
-                        <p class="side-hint">No commands configured. Add [verify] commands to .pitlane/flow.toml.</p>
+                        <p class="side-hint">{t("No commands configured. Add [verify] commands to .pitlane/flow.toml.")}</p>
                       </Show>
                       <ul class="proofs">
                         <For each={vv().proofs}>
@@ -500,13 +501,13 @@ export function ReviewScreen(props: {
                         </For>
                       </ul>
 
-                      <h2 class="side-title">Judge</h2>
-                      <Show when={judgement()} fallback={<p class="side-hint">{vv().judge?.error ?? "The judge is off for this repository."}</p>}>
+                      <h2 class="side-title">{t("Judge")}</h2>
+                      <Show when={judgement()} fallback={<p class="side-hint">{vv().judge?.error ?? t("The judge is off for this repository.")}</p>}>
                         {(j) => (
                           <>
                             <span class="chip" data-state={j().verdict === "approve" ? "done" : "failed"}>
                               <Icon name={j().verdict === "approve" ? "done" : "fail"} small />
-                              {j().verdict === "approve" ? "Approves" : "Asks for changes"}
+                              {j().verdict === "approve" ? t("Approves") : t("Asks for changes")}
                             </span>
                             <p class="selectable">{j().summary}</p>
                             <ul class="findings">
@@ -516,7 +517,7 @@ export function ReviewScreen(props: {
                                     <input
                                       type="checkbox"
                                       class="check"
-                                      aria-label={`Send this finding with your changes: ${f.text}`}
+                                      aria-label={t("Send this finding with your changes: {text}", { text: f.text })}
                                       checked={picked().has(i())}
                                       onChange={(e) => pick(i(), e.currentTarget.checked)}
                                     />
@@ -538,7 +539,7 @@ export function ReviewScreen(props: {
                               </For>
                             </ul>
                             <p class="side-hint">
-                              A separate {vv().judge?.model ?? ""} session that saw only the spec, the decisions and the diff
+                              {t("A separate {model} session that saw only the spec, the decisions and the diff", { model: vv().judge?.model ?? "" })}
                               {vv().judge?.cost_usd != null ? `, ${money(vv().judge!.cost_usd)}` : ""}.
                             </p>
                           </>
@@ -550,26 +551,26 @@ export function ReviewScreen(props: {
               </Show>
 
               <Show when={asking()}>
-                <section class="approval" aria-label="Ask for changes">
-                  <p class="approval-ask">What should the agent change?</p>
+                <section class="approval" aria-label={t("Ask for changes")}>
+                  <p class="approval-ask">{t("What should the agent change?")}</p>
                   <textarea
                     class="input textarea"
                     rows="4"
-                    placeholder="Your comments. Findings you tick go along."
+                    placeholder={t("Your comments. Findings you tick go along.")}
                     value={note()}
                     onInput={(e) => setNote(e.currentTarget.value)}
                   />
                   <Show when={picked().size > 0}>
                     <p class="side-hint">
-                      {picked().size} {picked().size === 1 ? "finding goes" : "findings go"} along.
+                      {plural(picked().size, "{n} finding goes along.", "{n} findings go along.")}
                     </p>
                   </Show>
                   <div class="row-actions">
                     <button type="button" class="btn btn-ghost" onClick={() => setAsking(false)}>
-                      Cancel
+                      {t("Cancel")}
                     </button>
                     <button type="button" class="btn btn-primary" disabled={!message() || !!busy() || roundsLeft() <= 0} onClick={() => void act("changes")}>
-                      Send round {round() + 1} of {maxRounds()}
+                      {t("Send round {n} of {max}", { n: round() + 1, max: maxRounds() })}
                     </button>
                   </div>
                 </section>

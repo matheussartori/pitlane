@@ -67,11 +67,16 @@ pub struct Prefs {
     pub notify_terminals: bool,
     /// Load VS Code in the background when a repository opens.
     pub code_prewarm: bool,
+    /// Pitlane's own words: "system", "en" or "pt-BR".
+    pub ui_language: String,
+    /// What agents write in for you (questions, notes, replies): "system" or a language tag.
+    /// The daemon reads it from this file when it starts a session.
+    pub agent_language: String,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { theme: "system".into(), notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true }
+        Self { theme: "system".into(), notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true, ui_language: "system".into(), agent_language: "system".into() }
     }
 }
 

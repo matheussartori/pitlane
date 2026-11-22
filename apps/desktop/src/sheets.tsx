@@ -4,6 +4,7 @@ import { api, landedLabel, short, type CleanPlan, type Lane, type ShipPlan } fro
 import { Icon } from "./icons";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { Dictate } from "./dictate";
+import { plural, t, tx } from "./i18n";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -25,7 +26,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
     try {
       // Shipping goes through the merge queue: one lane at a time, each against a fresh target.
       const job = await api.enqueue(props.repo, p.branch, p.target);
-      toast({ tone: "done", title: `${p.branch} is in line for ${job.target}`, body: "The queue ships one lane at a time; Lanes shows its place." });
+      toast({ tone: "done", title: t("{branch} is in line for {target}", { branch: p.branch, target: job.target }), body: t("The queue ships one lane at a time; Lanes shows its place.") });
       props.onDone();
       props.onClose();
     } catch (e) {
@@ -35,7 +36,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
     }
   }
 
-  const title = () => `Ship ${props.lane.branch}` + (plan()?.target ? ` to ${plan()!.target}` : "");
+  const title = () => (plan()?.target ? t("Ship {branch} to {target}", { branch: props.lane.branch, target: plan()!.target }) : t("Ship {branch}", { branch: props.lane.branch }));
 
   return (
     <Sheet
@@ -44,7 +45,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
-            {ready() ? "Cancel" : "Close"}
+            {ready() ? t("Cancel") : t("Close")}
           </button>
           <Show when={ready()}>
             {(p) => (
@@ -52,7 +53,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 <Show when={busy()} fallback={<Icon name="ship" small />}>
                   <Spinner />
                 </Show>
-                {busy() ? "Adding" : `Ship to ${p().target}`}
+                {busy() ? t("Adding") : t("Ship to {target}", { target: p().target })}
               </button>
             )}
           </Show>
@@ -62,7 +63,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
       <Switch>
         <Match when={plan.loading}>
           <div class="loading-line">
-            <Spinner /> Fetching origin and simulating the merge
+            <Spinner /> {t("Fetching origin and simulating the merge")}
           </div>
         </Match>
         <Match when={plan.error}>
@@ -73,24 +74,23 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
             <div class="note">
               <Icon name="done" small />
               <span>
-                Already in {plan()!.target} ({landedLabel[how()]}). Nothing to ship.
+                {t("Already in {target} ({how}). Nothing to ship.", { target: plan()!.target, how: t(landedLabel[how()]) })}
               </span>
             </div>
           )}
         </Match>
         <Match when={plan() && plan()!.conflicts.length > 0}>
           <ErrorLine>
-            Conflicts with origin/{plan()!.target} in {plan()!.conflicts.length} file
-            {plan()!.conflicts.length === 1 ? "" : "s"}. Nothing changed.
+            {plural(plan()!.conflicts.length, "Conflicts with origin/{target} in {n} file. Nothing changed.", "Conflicts with origin/{target} in {n} files. Nothing changed.", { target: plan()!.target })}
           </ErrorLine>
           <ul class="files">
             <For each={plan()!.conflicts}>{(f) => <li>{f}</li>}</For>
           </ul>
-          <p>Resolve it by hand where {plan()!.target} is checked out:</p>
+          <p>{t("Resolve it by hand where {target} is checked out:", { target: plan()!.target })}</p>
           <code class="files">
             git switch {plan()!.target} && git pull && git merge {plan()!.branch} && git push
           </code>
-          <p>rerere records the resolution, so the same conflict resolves itself on the next stage.</p>
+          <p>{t("rerere records the resolution, so the same conflict resolves itself on the next stage.")}</p>
         </Match>
         <Match when={ready()}>
           {(p) => (
@@ -107,16 +107,16 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 </div>
               </div>
               <p>
-                It joins the merge queue. When its turn comes, Pitlane fetches {p().target} again, builds{" "}
-                <span class="code">Merge {p().branch} into {p().target}</span> without touching your checkouts, and pushes
-                it. A conflict at that point stops only this lane.
+                {t("It joins the merge queue. When its turn comes, Pitlane fetches {target} again, builds", { target: p().target })}{" "}
+                <span class="code">Merge {p().branch} into {p().target}</span>{" "}
+                {t("without touching your checkouts, and pushes it. A conflict at that point stops only this lane.")}
               </p>
               <Show when={p().check}>
                 {(c) => (
                   <div class="note">
                     <Icon name="verify" small />
                     <span>
-                      Runs <span class="code">{c()[0]}</span> first; a failure ships nothing.
+                      {tx("Runs", "verb")} <span class="code">{c()[0]}</span> {t("first; a failure ships nothing.")}
                     </span>
                   </div>
                 )}
@@ -125,8 +125,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 <div class="note">
                   <Icon name="needs" small />
                   <span>
-                    origin/{p().branch} has {p().remote_behind} commit{p().remote_behind === 1 ? "" : "s"} you don't have
-                    locally. They will not ship; pull first if they belong in it.
+                    {plural(p().remote_behind, "origin/{branch} has {n} commit you don’t have locally. It will not ship; pull first if it belongs in it.", "origin/{branch} has {n} commits you don’t have locally. They will not ship; pull first if they belong in it.", { branch: p().branch })}
                   </span>
                 </div>
               </Show>
@@ -134,8 +133,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 <div class="note">
                   <Icon name="ship" small />
                   <span>
-                    {p().remote_ahead} local commit{p().remote_ahead === 1 ? "" : "s"} not pushed to origin/{p().branch}{" "}
-                    yet; they ship inside the merge.
+                    {plural(p().remote_ahead, "{n} local commit not pushed to origin/{branch} yet; it ships inside the merge.", "{n} local commits not pushed to origin/{branch} yet; they ship inside the merge.", { branch: p().branch })}
                   </span>
                 </div>
               </Show>
@@ -143,7 +141,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
                 <div class="note">
                   <Icon name="needs" small />
                   <span>
-                    {p().dirty} uncommitted change{p().dirty === 1 ? "" : "s"} in the worktree will not ship.
+                    {plural(p().dirty, "{n} uncommitted change in the worktree will not ship.", "{n} uncommitted changes in the worktree will not ship.")}
                   </span>
                 </div>
               </Show>
@@ -189,19 +187,19 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
         toast(
           {
             tone: "done",
-            title: `Deleted ${ok.length} lane${ok.length === 1 ? "" : "s"}`,
-            body: `${ok.join(", ")}. Undo stays available for 30 days.`,
+            title: plural(ok.length, "Deleted {n} lane", "Deleted {n} lanes"),
+            body: t("{branches}. Undo stays available for 30 days.", { branches: ok.join(", ") }),
             action: {
-              label: "Undo",
+              label: t("Undo"),
               run: async () => {
                 for (const b of ok) {
                   try {
                     await api.undoClean(props.repo, b);
                   } catch (e) {
-                    toast({ tone: "fail", title: `Could not restore ${b}`, body: msg(e) });
+                    toast({ tone: "fail", title: t("Could not restore {branch}", { branch: b }), body: msg(e) });
                   }
                 }
-                toast({ tone: "done", title: "Restored", body: "Branches are back where they were; worktrees are not recreated." });
+                toast({ tone: "done", title: t("Restored"), body: t("Branches are back where they were; worktrees are not recreated.") });
                 props.onDone();
               },
             },
@@ -209,7 +207,7 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
           15000,
         );
       }
-      for (const f of failed) toast({ tone: "fail", title: `${f.branch} not deleted`, body: f.error ?? "" }, 12000);
+      for (const f of failed) toast({ tone: "fail", title: t("{branch} not deleted", { branch: f.branch }), body: f.error ?? "" }, 12000);
       props.onDone();
       props.onClose();
     } catch (e) {
@@ -221,12 +219,12 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
 
   return (
     <Sheet
-      title="Clean up shipped lanes"
+      title={t("Clean up shipped lanes")}
       onClose={props.onClose}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
-            Cancel
+            {t("Cancel")}
           </button>
           <Show when={(plan()?.items.length ?? 0) > 0}>
             <button
@@ -239,7 +237,7 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
               <Show when={busy()} fallback={<Icon name="trash" small />}>
                 <Spinner />
               </Show>
-              Delete {chosen().size}
+              {t("Delete {n}", { n: chosen().size })}
             </button>
           </Show>
         </>
@@ -248,7 +246,7 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
       <Switch>
         <Match when={plan.loading}>
           <div class="loading-line">
-            <Spinner /> Fetching origin and checking every lane against main
+            <Spinner /> {t("Fetching origin and checking every lane against main")}
           </div>
         </Match>
         <Match when={plan.error}>
@@ -259,11 +257,10 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
             <>
               <Show
                 when={p().items.length > 0}
-                fallback={<p>Nothing to clean: no lane is in production with a clean worktree.</p>}
+                fallback={<p>{t("Nothing to clean: no lane is in production with a clean worktree.")}</p>}
               >
                 <p>
-                  These are in production and their worktrees are clean. Deleting removes the worktree, the local branch
-                  and the remote branch. Each can be undone for 30 days.
+                  {t("These are in production and their worktrees are clean. Deleting removes the worktree, the local branch and the remote branch. Each can be undone for 30 days.")}
                 </p>
                 <div>
                   <For each={p().items}>
@@ -278,19 +275,19 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
                         <span class="lane-name">
                           <span class="branch">{i.branch}</span>
                           <span class="what">
-                            {[i.local ? "branch" : null, i.worktree ? "worktree" : null, i.delete_remote ? "remote branch" : null]
+                            {[i.local ? t("branch") : null, i.worktree ? t("worktree") : null, i.delete_remote ? t("remote branch") : null]
                               .filter(Boolean)
                               .join(" + ")}
                           </span>
                         </span>
-                        <span class="tag">{i.how ? landedLabel[i.how] : ""}</span>
+                        <span class="tag">{i.how ? t(landedLabel[i.how]) : ""}</span>
                       </label>
                     )}
                   </For>
                 </div>
               </Show>
               <Show when={p().skipped.length > 0}>
-                <p class="caption">Kept:</p>
+                <p class="caption">{t("Kept:")}</p>
                 <For each={p().skipped}>
                   {(s) => (
                     <div class="note">
@@ -329,17 +326,17 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
     try {
       const r = await api.newLane(props.repo, branch);
       const extra = [
-        r.copied.length ? `copied ${r.copied.join(", ")}` : null,
-        r.cloned.length ? `cloned ${r.cloned.join(", ")}` : null,
-        r.missing.length ? `${r.missing.join(", ")} not found` : null,
-        r.setup_ok === false ? "setup command failed" : null,
+        r.copied.length ? t("copied {files}", { files: r.copied.join(", ") }) : null,
+        r.cloned.length ? t("cloned {files}", { files: r.cloned.join(", ") }) : null,
+        r.missing.length ? t("{files} not found", { files: r.missing.join(", ") }) : null,
+        r.setup_ok === false ? t("setup command failed") : null,
       ].filter(Boolean);
       toast(
         {
           tone: r.setup_ok === false ? "fail" : "done",
-          title: `${r.branch} from ${r.base} ${short(r.base_sha)}`,
+          title: t("{branch} from {base} {sha}", { branch: r.branch, base: r.base, sha: short(r.base_sha) }),
           body: extra.length ? `${r.path}. ${extra.join(", ")}.` : r.path,
-          action: { label: "Copy path", run: () => void navigator.clipboard.writeText(r.path) },
+          action: { label: t("Copy path"), run: () => void navigator.clipboard.writeText(r.path) },
         },
         12000,
       );
@@ -354,13 +351,13 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
 
   return (
     <Sheet
-      title="New lane"
+      title={t("New lane")}
       onClose={props.onClose}
       dirty={() => !!name().trim()}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             type="submit"
@@ -372,14 +369,14 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
             <Show when={busy()} fallback={<Icon name="plus" small />}>
               <Spinner />
             </Show>
-            {busy() ? "Creating" : "Create lane"}
+            {busy() ? t("Creating") : t("Create lane")}
           </button>
         </>
       }
     >
       <form id="new-lane" class="field" classList={{ "is-error": !!error() }} onSubmit={create}>
         <label class="field-label" for="lane-name">
-          Branch
+          {t("Branch")}
         </label>
         <input
           id="lane-name"
@@ -394,8 +391,8 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
         />
         <span class="field-help">
           {busy()
-            ? "Fetching, creating the worktree, copying files, running setup"
-            : `Starts from a freshly fetched origin/${props.base}, in its own worktree.`}
+            ? t("Fetching, creating the worktree, copying files, running setup")
+            : t("Starts from a freshly fetched origin/{base}, in its own worktree.", { base: props.base })}
         </span>
       </form>
       <Show when={error()}>
@@ -440,51 +437,54 @@ export function RunAllSheet(props: {
   let notesRef: HTMLTextAreaElement | undefined;
   const trunk = () => into() === props.production || into() === props.integration;
   const target = () => into() || null;
-  const flowWords = () => `origin/${props.base}, then ${[props.integration, props.production].filter(Boolean).join(" and ")} through the merge queue`;
   const help = () => {
-    const t = target();
-    if (!t) return `Each card gets a lane of its own from a freshly fetched ${flowWords()}.`;
-    if (direct()) return `Every card is worked in ${t}'s own worktree, one at a time, committing there. Nothing is pushed.`;
-    if (trunk()) return `Each card gets a lane from a freshly fetched origin/${props.base}; approved, it ships straight into ${t}.`;
-    return `Each card gets a lane branched from ${t}; approved, it is merged into ${t} on this machine (nothing pushed). Cards that build on others start once those landed.`;
+    const to = target();
+    if (!to)
+      return t("Each card gets a lane of its own from a freshly fetched origin/{base}, then {stages} through the merge queue.", {
+        base: props.base,
+        stages: [props.integration, props.production].filter(Boolean).join(t(" and ")),
+      });
+    if (direct()) return t("Every card is worked in {to}’s own worktree, one at a time, committing there. Nothing is pushed.", { to });
+    if (trunk()) return t("Each card gets a lane from a freshly fetched origin/{base}; approved, it ships straight into {to}.", { base: props.base, to });
+    return t("Each card gets a lane branched from {to}; approved, it is merged into {to} on this machine (nothing pushed). Cards that build on others start once those landed.", { to });
   };
 
   return (
     <Sheet
-      title={`Run all ${props.count} card${props.count === 1 ? "" : "s"}`}
+      title={plural(props.count, "Run all {n} card", "Run all {n} cards", { n: props.count })}
       onClose={props.onClose}
       dirty={() => !!instructions().trim()}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button type="button" class="btn btn-primary" onClick={() => props.onStart({ into: target(), direct: direct() && !!target(), instructions: instructions().trim() })}>
-            <Icon name="play" small /> Start
+            <Icon name="play" small /> {t("Start")}
           </button>
         </>
       }
     >
       <div class="field">
         <label class="field-label" for="run-all-into">
-          Into
+          {t("Into")}
         </label>
         <select id="run-all-into" class="select input-mono" value={into()} onChange={(e) => setInto(e.currentTarget.value)}>
-          <option value="">The flow ({[props.integration, props.production].filter(Boolean).join(" → ")})</option>
+          <option value="">{t("The flow")} ({[props.integration, props.production].filter(Boolean).join(" → ")})</option>
           <For each={lanes()}>{(l) => <option value={l.branch}>{l.branch}</option>}</For>
-          <Show when={props.integration}>{(i) => <option value={i()}>{i()} only</option>}</Show>
-          <option value={props.production}>{props.production} directly</option>
+          <Show when={props.integration}>{(i) => <option value={i()}>{t("{name} only", { name: i() })}</option>}</Show>
+          <option value={props.production}>{t("{name} directly", { name: props.production })}</option>
         </select>
       </div>
       <Show when={target()}>
         <div class="field">
-          <span class="field-label">How</span>
-          <div class="seg" role="group" aria-label="How the cards are worked">
+          <span class="field-label">{t("How")}</span>
+          <div class="seg" role="group" aria-label={t("How the cards are worked")}>
             <button type="button" aria-pressed={!direct()} onClick={() => setDirect(false)}>
-              A lane per card
+              {t("A lane per card")}
             </button>
             <button type="button" aria-pressed={direct()} onClick={() => setDirect(true)}>
-              Directly in {target()}
+              {t("Directly in {name}", { name: target() ?? "" })}
             </button>
           </div>
         </div>
@@ -492,13 +492,13 @@ export function RunAllSheet(props: {
       <p class="field-help">{help()}</p>
       <Show when={direct() && trunk()}>
         <ErrorLine>
-          Agents will commit straight into {target()} in its checkout. Make sure nothing of yours is uncommitted there.
+          {t("Agents will commit straight into {name} in its checkout. Make sure nothing of yours is uncommitted there.", { name: target() ?? "" })}
         </ErrorLine>
       </Show>
       <div class="field">
         <span class="field-label-row">
           <label class="field-label" for="run-all-after">
-            When it is all done
+            {t("When it is all done")}
           </label>
           <Dictate field={() => notesRef} value={instructions} onChange={setInstructions} />
         </span>
@@ -507,14 +507,14 @@ export function RunAllSheet(props: {
           ref={notesRef}
           class="input run-all-after"
           rows="4"
-          placeholder="Optional. E.g. never run the e2e tests; when everything landed, merge into dev and build a local dev version."
+          placeholder={t("Optional. E.g. never run the e2e tests; when everything landed, merge into dev and build a local dev version.")}
           value={instructions()}
           onInput={(e) => setInstructions(e.currentTarget.value)}
         />
-        <span class="field-help">Every agent reads this. What is for the end is done by one closing session once the cards landed, then you get the report.</span>
+        <span class="field-help">{t("Every agent reads this. What is for the end is done by one closing session once the cards landed, then you get the report.")}</span>
       </div>
       <p class="field-help">
-        Cards start in board order. One that builds on another waits for it to land; two that change the same engine or schema never run together.
+        {t("Cards start in board order. One that builds on another waits for it to land; two that change the same engine or schema never run together.")}
       </p>
     </Sheet>
   );

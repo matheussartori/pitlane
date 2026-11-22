@@ -541,9 +541,13 @@ export interface Prefs {
   notify_runs: boolean;
   notify_terminals: boolean;
   code_prewarm: boolean;
+  /** Pitlane's own words: "system", "en" or "pt-BR". */
+  ui_language: string;
+  /** What agents write in for you: "system" or a language tag. */
+  agent_language: string;
 }
 
-export const DEFAULT_PREFS: Prefs = { theme: "system", notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true };
+export const DEFAULT_PREFS: Prefs = { theme: "system", notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true, ui_language: "system", agent_language: "system" };
 
 export interface FlowFile {
   flow: { base: string; integration: string; production: string; remote: string; naming: string[]; stale_days: number };

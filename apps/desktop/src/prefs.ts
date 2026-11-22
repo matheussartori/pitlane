@@ -12,6 +12,8 @@ function apply() {
   if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
   else document.documentElement.removeAttribute("data-theme");
   setTerminalNotify(prefs().notify_terminals);
+  const ui = prefs().ui_language;
+  document.documentElement.lang = (!ui || ui === "system" ? navigator.language : ui).toLowerCase().startsWith("pt") ? "pt-BR" : "en";
   retheme();
   window.dispatchEvent(new CustomEvent("pitlane-theme"));
 }

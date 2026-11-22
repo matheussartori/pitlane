@@ -3,6 +3,7 @@
 import type { Card, CardState, Lane, RunMeta, Yard } from "./api";
 import type { IconName } from "./icons";
 import { group, next, type ChipState } from "./lane";
+import { plural, t } from "./i18n";
 
 export type Column = "needs" | "backlog" | "progress" | "landed";
 export const columns: Column[] = ["needs", "backlog", "progress", "landed"];
@@ -39,8 +40,6 @@ export interface Placement {
   why?: string;
 }
 
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
-
 export function laneOf(card: Card, yard: Yard | null): Lane | undefined {
   return card.lane ? yard?.lanes.find((l) => l.branch === card.lane) : undefined;
 }
@@ -50,29 +49,29 @@ export function place(card: Card, yard: Yard | null): Placement {
   const open = card.questions?.filter((q) => q.answer == null) ?? [];
 
   if (open.length > 0)
-    return { column: "needs", chip: "needs", icon: "needs", label: plural(open.length, "question"), why: open[0]!.text };
-  if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: "Blocked", why: firstLine(card.body) };
+    return { column: "needs", chip: "needs", icon: "needs", label: plural(open.length, "{n} question", "{n} questions"), why: open[0]!.text };
+  if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: t("Blocked"), why: firstLine(card.body) };
   if (lane && yard && group(lane) === "waiting") {
     const n = next(lane, yard);
-    const label = lane.status === "contaminated" ? `Mixed with ${yard.integration ?? "integration"}` : "Lane needs you";
+    const label = lane.status === "contaminated" ? t("Mixed with {name}", { name: yard.integration ?? "integration" }) : t("Lane needs you");
     return {
       column: "needs",
       chip: lane.status === "contaminated" ? "failed" : "needs",
       icon: lane.status === "contaminated" ? "fail" : "needs",
       label,
-      why: n?.text ?? `Tested in ${yard.integration ?? "integration"}, waiting to ship.`,
+      why: n?.text ?? t("Tested in {name}, waiting to ship.", { name: yard.integration ?? "integration" }),
     };
   }
   if (card.state === "review")
-    return { column: "needs", chip: "needs", icon: "review", label: "Ready to review" };
-  if (card.state === "verifying") return { column: "progress", chip: "running", icon: "verify", label: "Checking" };
+    return { column: "needs", chip: "needs", icon: "review", label: t("Ready to review") };
+  if (card.state === "verifying") return { column: "progress", chip: "running", icon: "verify", label: t("Checking") };
   if (card.state === "done" || lane?.in_production)
-    return { column: "landed", chip: "done", icon: "done", label: `In ${yard?.production ?? "main"}` };
+    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: yard?.production ?? "main" }) };
   if (card.state === "in-dev" || lane?.in_integration)
-    return { column: "landed", chip: "done", icon: "done", label: `In ${yard?.integration ?? "dev"}` };
+    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: yard?.integration ?? "dev" }) };
   if (card.state === "running" || lane)
-    return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? "Running" : "In a lane" };
-  return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: stateLabel[card.state] };
+    return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? t("Running") : t("In a lane") };
+  return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]) };
 }
 
 function firstLine(body: string): string | undefined {
@@ -83,14 +82,14 @@ function firstLine(body: string): string | undefined {
 /** What the checks found on a card's latest run, in one sentence, and how loud to say it. */
 export function reviewSummary(run: RunMeta | undefined): { text: string; chip: ChipState; icon: IconName; label: string } {
   const parts = [
-    run?.proofs_ok === true ? "checks pass" : run?.proofs_ok === false ? "a check fails" : null,
-    run?.verdict === "approve" ? "the judge approves" : run?.verdict === "changes" ? "the judge asks for changes" : null,
+    run?.proofs_ok === true ? t("checks pass") : run?.proofs_ok === false ? t("a check fails") : null,
+    run?.verdict === "approve" ? t("the judge approves") : run?.verdict === "changes" ? t("the judge asks for changes") : null,
   ].filter(Boolean) as string[];
-  const text = parts.length ? parts.join(", ") + "." : "Not checked; read the diff.";
+  const text = parts.length ? parts.join(", ") + "." : t("Not checked; read the diff.");
   const sentence = text.charAt(0).toUpperCase() + text.slice(1);
-  if (run?.proofs_ok === false) return { text: sentence, chip: "failed", icon: "fail", label: "Check fails" };
-  if (run?.verdict === "changes") return { text: sentence, chip: "needs", icon: "review", label: "Judge asks changes" };
-  return { text: sentence, chip: "needs", icon: "review", label: "Ready to review" };
+  if (run?.proofs_ok === false) return { text: sentence, chip: "failed", icon: "fail", label: t("Check fails") };
+  if (run?.verdict === "changes") return { text: sentence, chip: "needs", icon: "review", label: t("Judge asks changes") };
+  return { text: sentence, chip: "needs", icon: "review", label: t("Ready to review") };
 }
 
 /** A card's latest run: the highest review round, then the newest. */

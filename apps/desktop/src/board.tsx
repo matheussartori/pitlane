@@ -12,6 +12,7 @@ import { refreshAgents } from "./agents";
 import { DecisionItem, QuestionAbout, QuestionBlock } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+import { locale, plural, t } from "./i18n";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -19,8 +20,8 @@ const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.
 function stopNote(nodes: { stage: string; state: string; figure?: string }[]): string | null {
   const n = nodes.find((x) => x.state === "fail") ?? nodes.find((x) => x.state === "next") ?? nodes.find((x) => x.state === "count");
   if (!n) return null;
-  if (n.state === "next") return `next: ${n.stage}`;
-  if (n.state === "fail") return `mixed in ${n.stage}`;
+  if (n.state === "next") return t("next: {stage}", { stage: n.stage });
+  if (n.state === "fail") return t("mixed in {stage}", { stage: n.stage });
   return n.figure ?? n.stage;
 }
 
@@ -39,7 +40,7 @@ export function LaneTrack(props: { branch: string | undefined; yard: Yard | null
           <span
             class="rail rail-mini"
             role="img"
-            aria-label={`Lane ${l().branch}: ${track(l(), props.yard!, props.now).map((n) => `${n.stage} ${n.state === "on" ? "reached" : n.state === "off" ? "not reached" : n.state}`).join(", ")}`}
+            aria-label={t("Lane {branch}: {stops}", { branch: l().branch, stops: track(l(), props.yard!, props.now).map((n) => `${n.stage} ${n.state === "on" ? t("reached") : n.state === "off" ? t("not reached") : n.state}`).join(", ") })}
           >
             <For each={track(l(), props.yard!, props.now)}>
               {(n) => (
@@ -50,7 +51,7 @@ export function LaneTrack(props: { branch: string | undefined; yard: Yard | null
             </For>
           </span>
           <Show when={stopNote(track(l(), props.yard!, props.now))}>
-            {(t) => <span class="stop-note" aria-hidden="true">{t()}</span>}
+            {(note) => <span class="stop-note" aria-hidden="true">{note()}</span>}
           </Show>
         </span>
       )}
@@ -70,14 +71,14 @@ export function planNote(plan: Plan | null | undefined, id: number, cards: Card[
     return c ? `#${other} ${c.title}` : `#${other}`;
   };
   const wait = plan.waits.find((w) => w.card === id);
-  if (wait) return `Waits for ${wait.with_lane ?? called(wait.with_card!)} to land: both touch ${name(wait.files[0]!)}`;
+  if (wait) return t("Waits for {other} to land: both touch {file}", { other: wait.with_lane ?? called(wait.with_card!), file: name(wait.files[0]!) });
   const batch = plan.batches.findIndex((b) => b.includes(id));
   if (batch <= 0) return null;
   const earlier = new Set(plan.batches.slice(0, batch).flat());
   const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1)) || (x.with_card === id && earlier.has(x.card)));
   if (!c) return null;
   const other = c.card === id ? c.with_card! : c.card;
-  return `After ${called(other)}: both touch ${name(c.files[0]!)}`;
+  return t("After {other}: both touch {file}", { other: called(other), file: name(c.files[0]!) });
 }
 
 /**
@@ -94,18 +95,18 @@ function BoardAsk(props: { repo: string }) {
     field.style.height = `${Math.min(field.scrollHeight, 220)}px`;
   };
   const send = async () => {
-    const t = text().trim();
-    if (!t || busy()) return;
+    const msgText = text().trim();
+    if (!msgText || busy()) return;
     setBusy(true);
     try {
-      await api.boardAssist(props.repo, t);
+      await api.boardAssist(props.repo, msgText);
       setText("");
       requestAnimationFrame(fit);
       // The session appears in the dock as soon as the daemon starts it.
       for (const ms of [800, 2500, 6000]) setTimeout(() => void refreshAgents(), ms);
-      toast({ tone: "info", title: "Claude is on it", body: "New cards show up here as it writes them. Follow it in the Agents dock." });
+      toast({ tone: "info", title: t("Claude is on it"), body: t("New cards show up here as it writes them. Follow it in the Agents dock.") });
     } catch (e) {
-      toast({ tone: "fail", title: "Claude did not get it", body: e instanceof Error ? e.message : String(e) });
+      toast({ tone: "fail", title: t("Claude did not get it"), body: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -117,8 +118,8 @@ function BoardAsk(props: { repo: string }) {
         ref={field}
         class="board-ask-field"
         rows="1"
-        aria-label="Ask Claude to write or change cards"
-        placeholder="Ask Claude: paste a list or say what you need, and it writes the cards (Enter sends, Shift+Enter for a new line)"
+        aria-label={t("Ask Claude to write or change cards")}
+        placeholder={t("Ask Claude: paste a list or say what you need, and it writes the cards (Enter sends, Shift+Enter for a new line)")}
         value={text()}
         onInput={(e) => (setText(e.currentTarget.value), fit())}
         onKeyDown={(e) => {
@@ -132,7 +133,7 @@ function BoardAsk(props: { repo: string }) {
         <Show when={busy()} fallback={<Icon name="spark" small />}>
           <Spinner />
         </Show>
-        Ask
+        {t("Ask")}
       </button>
     </div>
   );
@@ -157,44 +158,47 @@ function ForgetSheet(props: { repo: string; cards: Card[]; onDone: () => void; o
     try {
       const r = await api.cardsForget(props.repo, props.cards.map((c) => c.id));
       props.onDone();
-      toast({ tone: "done", title: one() ? `#${props.cards[0]!.id} is back to not analysed` : `${props.cards.length} cards are back to not analysed`, body: `Forgot ${r.notes} note${r.notes === 1 ? "" : "s"} and ${r.questions} open question${r.questions === 1 ? "" : "s"}.` });
+      toast({ tone: "done", title: one() ? t("#{id} is back to not analysed", { id: props.cards[0]!.id }) : t("{n} cards are back to not analysed", { n: props.cards.length }), body: t("Forgot {notes} and {questions}.", { notes: plural(r.notes, "{n} note", "{n} notes"), questions: plural(r.questions, "{n} open question", "{n} open questions") }) });
       props.onClose();
     } catch (e) {
-      toast({ tone: "fail", title: "Nothing was forgotten", body: e instanceof Error ? e.message : String(e) });
+      toast({ tone: "fail", title: t("Nothing was forgotten"), body: e instanceof Error ? e.message : String(e) });
       setBusy(false);
     }
   };
   return (
     <Sheet
-      title={one() ? `Forget the analysis of #${props.cards[0]!.id}` : `Forget the analysis of ${props.cards.length} cards`}
+      title={one() ? t("Forget the analysis of #{id}", { id: props.cards[0]!.id }) : t("Forget the analysis of {n} cards", { n: props.cards.length })}
       onClose={props.onClose}
       foot={
         <>
           <button type="button" class="btn btn-ghost" autofocus onClick={props.onClose} disabled={busy()}>
-            Keep it
+            {t("Keep it")}
           </button>
           <button type="button" class="btn btn-danger" aria-busy={busy()} disabled={busy()} onClick={() => void go()}>
             <Show when={busy()} fallback={<Icon name="undo" small />}>
               <Spinner />
             </Show>
-            Forget {one() ? "it" : "all"}
+            {one() ? t("Forget it") : t("Forget all")}
           </button>
         </>
       }
     >
       <p>
-        Claude starts over on {one() ? "this card" : "these cards"}: the next Analyse reads {one() ? "it" : "them"} from scratch.
+        {one() ? t("Claude starts over on this card: the next Analyse reads it from scratch.") : t("Claude starts over on these cards: the next Analyse reads them from scratch.")}
       </p>
       <ul class="forget-list">
         <li>
-          <b>Goes:</b> {notes()} note{notes() === 1 ? "" : "s"} by Claude and the judge, {open()} unanswered question{open() === 1 ? "" : "s"}, the
-          analysis mark and the order it worked out.
+          <b>{t("Goes:")}</b>{" "}
+          {t("{notes}, {questions}, the analysis mark and the order it worked out.", {
+            notes: plural(notes(), "{n} note by Claude and the judge", "{n} notes by Claude and the judge"),
+            questions: plural(open(), "{n} unanswered question", "{n} unanswered questions"),
+          })}
         </li>
         <li>
-          <b>Stays:</b> the spec, your own notes, your answers to its questions, and any lane or run.
+          <b>{t("Stays:")}</b> {t("the spec, your own notes, your answers to its questions, and any lane or run.")}
         </li>
       </ul>
-      <p class="field-help">This cannot be undone.</p>
+      <p class="field-help">{t("This cannot be undone.")}</p>
     </Sheet>
   );
 }
@@ -207,19 +211,19 @@ export async function deleteCard(repo: string, card: Card, onChanged: () => void
     toast(
       {
         tone: "done",
-        title: `Deleted #${card.id} ${card.title}`,
-        body: card.lane ? `Its lane ${card.lane} stays; clean it from Lanes if you do not need it.` : undefined,
+        title: t("Deleted #{id} {title}", { id: card.id, title: card.title }),
+        body: card.lane ? t("Its lane {lane} stays; clean it from Lanes if you do not need it.", { lane: card.lane }) : undefined,
         action: {
-          label: "Undo",
+          label: t("Undo"),
           run: () =>
-            void api.cardRestore(repo, card.id).then(onChanged, (e) => toast({ tone: "fail", title: `Could not restore #${card.id}`, body: e instanceof Error ? e.message : String(e) })),
+            void api.cardRestore(repo, card.id).then(onChanged, (e) => toast({ tone: "fail", title: t("Could not restore #{id}", { id: card.id }), body: e instanceof Error ? e.message : String(e) })),
         },
       },
       12000,
     );
     return true;
   } catch (e) {
-    toast({ tone: "fail", title: `Could not delete #${card.id}`, body: e instanceof Error ? e.message : String(e) });
+    toast({ tone: "fail", title: t("Could not delete #{id}", { id: card.id }), body: e instanceof Error ? e.message : String(e) });
     return false;
   }
 }
@@ -240,14 +244,14 @@ export function holdNote(id: number, cards: Card[], busy: number[]): string | nu
     const dep = cards.find((x) => x.id === a);
     // A dependency both ways is the analysts disagreeing: the board order decides.
     if (!dep || landedState(dep) || (dep.after ?? []).includes(id)) continue;
-    return `After ${called(dep)} lands: it builds on it`;
+    return t("After {other} lands: it builds on it", { other: called(dep) });
   }
   const mine = new Set(c.areas ?? []);
   if (mine.size > 0)
     for (const b of busy) {
       const o = cards.find((x) => x.id === b);
       const shared = o && o.id !== id ? (o.areas ?? []).find((a) => mine.has(a)) : undefined;
-      if (o && shared) return `Waits for ${called(o)}: both change ${shared}`;
+      if (o && shared) return t("Waits for {other}: both change {area}", { other: called(o), area: shared });
     }
   return null;
 }
@@ -297,7 +301,7 @@ export function BoardView(props: {
         return { card: c, p: { ...place(c, props.yard), chip: r.chip, icon: r.icon, label: r.label, why: r.text } };
       }
       const p = asking
-        ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? "Wants to run" : `Wants ${asking.waiting[0]!.tool}`, why: `Asks to run ${asking.waiting[0]!.detail}` }
+        ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? t("Wants to run") : t("Wants {tool}", { tool: asking.waiting[0]!.tool }), why: t("Asks to run {detail}", { detail: asking.waiting[0]!.detail }) }
         : place(c, props.yard);
       const busy = props.runs.filter((r) => isLive(r.state)).map((r) => r.card);
       const note = props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [])) : null;
@@ -408,18 +412,18 @@ export function BoardView(props: {
   const [forgetting, setForgetting] = createSignal<number[] | null>(null);
   const runLabel = () =>
     props.phase === "analyzing"
-      ? "Stop analysing"
+      ? t("Stop analysing")
       : props.phase === "asking"
-        ? "Answer to go on"
+        ? t("Answer to go on")
         : props.phase === "finishing"
-          ? "Finishing"
+          ? t("Finishing")
           : props.phase === "working"
             ? props.queued.length > 0
-              ? `Stop (${props.queued.length} queued)`
-              : "Finish now"
+              ? t("Stop ({n} queued)", { n: props.queued.length })
+              : t("Finish now")
             : unanalysed().length > 0
-              ? `Analyse ${unanalysed().length}`
-              : "Start development";
+              ? t("Analyse {n}", { n: unanalysed().length })
+              : t("Start development");
   const runAction = () => {
     if (props.phase === "analyzing") return props.onStopAll();
     if (props.phase === "working") return props.queued.length > 0 ? props.onStopAll() : props.onFinish();
@@ -430,30 +434,30 @@ export function BoardView(props: {
   const runTitle = () =>
     props.phase === "working"
       ? props.queued.length > 0
-        ? "Stops starting queued cards; runs already going keep going"
-        : "Close the batch now: the cards still in review stay there"
+        ? t("Stops starting queued cards; runs already going keep going")
+        : t("Close the batch now: the cards still in review stay there")
       : props.phase === "analyzing"
-        ? "Stops the analysis; nothing starts"
+        ? t("Stops the analysis; nothing starts")
         : unanalysed().length > 0
-          ? "Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine"
-          : "Choose where the work lands and what happens at the end, then the agents start";
+          ? t("Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine")
+          : t("Choose where the work lands and what happens at the end, then the agents start");
 
   return (
     <div class="board-screen">
       <header class="screen-head">
-        <h1 class="title">Board</h1>
+        <h1 class="title">{t("Board")}</h1>
         <Show when={(props.cards?.length ?? 0) > 0}>
           <p class="summary">
-            {props.cards!.length} {props.cards!.length === 1 ? "card" : "cards"},{" "}
-            <Show when={needs() > 0} fallback="nothing needs you.">
-              <b>{needs()} need you.</b>
+            {plural(props.cards!.length, "{n} card", "{n} cards")},{" "}
+            <Show when={needs() > 0} fallback={t("nothing needs you.")}>
+              <b>{plural(needs(), "{n} needs you.", "{n} need you.")}</b>
             </Show>
           </p>
         </Show>
         <span class="spacer" />
         <button type="button" class="btn btn-primary" onClick={props.onNew}>
           <Icon name="plus" small />
-          New card <span class="kbd">C</span>
+          {t("New card")} <span class="kbd">C</span>
         </button>
       </header>
 
@@ -471,15 +475,14 @@ export function BoardView(props: {
         )}
       </Show>
 
-      <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> Reading the cards</div>}>
+      <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> {t("Reading the cards")}</div>}>
         <Show
           when={props.cards!.length > 0}
           fallback={
             <div class="empty">
-              <div class="empty-title">No cards yet</div>
+              <div class="empty-title">{t("No cards yet")}</div>
               <p class="empty-body">
-                Cards live outside the repository, so every branch and worktree sees the same board. Add one with New card, or let
-                Claude Code add them through MCP.
+                {t("Cards live outside the repository, so every branch and worktree sees the same board. Add one with New card, or let Claude Code add them through MCP.")}
               </p>
             </div>
           }
@@ -487,10 +490,10 @@ export function BoardView(props: {
           <div class="board" data-dragging={drag()?.live ? "" : undefined}>
             <For each={columns}>
               {(col) => (
-                <section class="col" aria-label={columnTitle[col]} ref={(el) => (columnEls[col] = el)}>
+                <section class="col" aria-label={t(columnTitle[col])} ref={(el) => (columnEls[col] = el)}>
                   <h2 class="col-head" data-hot={col === "needs" && byColumn(col).length > 0 ? "" : undefined}>
                     <Icon name={colIcon[col]} small />
-                    {columnTitle[col]}
+                    {t(columnTitle[col])}
                     <span class={col === "needs" && byColumn(col).length > 0 ? "count count-hot" : "count"}>
                       {byColumn(col).length}
                     </span>
@@ -516,8 +519,8 @@ export function BoardView(props: {
                       <button
                         type="button"
                         class="btn btn-ghost btn-icon col-action col-forget"
-                        aria-label="Forget the analysis"
-                        title={`Forget what Claude learned on ${remembered().length} backlog card${remembered().length === 1 ? "" : "s"}, to analyse again`}
+                        aria-label={t("Forget the analysis")}
+                        title={plural(remembered().length, "Forget what Claude learned on {n} backlog card, to analyse again", "Forget what Claude learned on {n} backlog cards, to analyse again")}
                         onClick={() => setForgetting(remembered().map((c) => c.id))}
                       >
                         <Icon name="undo" small />
@@ -525,7 +528,7 @@ export function BoardView(props: {
                     </Show>
                   </h2>
                   <div class="col-body" ref={(el) => (bodyEls[col] = el)} onScroll={(e) => e.currentTarget.toggleAttribute("data-scrolled", e.currentTarget.scrollTop > 0)}>
-                  <Show when={byColumn(col).length > 0} fallback={<p class="col-empty">{columnEmpty[col]}</p>}>
+                  <Show when={byColumn(col).length > 0} fallback={<p class="col-empty">{t(columnEmpty[col])}</p>}>
                     <For each={byColumn(col)}>
                       {({ card, p }, i) => (
                         <article
@@ -538,7 +541,7 @@ export function BoardView(props: {
                           style={drag()?.live && drag()!.id === card.id ? { transform: `translateY(${drag()!.dy}px)` } : undefined}
                           tabindex="0"
                           role="button"
-                          aria-label={`Card ${card.id}: ${card.title}. Alt and the arrow keys move it; Command Backspace deletes it.`}
+                          aria-label={t("Card {id}: {title}. Alt and the arrow keys move it; Command Backspace deletes it.", { id: card.id, title: card.title })}
                           onPointerDown={(e) => onPointerDown(e, col, card.id)}
                           onClick={() => !dragged && props.onOpen(card.id)}
                           onKeyDown={(e) => {
@@ -572,17 +575,17 @@ export function BoardView(props: {
                               {(r) => (
                                 <span class="chip" data-state="running">
                                   <Icon name="run" small />
-                                  Running <span class="figure">{clock(elapsed(r(), props.now))}</span>
+                                  {t("Running")} <span class="figure">{clock(elapsed(r(), props.now))}</span>
                                 </span>
                               )}
                             </Show>
                             <Show when={p.column === "backlog"}>
-                              <span class="card-analysis" data-on={card.analyzed ? "" : undefined} title={card.analyzed ? `Analysed ${card.analyzed}` : "Not analysed: Run all reads it first"}>
-                                {card.analyzed ? "Analysed" : "Not analysed"}
+                              <span class="card-analysis" data-on={card.analyzed ? "" : undefined} title={card.analyzed ? t("Analysed {at}", { at: card.analyzed }) : t("Not analysed: Run all reads it first")}>
+                                {card.analyzed ? t("Analysed") : t("Not analysed")}
                               </span>
                             </Show>
                             <Show when={(card.notes?.length ?? 0) > 0}>
-                              <span class="card-notes" title={`${card.notes!.length} ${card.notes!.length === 1 ? "note" : "notes"}`}>
+                              <span class="card-notes" title={plural(card.notes!.length, "{n} note", "{n} notes")}>
                                 <Icon name="note" small />
                                 {card.notes!.length}
                               </span>
@@ -642,18 +645,18 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 
   return (
     <Sheet
-      title="Before the run"
+      title={t("Before the run")}
       onClose={props.onDone}
       foot={
         <>
           <span class="sheet-note">
-            Question {Math.min(total, total - open().length + 1)} of {total}
+            {t("Question {i} of {total}", { i: Math.min(total, total - open().length + 1), total })}
           </span>
           <button type="button" class="btn btn-ghost" onClick={props.onStop} disabled={busy()}>
-            Stop Run all
+            {t("Stop Run all")}
           </button>
-          <button type="button" class="btn" onClick={props.onDone} disabled={busy()} title="Cards with open questions wait; the rest start now">
-            Answer later
+          <button type="button" class="btn" onClick={props.onDone} disabled={busy()} title={t("Cards with open questions wait; the rest start now")}>
+            {t("Answer later")}
           </button>
         </>
       }
@@ -681,14 +684,14 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 
 /** A note's age in words: "now", "12 min", "3 h", "2 d", then the date. */
 function ago(at: string, now: number): string {
-  const t = Date.parse(at);
-  if (Number.isNaN(t)) return at;
-  const m = Math.floor((now - t) / 60000);
-  if (m < 1) return "now";
-  if (m < 60) return `${m} min ago`;
-  if (m < 60 * 24) return `${Math.floor(m / 60)} h ago`;
-  if (m < 60 * 24 * 7) return `${Math.floor(m / 1440)} d ago`;
-  return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const ts = Date.parse(at);
+  if (Number.isNaN(ts)) return at;
+  const m = Math.floor((now - ts) / 60000);
+  if (m < 1) return t("now");
+  if (m < 60) return t("{n} min ago", { n: m });
+  if (m < 60 * 24) return t("{n} h ago", { n: Math.floor(m / 60) });
+  if (m < 60 * 24 * 7) return t("{n} d ago", { n: Math.floor(m / 1440) });
+  return new Date(ts).toLocaleDateString(locale(), { day: "numeric", month: "short" });
 }
 
 const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
@@ -748,7 +751,7 @@ export function CardSheet(props: {
         state: state() !== props.card.state ? state() : undefined,
         lane: lane().trim() !== (props.card.lane ?? "") ? lane().trim() : undefined,
       });
-      toast({ tone: "done", title: `#${props.card.id} saved` });
+      toast({ tone: "done", title: t("#{id} saved", { id: props.card.id }) });
       props.onChanged();
       props.onClose();
     } catch (e) {
@@ -762,7 +765,7 @@ export function CardSheet(props: {
     setBusy(true);
     try {
       const r = await api.cardAnswer(props.repo, props.card.id, question, text);
-      toast({ tone: "done", title: `Recorded as ${r.decision}`, body: text });
+      toast({ tone: "done", title: t("Recorded as {decision}", { decision: r.decision }), body: text });
       props.onChanged();
     } catch (e) {
       setError(msg(e));
@@ -788,7 +791,7 @@ export function CardSheet(props: {
 
   return (
     <Sheet
-      title={`Card #${props.card.id}`}
+      title={t("Card #{id}", { id: props.card.id })}
       class="card-sheet"
       onClose={props.onClose}
       dirty={() => dirty() || !!note().trim()}
@@ -800,14 +803,14 @@ export function CardSheet(props: {
               <Icon name={where().icon} small />
               {where().label}
             </span>
-            <span class="cs-where">in {columnTitle[where().column]}</span>
-            <button type="button" class="btn btn-ghost btn-icon cs-close" aria-label="Close" onClick={props.onClose}>
+            <span class="cs-where">{t("in {column}", { column: t(columnTitle[where().column]) })}</span>
+            <button type="button" class="btn btn-ghost btn-icon cs-close" aria-label={t("Close")} onClick={props.onClose}>
               <Icon name="close" small />
             </button>
           </div>
           <input
             class="cs-title"
-            aria-label="Title"
+            aria-label={t("Title")}
             value={title()}
             onInput={(e) => setTitle(e.currentTarget.value)}
           />
@@ -819,14 +822,14 @@ export function CardSheet(props: {
             type="button"
             class="btn btn-ghost cs-delete"
             disabled={busy() || !!live()}
-            title={live() ? "Stop its run first" : "Delete this card (you can undo)"}
+            title={live() ? t("Stop its run first") : t("Delete this card (you can undo)")}
             onClick={() => void deleteCard(props.repo, props.card, props.onChanged).then((ok) => ok && props.onClose())}
           >
-            <Icon name="trash" small /> Delete
+            <Icon name="trash" small /> {t("Delete")}
           </button>
           <span class="sheet-note">{props.card.file}</span>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
-            {dirty() ? "Cancel" : "Close"}
+            {dirty() ? t("Cancel") : t("Close")}
           </button>
           <Show
             when={!dirty()}
@@ -835,7 +838,7 @@ export function CardSheet(props: {
                 <Show when={busy()}>
                   <Spinner />
                 </Show>
-                Save
+                {t("Save")}
               </button>
             }
           >
@@ -846,18 +849,18 @@ export function CardSheet(props: {
                   type="button"
                   class="btn btn-primary"
                   disabled={busy() || open().length > 0 || props.card.state === "done"}
-                  title={open().length > 0 ? "Answer the open questions first" : "Claude Code works the card in its own worktree"}
+                  title={open().length > 0 ? t("Answer the open questions first") : t("Claude Code works the card in its own worktree")}
                   onClick={props.onRun}
                 >
                   <Icon name="run" small />
-                  Run
+                  {t("Run")}
                 </button>
               }
             >
               {(r) => (
                 <button type="button" class="btn btn-primary" onClick={() => props.onOpenRun(r().id)}>
                   <Icon name="run" small />
-                  Open the run <span class="figure">{clock(elapsed(r(), props.now))}</span>
+                  {t("Open the run")} <span class="figure">{clock(elapsed(r(), props.now))}</span>
                 </button>
               )}
             </Show>
@@ -878,13 +881,13 @@ export function CardSheet(props: {
           <section class="cs-section">
             <div class="field-head">
               <label class="cs-label" for="card-body">
-                Spec
+                {t("Spec")}
               </label>
               <Show
                 when={editing()}
                 fallback={
                   <button type="button" class="btn btn-ghost" onClick={() => setEditing(true)}>
-                    <Icon name="edit" small /> Edit
+                    <Icon name="edit" small /> {t("Edit")}
                   </button>
                 }
               >
@@ -894,7 +897,7 @@ export function CardSheet(props: {
             <Show
               when={editing()}
               fallback={
-                <div class="cs-spec-read" onDblClick={() => setEditing(true)} title="Double-click or Edit to change it">
+                <div class="cs-spec-read" onDblClick={() => setEditing(true)} title={t("Double-click or Edit to change it")}>
                   <Prose text={body()} />
                 </div>
               }
@@ -909,7 +912,7 @@ export function CardSheet(props: {
                 }}
                 id="card-body"
                 class="input textarea cs-spec"
-                placeholder="Goal, acceptance criteria, out of scope, how to verify"
+                placeholder={t("Goal, acceptance criteria, out of scope, how to verify")}
                 value={body()}
                 onInput={(e) => {
                   setBody(e.currentTarget.value);
@@ -924,7 +927,7 @@ export function CardSheet(props: {
           <Show when={open().length > 0}>
             <section class="cs-section">
               <h3 class="cs-label">
-                Open questions <span class="count count-hot">{open().length}</span>
+                {t("Open questions")} <span class="count count-hot">{open().length}</span>
               </h3>
               <For each={open()}>
                 {(q) => (
@@ -940,25 +943,25 @@ export function CardSheet(props: {
 
           <section class="cs-section">
             <h3 class="cs-label">
-              Notes <span class="count">{notes().length}</span>
-              <span class="cs-hint">What Claude learned working this card, and what you add. Every run reads them.</span>
+              {t("Notes")} <span class="count">{notes().length}</span>
+              <span class="cs-hint">{t("What Claude learned working this card, and what you add. Every run reads them.")}</span>
               <Show when={hasMemory(props.card)}>
-                <button type="button" class="btn btn-ghost cs-forget" disabled={!!live()} onClick={() => setForgetOne(true)} title="Forget Claude's notes, its open questions and the analysis, to analyse this card again">
-                  <Icon name="undo" small /> Forget
+                <button type="button" class="btn btn-ghost cs-forget" disabled={!!live()} onClick={() => setForgetOne(true)} title={t("Forget Claude's notes, its open questions and the analysis, to analyse this card again")}>
+                  <Icon name="undo" small /> {t("Forget")}
                 </button>
               </Show>
             </h3>
             <Show when={forgetOne()}>
               <ForgetSheet repo={props.repo} cards={[props.card]} onDone={props.onChanged} onClose={() => setForgetOne(false)} />
             </Show>
-            <Show when={notes().length > 0} fallback={<p class="cs-empty">No notes yet. Run all's analysis and each run add theirs here.</p>}>
+            <Show when={notes().length > 0} fallback={<p class="cs-empty">{t("No notes yet. Run all's analysis and each run add theirs here.")}</p>}>
               <ol class="notes">
                 <For each={notes()}>
                   {(n) => (
                     <li class="note" data-by={n.by}>
                       <div class="note-head">
                         <Icon name={noteBy[n.by]?.icon ?? "person"} small />
-                        <span class="note-by">{noteBy[n.by]?.name ?? n.by}</span>
+                        <span class="note-by">{noteBy[n.by] ? t(noteBy[n.by]!.name) : n.by}</span>
                         <span class="note-at" title={n.at}>
                           {ago(n.at, props.now)}
                         </span>
@@ -973,8 +976,8 @@ export function CardSheet(props: {
               <textarea
                 class="input textarea"
                 rows="2"
-                aria-label="Add a note"
-                placeholder="Add context for the next run (⌘↩ adds it)"
+                aria-label={t("Add a note")}
+                placeholder={t("Add context for the next run (⌘↩ adds it)")}
                 value={note()}
                 onInput={(e) => setNote(e.currentTarget.value)}
                 onKeyDown={(e) => {
@@ -988,7 +991,7 @@ export function CardSheet(props: {
                 <Show when={noting()} fallback={<Icon name="plus" small />}>
                   <Spinner />
                 </Show>
-                Add note
+                {t("Add note")}
               </button>
             </div>
           </section>
@@ -1000,15 +1003,15 @@ export function CardSheet(props: {
         <aside class="cs-side">
           <div class="field">
             <label class="field-label" for="card-state">
-              State
+              {t("State")}
             </label>
             <select id="card-state" class="select" value={state()} onChange={(e) => setState(e.currentTarget.value as CardState)}>
-              <For each={cardStates}>{(s) => <option value={s}>{stateLabel[s]}</option>}</For>
+              <For each={cardStates}>{(s) => <option value={s}>{t(stateLabel[s])}</option>}</For>
             </select>
           </div>
           <div class="field">
             <label class="field-label" for="card-lane">
-              Lane
+              {t("Lane")}
             </label>
             <input
               id="card-lane"
@@ -1032,7 +1035,7 @@ export function CardSheet(props: {
 
           <Show when={props.runs.length > 0}>
             <div class="cs-side-block">
-              <h3 class="field-label">Runs</h3>
+              <h3 class="field-label">{t("Runs")}</h3>
               <ul class="card-runs">
                 <For each={props.runs}>
                   {(r) => (
@@ -1040,7 +1043,7 @@ export function CardSheet(props: {
                       <button type="button" class="card-run cs-run" onClick={() => props.onOpenRun(r.id)} title={r.handoff?.summary ?? r.error ?? r.branch}>
                         <span class="chip" data-state={runStateView[r.state].chip}>
                           <Icon name={runStateView[r.state].icon} small />
-                          {runStateView[r.state].label}
+                          {t(runStateView[r.state].label)}
                         </span>
                         <span class="figure">{clock(elapsed(r, props.now))}</span>
                         <span class="figure">{money(r.cost_usd)}</span>
@@ -1054,7 +1057,7 @@ export function CardSheet(props: {
 
           <Show when={answered().length > 0}>
             <div class="cs-side-block">
-              <h3 class="field-label">Decisions</h3>
+              <h3 class="field-label">{t("Decisions")}</h3>
               <dl class="decisions">
                 <For each={answered()}>
                   {(q) => <DecisionItem repo={props.repo} card={props.card} q={q} onChanged={props.onChanged} />}
@@ -1064,8 +1067,8 @@ export function CardSheet(props: {
           </Show>
 
           <p class="cs-meta">
-            Created {ago(props.card.created, props.now)}
-            <Show when={props.card.analyzed}>, analysed {ago(props.card.analyzed!, props.now)}</Show>
+            {t("Created {when}", { when: ago(props.card.created, props.now) })}
+            <Show when={props.card.analyzed}>, {t("analysed {when}", { when: ago(props.card.analyzed!, props.now) })}</Show>
           </p>
         </aside>
       </div>
@@ -1104,19 +1107,19 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
 
   return (
     <Sheet
-      title="New card"
+      title={t("New card")}
       onClose={props.onClose}
       dirty={() => !!title().trim() || !!body().trim()}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button type="submit" form="new-card" class="btn btn-primary" disabled={busy() || !title().trim()} aria-busy={busy()}>
             <Show when={busy()} fallback={<Icon name="plus" small />}>
               <Spinner />
             </Show>
-            Create card
+            {t("Create card")}
           </button>
         </>
       }
@@ -1137,12 +1140,12 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
       >
         <div class="field">
           <label class="field-label" for="new-card-title">
-            Title
+            {t("Title")}
           </label>
           <input
             id="new-card-title"
             class="input"
-            placeholder="One line, in your words"
+            placeholder={t("One line, in your words")}
             autocomplete="off"
             autofocus
             value={title()}
@@ -1152,7 +1155,7 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
         <div class="field">
           <div class="field-head">
             <label class="field-label" for="new-card-body">
-              Spec
+              {t("Spec")}
             </label>
             <Dictate field={() => newSpecRef} value={body} onChange={setBody} />
           </div>
@@ -1161,19 +1164,19 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
             id="new-card-body"
             class="input textarea input-mono"
             rows="6"
-            placeholder="Optional: goal, acceptance criteria, how to verify"
+            placeholder={t("Optional: goal, acceptance criteria, how to verify")}
             value={body()}
             onInput={(e) => setBody(e.currentTarget.value)}
           />
-          <span class="field-help">Saved to this repository's board in ~/.pitlane, the same in every branch and worktree.</span>
+          <span class="field-help">{t("Saved to this repository's board in ~/.pitlane, the same in every branch and worktree.")}</span>
         </div>
         <div class="field">
           <div class="field-head">
             <span class="field-label">
-              Images <span class="count">{pending().length}</span>
+              {t("Images")} <span class="count">{pending().length}</span>
             </span>
             <button type="button" class="btn btn-ghost" onClick={() => newPicker?.click()}>
-              <Icon name="plus" small /> Add
+              <Icon name="plus" small /> {t("Add")}
             </button>
             <input
               ref={newPicker}
@@ -1187,13 +1190,13 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
               }}
             />
           </div>
-          <Show when={pending().length > 0} fallback={<span class="field-help">Drop screenshots here, pick them with Add, or paste with ⌘V.</span>}>
+          <Show when={pending().length > 0} fallback={<span class="field-help">{t("Drop screenshots here, pick them with Add, or paste with ⌘V.")}</span>}>
             <ul class="img-pending">
               <For each={pending()}>
                 {(f, i) => (
                   <li>
-                    <span>{f.name || "Pasted image"}</span>
-                    <button type="button" class="btn btn-ghost btn-icon" aria-label="Remove" onClick={() => setPending((p) => p.filter((_, j) => j !== i()))}>
+                    <span>{f.name || t("Pasted image")}</span>
+                    <button type="button" class="btn btn-ghost btn-icon" aria-label={t("Remove")} onClick={() => setPending((p) => p.filter((_, j) => j !== i()))}>
                       <Icon name="close" small />
                     </button>
                   </li>

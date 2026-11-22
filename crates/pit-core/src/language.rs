@@ -44,7 +44,7 @@ pub fn name(tag: &str) -> String {
     let tag = tag.replace('_', "-");
     let mut parts = tag.split('-');
     let lang = parts.next().unwrap_or("en").to_ascii_lowercase();
-    let region = parts.last().map(str::to_ascii_uppercase).unwrap_or_default();
+    let region = parts.next_back().map(str::to_ascii_uppercase).unwrap_or_default();
     let base = match lang.as_str() {
         "en" => "English",
         "pt" => return if region == "PT" { "Portuguese (Portugal)".into() } else { "Portuguese (Brazil)".into() },

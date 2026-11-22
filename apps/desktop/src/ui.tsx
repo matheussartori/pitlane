@@ -1,6 +1,7 @@
 // Small building blocks: modal sheet, toasts, spinner.
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { Icon } from "./icons";
+import { t } from "./i18n";
 
 /** A menu or popover that closes like any other: a click outside it, Escape, or the window
  *  losing focus. Call during a component's setup; `box` is the element holding the trigger and the menu. */
@@ -24,7 +25,7 @@ export function dismissable(box: () => HTMLElement | undefined, open: () => bool
 }
 
 export function Spinner() {
-  return <span class="spinner" role="status" aria-label="Working" />;
+  return <span class="spinner" role="status" aria-label={t("Working")} />;
 }
 
 /** Native <dialog>: Escape and focus trapping come free; a click outside closes it too. Unmount
@@ -49,7 +50,7 @@ export function Sheet(props: {
   const leave = () => {
     if (props.dirty?.() && Date.now() - warned > 4000) {
       warned = Date.now();
-      toast({ tone: "info", title: "You have unsaved changes", body: "Save them, or press Escape (or click outside) again to discard." }, 4000);
+      toast({ tone: "info", title: t("You have unsaved changes"), body: t("Save them, or press Escape (or click outside) again to discard.") }, 4000);
       return;
     }
     props.onClose();
@@ -103,38 +104,38 @@ export interface Toast {
 const [toasts, setToasts] = createSignal<Toast[]>([]);
 let nextId = 1;
 
-export function toast(t: Omit<Toast, "id">, ms = 7000) {
+export function toast(msg: Omit<Toast, "id">, ms = 7000) {
   const id = nextId++;
-  setToasts((all) => [...all.slice(-3), { ...t, id }]);
+  setToasts((all) => [...all.slice(-3), { ...msg, id }]);
   // 0 keeps it until it is answered or dismissed: for anything that waits on a decision.
   if (ms > 0) setTimeout(() => dismiss(id), ms);
 }
 
 function dismiss(id: number) {
-  setToasts((all) => all.filter((t) => t.id !== id));
+  setToasts((all) => all.filter((x) => x.id !== id));
 }
 
 export function Toasts() {
   return (
     <div class="toasts" aria-live="polite">
       <For each={toasts()}>
-        {(t) => (
-          <div class="toast" data-tone={t.tone}>
-            <Icon name={t.tone === "fail" ? "fail" : t.tone === "done" ? "done" : "needs"} />
+        {(m) => (
+          <div class="toast" data-tone={m.tone}>
+            <Icon name={m.tone === "fail" ? "fail" : m.tone === "done" ? "done" : "needs"} />
             <div>
-              <div class="toast-title">{t.title}</div>
-              <Show when={t.body}>
-                <div class="toast-body">{t.body}</div>
+              <div class="toast-title">{m.title}</div>
+              <Show when={m.body}>
+                <div class="toast-body">{m.body}</div>
               </Show>
             </div>
             <div class="row-actions">
-              <Show when={t.action}>
+              <Show when={m.action}>
                 {(a) => (
                   <button
                     type="button"
                     class="btn"
                     onClick={() => {
-                      dismiss(t.id);
+                      dismiss(m.id);
                       a().run();
                     }}
                   >
@@ -142,7 +143,7 @@ export function Toasts() {
                   </button>
                 )}
               </Show>
-              <button type="button" class="btn btn-ghost btn-icon" aria-label="Dismiss" onClick={() => dismiss(t.id)}>
+              <button type="button" class="btn btn-ghost btn-icon" aria-label={t("Dismiss")} onClick={() => dismiss(m.id)}>
                 <Icon name="close" small />
               </button>
             </div>

@@ -1,6 +1,7 @@
 // How a lane reads on screen. One place, so the table and the Tower never disagree.
 import { landedLabel, landedProof, type Lane, type Yard } from "./api";
 import type { IconName } from "./icons";
+import { plural, t, tx } from "./i18n";
 
 /** `data-state` of .chip and .tower-row in design/components.css. */
 export type ChipState = "needs" | "running" | "done" | "failed" | "queued";
@@ -20,24 +21,24 @@ export function laneView(lane: Lane, yard: Yard): LaneView {
       return {
         chip: "failed",
         icon: "fail",
-        label: `Carries ${lane.integration_commits.length} ${integ} commit${lane.integration_commits.length === 1 ? "" : "s"}`,
+        label: plural(lane.integration_commits.length, "Carries {n} {integ} commit", "Carries {n} {integ} commits", { integ }),
         needsYou: true,
       };
     case "needs-production":
       // A release decision, not an alarm: calm until you choose to ship.
-      return { chip: "queued", icon: "ship", label: `Ready for ${yard.production}`, needsYou: false };
+      return { chip: "queued", icon: "ship", label: t("Ready for {production}", { production: yard.production }), needsYou: false };
     case "shipped-dirty":
-      return { chip: "needs", icon: "needs", label: "Shipped, uncommitted", needsYou: true };
+      return { chip: "needs", icon: "needs", label: t("Shipped, uncommitted"), needsYou: true };
     case "can-delete":
-      return { chip: "done", icon: "done", label: "Can delete", needsYou: false };
+      return { chip: "done", icon: "done", label: t("Can delete"), needsYou: false };
     case "shipped":
-      return { chip: "done", icon: "done", label: "Shipped", needsYou: false };
+      return { chip: "done", icon: "done", label: t("Shipped"), needsYou: false };
     case "in-progress":
-      return { chip: "running", icon: "run", label: "In progress", needsYou: false };
+      return { chip: "running", icon: "run", label: t("In progress"), needsYou: false };
     case "new":
-      return { chip: "queued", icon: "queued", label: "New", needsYou: false };
+      return { chip: "queued", icon: "queued", label: tx("New", "lane"), needsYou: false };
     case "stale":
-      return { chip: "queued", icon: "queued", label: `Idle ${lane.idle_days}d`, needsYou: false };
+      return { chip: "queued", icon: "queued", label: t("Idle {n}d", { n: lane.idle_days }), needsYou: false };
   }
 }
 
@@ -54,39 +55,39 @@ export interface SyncView {
 export function syncView(lane: Lane, now: number): SyncView {
   const remote = `origin/${lane.branch}`;
   const atRisk = lane.unpushed > 0 && !lane.in_production;
-  const pushed = lane.last_push ? ` You pushed ${ago(now - lane.last_push * 1000)}.` : "";
-  const at = lane.remote_sha ? ` ${remote} is at ${lane.remote_sha.slice(0, 8)}.` : "";
+  const pushed = lane.last_push ? " " + t("You pushed {when}.", { when: ago(now - lane.last_push * 1000) }) : "";
+  const at = lane.remote_sha ? " " + t("{remote} is at {sha}.", { remote, sha: lane.remote_sha.slice(0, 8) }) : "";
   const s = lane.sync;
   let v: SyncView;
   switch (s.kind) {
     case "synced":
-      v = { label: "Synced", tone: "done", icon: "done", detail: `Local and ${remote} are the same commit.${pushed}` };
+      v = { label: t("Synced"), tone: "done", icon: "done", detail: t("Local and {remote} are the same commit.", { remote }) + pushed };
       break;
     case "ahead":
-      v = { label: `${s.ahead}↑ to push`, tone: "plain", icon: null, detail: `${s.ahead} local commit${s.ahead === 1 ? "" : "s"} not on ${remote} yet.${at}${pushed}` };
+      v = { label: t("{n}↑ to push", { n: s.ahead }), tone: "plain", icon: null, detail: plural(s.ahead, "{n} local commit not on {remote} yet.", "{n} local commits not on {remote} yet.", { remote }) + at + pushed };
       break;
     case "behind":
-      v = { label: `${s.behind}↓ to pull`, tone: "needs", icon: null, detail: `${remote} has ${s.behind} commit${s.behind === 1 ? "" : "s"} you don't have locally.${at}` };
+      v = { label: t("{n}↓ to pull", { n: s.behind }), tone: "needs", icon: null, detail: plural(s.behind, "{remote} has {n} commit you don’t have locally.", "{remote} has {n} commits you don’t have locally.", { remote }) + at };
       break;
     case "diverged":
-      v = { label: `${s.ahead}↑ ${s.behind}↓ diverged`, tone: "failed", icon: null, detail: `Both sides moved: ${s.ahead} local commit${s.ahead === 1 ? "" : "s"} and ${s.behind} on ${remote}.${at}` };
+      v = { label: t("{ahead}↑ {behind}↓ diverged", { ahead: s.ahead, behind: s.behind }), tone: "failed", icon: null, detail: plural(s.ahead, "Both sides moved: {ahead} local commit and {behind} on {remote}.", "Both sides moved: {ahead} local commits and {behind} on {remote}.", { ahead: s.ahead, behind: s.behind, remote }) + at };
       break;
     case "local-only":
       v = atRisk
-        ? { label: `Local only, ${lane.unpushed}↑`, tone: "needs", icon: null, detail: `Never pushed. ${lane.unpushed} commit${lane.unpushed === 1 ? "" : "s"} exist only on this machine.` }
-        : { label: "Local only", tone: "muted", icon: null, detail: "Never pushed, but every commit is already on some remote branch." };
+        ? { label: t("Local only, {n}↑", { n: lane.unpushed }), tone: "needs", icon: null, detail: plural(lane.unpushed, "Never pushed. {n} commit exists only on this machine.", "Never pushed. {n} commits exist only on this machine.") }
+        : { label: t("Local only"), tone: "muted", icon: null, detail: t("Never pushed, but every commit is already on some remote branch.") };
       break;
     case "gone":
       v = atRisk
-        ? { label: `Deleted on remote, ${lane.unpushed}↑`, tone: "needs", icon: null, detail: `${remote} was deleted. ${lane.unpushed} commit${lane.unpushed === 1 ? "" : "s"} exist only here.` }
-        : { label: "Deleted on remote", tone: "muted", icon: null, detail: `${remote} was deleted; its commits are safe elsewhere.` };
+        ? { label: t("Deleted on remote, {n}↑", { n: lane.unpushed }), tone: "needs", icon: null, detail: plural(lane.unpushed, "{remote} was deleted. {n} commit exists only here.", "{remote} was deleted. {n} commits exist only here.", { remote }) }
+        : { label: t("Deleted on remote"), tone: "muted", icon: null, detail: t("{remote} was deleted; its commits are safe elsewhere.", { remote }) };
       break;
     case "remote-only":
-      v = { label: "Remote only", tone: "muted", icon: null, detail: `Only ${remote} exists; no local branch. Check it out to work on it.` };
+      v = { label: t("Remote only"), tone: "muted", icon: null, detail: t("Only {remote} exists; no local branch. Check it out to work on it.", { remote }) };
       break;
   }
   if (lane.tracks_other) {
-    v = { ...v, tone: v.tone === "failed" ? "failed" : "needs", detail: `${v.detail} Its upstream is ${lane.tracks_other}, another branch: git pull and git push go there.` };
+    v = { ...v, tone: v.tone === "failed" ? "failed" : "needs", detail: `${v.detail} ${t("Its upstream is {other}, another branch: git pull and git push go there.", { other: lane.tracks_other })}` };
   }
   return v;
 }
@@ -103,18 +104,18 @@ export function shipTarget(lane: Lane, yard: Yard): string | null {
 export function worktreeName(lane: Lane): string | null {
   const w = lane.worktree;
   if (!w) return null;
-  if (w.is_main) return "main checkout";
+  if (w.is_main) return t("main checkout");
   return w.path.split("/").filter(Boolean).pop() ?? w.path;
 }
 
 export function ago(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 45) return "just now";
+  if (s < 45) return t("just now");
   const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return t("{n}m ago", { n: m });
   const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  if (h < 24) return t("{n}h ago", { n: h });
+  return t("{n}d ago", { n: Math.round(h / 24) });
 }
 
 export const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -157,7 +158,7 @@ export interface TrackNode {
 export function track(l: Lane, y: Yard, now: number): TrackNode[] {
   const s = syncView(l, now);
   const atRisk = l.unpushed > 0 && !l.in_production;
-  const remote: TrackNode = { stage: "Remote", state: "off", title: s.detail };
+  const remote: TrackNode = { stage: t("Remote"), state: "off", title: s.detail };
   switch (l.sync.kind) {
     case "synced":
     case "remote-only":
@@ -183,16 +184,16 @@ export function track(l: Lane, y: Yard, now: number): TrackNode[] {
       break;
     case "gone":
       remote.state = "gone";
-      remote.figure = "deleted";
+      remote.figure = t("deleted");
       break;
   }
   if (l.tracks_other && remote.state === "off") remote.state = "count";
 
   const nodes: TrackNode[] = [
     {
-      stage: "Local",
+      stage: t("Local"),
       state: l.local ? "on" : "off",
-      title: l.local ? `Local branch at ${l.sha.slice(0, 8)}.` : "No local branch.",
+      title: l.local ? t("Local branch at {sha}.", { sha: l.sha.slice(0, 8) }) : t("No local branch."),
     },
     remote,
   ];
@@ -202,20 +203,20 @@ export function track(l: Lane, y: Yard, now: number): TrackNode[] {
       stage: y.integration,
       state: contaminated ? "fail" : l.in_integration ? "on" : "off",
       title: contaminated
-        ? `Carries commits that exist only in ${y.integration}: ${l.integration_commits.join(", ")}.`
+        ? t("Carries commits that exist only in {integ}: {commits}.", { integ: y.integration, commits: l.integration_commits.join(", ") })
         : l.in_integration
-          ? `In ${y.integration}, ${landedLabel[l.in_integration]}. ${landedProof[l.in_integration]}`
-          : `Not in ${y.integration}.`,
+          ? t("In {stage}, {how}.", { stage: y.integration, how: t(landedLabel[l.in_integration]) }) + " " + t(landedProof[l.in_integration])
+          : t("Not in {stage}.", { stage: y.integration }),
     });
   }
   nodes.push({
     stage: y.production,
     state: l.in_production ? "on" : l.status === "needs-production" ? "next" : "off",
     title: l.in_production
-      ? `In ${y.production}, ${landedLabel[l.in_production]}. ${landedProof[l.in_production]}`
+      ? t("In {stage}, {how}.", { stage: y.production, how: t(landedLabel[l.in_production]) }) + " " + t(landedProof[l.in_production])
       : l.status === "needs-production"
-        ? `Tested in ${y.integration}; ready for ${y.production}.`
-        : `Not in ${y.production}.`,
+        ? t("Tested in {integ}; ready for {production}.", { integ: y.integration ?? "", production: y.production })
+        : t("Not in {stage}.", { stage: y.production }),
   });
   return nodes;
 }
@@ -227,21 +228,19 @@ export interface Next {
   tone: "needs" | "failed" | "muted" | "plain";
 }
 
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
-
 export function next(l: Lane, y: Yard): Next | null {
   const integ = y.integration ?? "integration";
   if (l.integration_commits.length > 0)
-    return { text: `Carries ${plural(l.integration_commits.length, `${integ} commit`)}; rebuild from ${y.production}`, tone: "failed" };
-  if (l.sync.kind === "diverged") return { text: "Diverged from the remote", tone: "failed" };
-  if (l.sync.kind === "behind") return { text: `Pull ${plural(l.sync.behind, "commit")} first`, tone: "needs" };
-  if (l.status === "shipped-dirty") return { text: "Uncommitted changes after shipping", tone: "needs" };
+    return { text: plural(l.integration_commits.length, "Carries {n} {integ} commit; rebuild from {production}", "Carries {n} {integ} commits; rebuild from {production}", { integ, production: y.production }), tone: "failed" };
+  if (l.sync.kind === "diverged") return { text: t("Diverged from the remote"), tone: "failed" };
+  if (l.sync.kind === "behind") return { text: plural(l.sync.behind, "Pull {n} commit first", "Pull {n} commits first"), tone: "needs" };
+  if (l.status === "shipped-dirty") return { text: t("Uncommitted changes after shipping"), tone: "needs" };
   if (l.status === "needs-production") return null; // the Ship button says it
   if (l.in_production) {
-    const how = { ancestor: "Merged", "patch-id": "Rebased", "merge-tree": "Squashed", "pull-request": "PR merged" }[l.in_production];
-    return { text: l.in_production === "pull-request" ? how : `${how} into ${y.production}`, tone: "muted" };
+    const how = { ancestor: t("Merged into {production}", { production: y.production }), "patch-id": t("Rebased into {production}", { production: y.production }), "merge-tree": t("Squashed into {production}", { production: y.production }), "pull-request": t("PR merged") }[l.in_production];
+    return { text: how, tone: "muted" };
   }
-  if (l.idle_days >= 2) return { text: `Idle ${plural(l.idle_days, "day")}`, tone: "muted" };
+  if (l.idle_days >= 2) return { text: plural(l.idle_days, "Idle {n} day", "Idle {n} days"), tone: "muted" };
   return null;
 }
 

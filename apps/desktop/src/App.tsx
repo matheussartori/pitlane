@@ -20,6 +20,7 @@ import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, RunAllSheet, ShipSheet, type RunAllChoice } from "./sheets";
 import { Toasts, dismissable, toast } from "./ui";
+import { plural, t } from "./i18n";
 
 type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "code" | "terminal" | "settings";
 type SheetState =
@@ -116,15 +117,15 @@ export default function App() {
       toast(
         {
           tone: r.setup_ok === false ? "fail" : "done",
-          title: `${r.branch} checked out, tracking ${r.base}`,
-          body: r.setup_ok === false ? `${r.path}. The setup command failed.` : r.path,
-          action: { label: "Copy path", run: () => void navigator.clipboard.writeText(r.path) },
+          title: t("{branch} checked out, tracking {base}", { branch: r.branch, base: r.base }),
+          body: r.setup_ok === false ? t("{path}. The setup command failed.", { path: r.path }) : r.path,
+          action: { label: t("Copy path"), run: () => void navigator.clipboard.writeText(r.path) },
         },
         12000,
       );
       await load(false);
     } catch (e) {
-      toast({ tone: "fail", title: `${lane.branch} not checked out`, body: msg(e) });
+      toast({ tone: "fail", title: t("{branch} not checked out", { branch: lane.branch }), body: msg(e) });
     } finally {
       setCheckingOut(null);
     }
@@ -212,12 +213,12 @@ export default function App() {
       const landed = next.filter((j) => wasOpen.has(j.id) && !isOpenJob(j));
       setJobs(next);
       for (const j of landed) {
-        if (j.state === "done") toast({ tone: "done", title: `${j.branch} is in ${j.target}` });
+        if (j.state === "done") toast({ tone: "done", title: t("{branch} is in {target}", { branch: j.branch, target: j.target }) });
         else
           toast({
             tone: "fail",
-            title: `${j.branch} did not ship to ${j.target}`,
-            body: j.state === "conflict" ? `It conflicts in ${j.conflicts.join(", ")}.` : (j.error ?? undefined),
+            title: t("{branch} did not ship to {target}", { branch: j.branch, target: j.target }),
+            body: j.state === "conflict" ? t("It conflicts in {files}.", { files: j.conflicts.join(", ") }) : (j.error ?? undefined),
           });
       }
       if (landed.length) {
@@ -237,17 +238,17 @@ export default function App() {
         await api.enqueue(path, l.branch, to);
         n++;
       } catch (e) {
-        toast({ tone: "fail", title: `${l.branch} stayed out of line`, body: msg(e) });
+        toast({ tone: "fail", title: t("{branch} stayed out of line", { branch: l.branch }), body: msg(e) });
       }
     }
-    if (n) toast({ tone: "done", title: `${n} ${n === 1 ? "lane is" : "lanes are"} in line for ${to}`, body: "The queue ships them one at a time." });
+    if (n) toast({ tone: "done", title: plural(n, "{n} lane is in line for {to}", "{n} lanes are in line for {to}", { to }), body: t("The queue ships them one at a time.") });
     void loadQueue();
   }
   async function dequeue(id: string) {
     try {
       await api.dequeue(id);
     } catch (e) {
-      toast({ tone: "fail", title: "Not cleared", body: msg(e) });
+      toast({ tone: "fail", title: t("Not cleared"), body: msg(e) });
     }
     void loadQueue();
   }
@@ -303,7 +304,7 @@ export default function App() {
       let ok = await isPermissionGranted();
       if (!ok) ok = (await requestPermission()) === "granted";
       const m = (runs() ?? []).find((r) => r.id === run);
-      if (ok) sendNotification({ title: m ? `#${m.card} ${m.card_title} is waiting for you` : "An agent is waiting for you", body: detail });
+      if (ok) sendNotification({ title: m ? t("#{card} {title} is waiting for you", { card: m.card, title: m.card_title }) : t("An agent is waiting for you"), body: detail });
     } catch {
       /* the browser preview has no notifications */
     }
@@ -326,15 +327,15 @@ export default function App() {
         toast(
           {
             tone: "info",
-            title: "Only the API key can take this card now",
-            body: `${text.slice(NEEDS_API_KEY.length)}. It is paid per token.`,
-            action: { label: "Use the API key", run: () => void startRun(card, true) },
+            title: t("Only the API key can take this card now"),
+            body: t("{why}. It is paid per token.", { why: text.slice(NEEDS_API_KEY.length) }),
+            action: { label: t("Use the API key"), run: () => void startRun(card, true) },
           },
           0,
         );
         return;
       }
-      toast({ tone: "fail", title: `Card #${card} did not start`, body: text });
+      toast({ tone: "fail", title: t("Card #{card} did not start", { card }), body: text });
     }
   }
 
@@ -367,10 +368,10 @@ export default function App() {
       if (!current_(token)) return;
       const failed = r.analyzed.filter((a) => a.error && a.error !== "stopped before it started");
       if (failed.length > 0)
-        toast({ tone: "fail", title: `Could not analyse ${failed.map((f) => `#${f.card}`).join(", ")}`, body: failed[0]!.error }, 0);
+        toast({ tone: "fail", title: t("Could not analyse {cards}", { cards: failed.map((f) => `#${f.card}`).join(", ") }), body: failed[0]!.error }, 0);
     } catch (e) {
       if (!current_(token)) return;
-      toast({ tone: "fail", title: "The analysis did not run", body: msg(e) }, 0);
+      toast({ tone: "fail", title: t("The analysis did not run"), body: msg(e) }, 0);
     }
     await loadCards();
     if (!current_(token) || phase() !== "analyzing") return; // stopped meanwhile
@@ -386,7 +387,7 @@ export default function App() {
     setPhase("idle");
     setQueue([]);
     session++;
-    toast({ tone: "done", title: "Analysis done", body: "Every card has its notes and decisions. Start development on the Board when you are ready." });
+    toast({ tone: "done", title: t("Analysis done"), body: t("Every card has its notes and decisions. Start development on the Board when you are ready.") });
   }
 
   /** Step two: the agents work the cards into the chosen branch, in board order. */
@@ -422,7 +423,7 @@ export default function App() {
     setQueue([]);
     let finish: Finish | null = null;
     if (c.instructions) {
-      toast({ tone: "info", title: "The closing step started", body: "Claude does what you asked for the end. Follow it in Terminal › Agents." });
+      toast({ tone: "info", title: t("The closing step started"), body: t("Claude does what you asked for the end. Follow it in Terminal › Agents.") });
       try {
         finish = await api.runAllFinish(path, sessionIds, c.instructions, c.into);
       } catch (e) {
@@ -433,11 +434,11 @@ export default function App() {
     try {
       const r = await api.reportCreate(path, sessionIds, sessionStart, c.into, c.direct, c.instructions, finish);
       toast(
-        { tone: finish && !finish.ok ? "fail" : "done", title: "Run all is done", body: `${r.cards.length} cards, $${r.cost_usd.toFixed(2)}. The report is ready.`, action: { label: "Open the report", run: () => setTab("reports") } },
+        { tone: finish && !finish.ok ? "fail" : "done", title: t("Run all is done"), body: plural(r.cards.length, "{n} card, {cost}. The report is ready.", "{n} cards, {cost}. The report is ready.", { cost: `$${r.cost_usd.toFixed(2)}` }), action: { label: t("Open the report"), run: () => setTab("reports") } },
         0,
       );
     } catch (e) {
-      toast({ tone: "fail", title: "The report was not written", body: msg(e) }, 0);
+      toast({ tone: "fail", title: t("The report was not written"), body: msg(e) }, 0);
     }
     session++;
     sessionPath = null;
@@ -497,16 +498,16 @@ export default function App() {
             toast(
               {
                 tone: "info",
-                title: `Only the API key can take ${rest.map((x) => `#${x}`).join(", ")} now`,
-                body: `${text.slice(NEEDS_API_KEY.length)}. It is paid per token.`,
+                title: t("Only the API key can take {cards} now", { cards: rest.map((x) => `#${x}`).join(", ") }),
+                body: t("{why}. It is paid per token.", { why: text.slice(NEEDS_API_KEY.length) }),
                 // Only these cards, and only while this Run all is still the one going.
-                action: { label: "Use the API key", run: () => void (current_(token) && advance(rest)) },
+                action: { label: t("Use the API key"), run: () => void (current_(token) && advance(rest)) },
               },
               0,
             );
             break;
           }
-          toast({ tone: "fail", title: `#${id} did not start`, body: text.split("\n")[0] }, 0);
+          toast({ tone: "fail", title: t("#{id} did not start", { id }), body: text.split("\n")[0] }, 0);
           q.splice(q.indexOf(id), 1);
         }
       }
@@ -514,7 +515,7 @@ export default function App() {
       const left = q.filter((id) => !started.includes(id));
       setQueue(left);
       if (started.length > 0) {
-        toast({ tone: "done", title: `Started ${started.map((x) => `#${x}`).join(", ")}`, body: left.length > 0 ? `${left.length} more in the queue.` : "The queue is empty." });
+        toast({ tone: "done", title: t("Started {cards}", { cards: started.map((x) => `#${x}`).join(", ") }), body: left.length > 0 ? t("{n} more in the queue.", { n: left.length }) : t("The queue is empty.") });
         await loadRuns();
         void loadCards();
       }
@@ -567,14 +568,14 @@ export default function App() {
 
   async function addRepo() {
     setMenu(false);
-    const dir = await openDialog({ directory: true, multiple: false, title: "Choose a git repository" });
+    const dir = await openDialog({ directory: true, multiple: false, title: t("Choose a git repository") });
     if (typeof dir !== "string") return;
     try {
       const entry = await api.addRepo(dir);
       setSettings(await api.settings());
       await switchTo(entry.path);
     } catch (e) {
-      toast({ tone: "fail", title: "Not added", body: msg(e) });
+      toast({ tone: "fail", title: t("Not added"), body: msg(e) });
     }
   }
 
@@ -601,9 +602,9 @@ export default function App() {
           toast(
             {
               tone: "info",
-              title: `The merge queue is paused (${n} waiting)`,
-              body: "It paused when Pitlane closed. Nothing ships until you resume it.",
-              action: { label: "Resume", run: () => void api.queueResume().then(() => loadQueue(), (e) => toast({ tone: "fail", title: "Could not resume the queue", body: msg(e) })) },
+              title: t("The merge queue is paused ({n} waiting)", { n }),
+              body: t("It paused when Pitlane closed. Nothing ships until you resume it."),
+              action: { label: t("Resume"), run: () => void api.queueResume().then(() => loadQueue(), (e) => toast({ tone: "fail", title: t("Could not resume the queue"), body: msg(e) })) },
             },
             0,
           );
@@ -631,8 +632,8 @@ export default function App() {
         // A lane's agent finished or stopped while you were elsewhere: say which, and what now.
         if (m && prefs().notify_runs && !document.hasFocus() && (m.state === "done" || m.state === "failed")) {
           void say(
-            m.state === "done" ? `#${m.card} ${m.card_title} is ready for review` : `#${m.card} ${m.card_title} stopped`,
-            m.state === "done" ? "The agent finished. Its checks and the review are waiting in Pitlane." : "The run failed. Open it in Pitlane to see why.",
+            m.state === "done" ? t("#{card} {title} is ready for review", { card: m.card, title: m.card_title }) : t("#{card} {title} stopped", { card: m.card, title: m.card_title }),
+            m.state === "done" ? t("The agent finished. Its checks and the review are waiting in Pitlane.") : t("The run failed. Open it in Pitlane to see why."),
           );
         }
       },
@@ -743,11 +744,11 @@ export default function App() {
               class="strip-repo-btn"
               aria-haspopup="menu"
               aria-expanded={menu()}
-              title={current() ? `Switch repository (${shortPath(current()!.path)})` : "Add a repository"}
+              title={current() ? t("Switch repository ({path})", { path: shortPath(current()!.path) }) : t("Add a repository")}
               onClick={() => setMenu(!menu())}
             >
               <Icon name="folder" small />
-              <span class="strip-repo-name">{current()?.name ?? "Add a repository"}</span>
+              <span class="strip-repo-name">{current()?.name ?? t("Add a repository")}</span>
               <Icon name="chev" small />
             </button>
             <Show when={menu()}>
@@ -787,12 +788,12 @@ export default function App() {
                     onKeyDown={(e) => e.key === "Enter" && (setMenu(false), setSheet({ kind: "accounts" }))}
                   >
                     <Icon name="person" small />
-                    Accounts
+                    {t("Accounts")}
                   </div>
                 </Show>
                 <div class="menu-item" role="menuitem" tabindex="0" onClick={addRepo} onKeyDown={(e) => e.key === "Enter" && addRepo()}>
                   <Icon name="plus" small />
-                  Add repository
+                  {t("Add repository")}
                 </div>
               </div>
             </Show>
@@ -816,7 +817,7 @@ export default function App() {
             count={terminalsWanting() + agentsWanting()}
             hot
             live={agentsWorking() > 0}
-            liveLabel={`${agentsWorking()} agent${agentsWorking() === 1 ? "" : "s"} working`}
+            liveLabel={plural(agentsWorking(), "{n} agent working", "{n} agents working")}
           />
         </div>
         <div class="navrail-foot">
@@ -825,9 +826,9 @@ export default function App() {
               <button
                 type="button"
                 class="navrail-quota"
-                aria-label={`Usage of the ${qa().account} account. Open Accounts`}
+                aria-label={t("Usage of the {account} account. Open Accounts", { account: qa().account })}
                 title={qa()
-                  .events.map((q) => `${q.window === "five_hour" ? "5-hour" : q.window === "seven_day" ? "7-day" : q.window}: ${Math.round(q.used * 100)}%`)
+                  .events.map((q) => `${q.window === "five_hour" ? t("5-hour") : q.window === "seven_day" ? t("7-day") : q.window}: ${Math.round(q.used * 100)}%`)
                   .join("\n")}
                 onClick={() => setSheet({ kind: "accounts" })}
               >
@@ -877,13 +878,13 @@ export default function App() {
             fallback={
               <Show when={booted()}>
                 <div class="empty">
-                  <div class="empty-title">Every lane in view</div>
+                  <div class="empty-title">{t("Every lane in view")}</div>
                   <p class="empty-body">
-                    Add a git repository to see each branch, its worktree and where it has really landed.
+                    {t("Add a git repository to see each branch, its worktree and where it has really landed.")}
                   </p>
                   <button type="button" class="btn btn-primary btn-lg" onClick={addRepo}>
                     <Icon name="folder" small />
-                    Add repository
+                    {t("Add repository")}
                   </button>
                 </div>
               </Show>
@@ -1008,7 +1009,7 @@ export default function App() {
                       cardsGen++;
                       void api.cardReorder(path, ids).then(
                         () => loadCards(),
-                        (e) => toast({ tone: "fail", title: "The order was not saved", body: msg(e) }),
+                        (e) => toast({ tone: "fail", title: t("The order was not saved"), body: msg(e) }),
                       );
                     }}
                   />
@@ -1092,7 +1093,7 @@ export default function App() {
             {(path) => (
               <AccountsSheet
                 repo={path()}
-                repoName={current()?.name ?? "This repository"}
+                repoName={current()?.name ?? t("This repository")}
                 onChanged={() => void loadRuns()}
                 onClose={() => setSheet(null)}
               />
@@ -1148,8 +1149,8 @@ function RailItem(props: { icon: IconName; label: string; keys?: string; current
       type="button"
       class="navrail-item"
       aria-current={props.current ? "page" : undefined}
-      aria-label={[props.label, props.count ? `${props.count} waiting` : "", props.live ? props.liveLabel ?? "working" : ""].filter(Boolean).join(", ")}
-      data-tip={[props.keys ? `${props.label}  ${props.keys}` : props.label, props.live ? props.liveLabel : ""].filter(Boolean).join(" · ")}
+      aria-label={[t(props.label), props.count ? t("{n} waiting", { n: props.count }) : "", props.live ? props.liveLabel ?? t("working") : ""].filter(Boolean).join(", ")}
+      data-tip={[props.keys ? `${t(props.label)}  ${t(props.keys)}` : t(props.label), props.live ? props.liveLabel : ""].filter(Boolean).join(" · ")}
       onClick={props.onClick}
     >
       <Icon name={props.icon} />
