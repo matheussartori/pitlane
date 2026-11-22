@@ -465,6 +465,7 @@ impl Supervisor {
             worktree: PathBuf::new(),
             agent: "claude-code".into(),
             model: choice.model.clone().or_else(|| r.flow.run.model.clone()),
+            effort: None,
             session_id,
             pid: None,
             state: RunState::Starting,
@@ -713,6 +714,8 @@ impl Supervisor {
         }
         if let Some(e) = &your_effort {
             cmd.args(["--effort", e]);
+            let e = e.clone();
+            self.update(&id, move |m| m.effort = Some(e));
         }
         // The account: its own Claude Code directory, where you signed in. Pitlane only points at it.
         if let Some(dir) = &choice.config_dir {
@@ -1095,6 +1098,17 @@ impl Supervisor {
                     m.model = Some(model);
                     if !session.is_empty() {
                         m.session_id = session;
+                    }
+                });
+            }
+            RunEvent::Tuned { model, effort } => {
+                let (model, effort) = (model.clone(), effort.clone());
+                self.update(id, move |m| {
+                    if model.is_some() {
+                        m.model = model;
+                    }
+                    if effort.is_some() {
+                        m.effort = effort;
                     }
                 });
             }
@@ -1983,6 +1997,7 @@ impl Supervisor {
             worktree: side.cwd.clone(),
             agent: "claude-code".into(),
             model: side.model.clone(),
+            effort: None,
             session_id: uuid::Uuid::new_v4().to_string(),
             pid: None,
             state: RunState::Running,
@@ -2058,10 +2073,17 @@ impl Supervisor {
         {
             cmd.args(["--model", &m]);
         }
-        if !side.args.iter().any(|a| a == "--effort")
-            && let Some(e) = your_effort
-        {
-            cmd.args(["--effort", &e]);
+        let effort = match side.args.iter().position(|a| a == "--effort") {
+            Some(i) => side.args.get(i + 1).cloned(),
+            None => {
+                if let Some(e) = &your_effort {
+                    cmd.args(["--effort", e]);
+                }
+                your_effort
+            }
+        };
+        if let Some(e) = effort {
+            self.update(&id, move |m| m.effort = Some(e));
         }
         // Like a run: what no rule allows (a read outside the repository, say) is asked to a
         // person in Pitlane, instead of being denied with nobody to ask.
@@ -2803,6 +2825,58 @@ impl Supervisor {
         Ok(())
     }
 
+    /// `/model` and `/effort` while the session lives: Claude Code's own control requests on
+    /// stdin (`set_model`, `apply_flag_settings`), as its SDK sends them. Not a message: the
+    /// turn count that closes stdin does not move.
+    pub async fn tune(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> Result<()> {
+        if let Some(e) = effort
+            && !EFFORTS.contains(&e)
+        {
+            bail!("effort is one of {}", EFFORTS.join(", "));
+        }
+        if let Some(m) = model
+            && (m.is_empty() || m.chars().any(|c| !(c.is_ascii_alphanumeric() || "-._[]".contains(c))))
+        {
+            bail!("{m:?} is not a model name");
+        }
+        let mut lines = String::new();
+        let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        if let Some(m) = model {
+            let req = serde_json::json!({ "type": "control_request", "request_id": format!("pit-model-{id}-{n}"),
+                "request": { "subtype": "set_model", "model": m } });
+            lines.push_str(&format!("{req}\n"));
+        }
+        if let Some(e) = effort {
+            let req = serde_json::json!({ "type": "control_request", "request_id": format!("pit-effort-{id}-{n}"),
+                "request": { "subtype": "apply_flag_settings", "settings": { "effortLevel": e } } });
+            lines.push_str(&format!("{req}\n"));
+        }
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let mut stdin = {
+            let mut live = self.live.lock().unwrap();
+            let l = live.get_mut(id).with_context(|| format!("run {id} is not running"))?;
+            l.stdin.take().context("the agent already finished this session")?
+        };
+        let res = async {
+            stdin.write_all(lines.as_bytes()).await?;
+            stdin.flush().await
+        }
+        .await;
+        if let Some(l) = self.live.lock().unwrap().get_mut(id) {
+            l.stdin = Some(stdin);
+        }
+        res?;
+        // The model shows once Claude Code answers with the one it resolved (`opus` is
+        // claude-opus-5-5); the effort has nothing to resolve, so it shows now.
+        if let Some(e) = effort.map(str::to_owned) {
+            self.emit(id, RunEvent::Tuned { model: None, effort: Some(e.clone()) });
+            self.update(id, move |meta| meta.effort = Some(e));
+        }
+        Ok(())
+    }
+
     fn stop_requested(&self, id: &str) -> bool {
         self.live
             .lock()
@@ -2926,6 +3000,9 @@ markdown that says what and why, with acceptance in a line or two. Read the code
 (paths, names), but never change files and never do the work itself. Before adding, list the cards to avoid duplicates; \
 update an existing card instead when it is the same work. When they ask to change, annotate or delete cards, do that. End with a \
 one-line summary per card you added or changed (#id and title).";
+
+/// Claude Code's effort levels (`--effort`, `/effort`).
+pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The model and effort you chose in Claude Code (`/model`), from the account's settings.json:
 /// Pitlane starts sessions with project settings only, so it passes these on itself. `model` is

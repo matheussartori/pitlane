@@ -595,6 +595,12 @@ async fn run_say(run: String, text: String) -> CmdResult<()> {
     blocking(move || call(serde_json::json!({ "op": "say", "run": run, "text": text })).map(drop)).await
 }
 
+/// `/model` and `/effort` for a live session.
+#[tauri::command]
+async fn run_tune(run: String, model: Option<String>, effort: Option<String>) -> CmdResult<()> {
+    blocking(move || call(serde_json::json!({ "op": "tune", "run": run, "model": model, "effort": effort })).map(drop)).await
+}
+
 /// Answers what a run is waiting on: once, run, always or deny (with a reason the agent reads).
 #[tauri::command]
 async fn run_decide(run: String, approval: Option<String>, decision: String, message: Option<String>) -> CmdResult<()> {
@@ -1429,6 +1435,7 @@ pub fn run() {
             run_start,
             run_resume,
             run_say,
+            run_tune,
             run_stop,
             runs_stop_all,
             runs_stop_analyses,

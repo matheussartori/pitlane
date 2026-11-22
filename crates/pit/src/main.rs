@@ -781,6 +781,10 @@ fn print_event(e: &RunEvent) {
         RunEvent::ToolDone { ok: false, detail, .. } => println!("    {} {}", paint(FAIL, "✕"), paint(MUTED, detail)),
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
         RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
+        RunEvent::Tuned { model, effort } => println!(
+            "{}",
+            paint(MUTED, &[model.as_ref().map(|m| format!("model {m}")), effort.as_ref().map(|e| format!("effort {e}"))].into_iter().flatten().collect::<Vec<_>>().join(", "))
+        ),
         RunEvent::Note { text } => println!("{}", paint(MUTED, text)),
         RunEvent::Proof { command, ok, duration_ms } => println!(
             "{} {command}  {}",

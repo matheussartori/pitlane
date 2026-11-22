@@ -2,7 +2,7 @@
 //! Speaks JSON, one message per line, on a Unix socket only this user can open.
 //!
 //! Requests: `ping`, `start {repo, card}`, `resume {run}`, `list {repo?}`, `get {run}`,
-//! `say {run, text}`, `stop {run}`, `stop_all`, `perf`, `perf_set {config}`, `perf_hold {run, hold}`, `shutdown`, `hold` (the app; its end stops all
+//! `say {run, text}`, `tune {run, model?, effort?}`, `stop {run}`, `stop_all`, `perf`, `perf_set {config}`, `perf_hold {run, hold}`, `shutdown`, `hold` (the app; its end stops all
 //! and ends the daemon), `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
 //! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
 //! `{i, event}` lines and ends with `{end: <run>}`.
@@ -144,6 +144,12 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
         "say" => {
             let text = req.get("text").and_then(Value::as_str).context("text is required")?;
             sup.say(run_arg(req)?, text).await?;
+            json!({ "ok": true })
+        }
+        "tune" => {
+            let model = req.get("model").and_then(Value::as_str);
+            let effort = req.get("effort").and_then(Value::as_str);
+            sup.tune(run_arg(req)?, model, effort).await?;
             json!({ "ok": true })
         }
         "stop" => {

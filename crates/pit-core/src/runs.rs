@@ -65,6 +65,9 @@ pub struct RunMeta {
     pub agent: String,
     #[serde(default)]
     pub model: Option<String>,
+    /// The effort level the session runs at (`--effort`, or `/effort` while it lives), when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub session_id: String,
     #[serde(default)]
     pub pid: Option<u32>,
@@ -274,6 +277,13 @@ pub enum RunEvent {
     },
     /// A message from the person, sent while the agent works.
     Said { text: String },
+    /// The model or effort changed while the session lives (`/model`, `/effort`).
+    Tuned {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
+    },
     Quota { window: String, used: f64, resets_at: u64 },
     /// The account refused more work until `resets_at`.
     Limited { window: String, resets_at: u64 },
@@ -310,6 +320,21 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
     let parent = v.get("parent_tool_use_id").and_then(Value::as_str).filter(|p| !p.is_empty()).map(str::to_owned);
     match (ty, sub) {
         ("system", "init") => vec![RunEvent::Started { model: s(v, "model"), session: s(v, "session_id") }],
+        // Answers to Pitlane's own control requests (`/model`, `/effort`): the model it resolved, or why not.
+        ("control_response", _) => {
+            let r = v.get("response").unwrap_or(&Value::Null);
+            let id = s(r, "request_id");
+            if !id.starts_with("pit-") {
+                return Vec::new();
+            }
+            if s(r, "subtype") == "error" {
+                vec![RunEvent::Note { text: format!("Claude Code did not take it: {}", s(r, "error")) }]
+            } else if let Some(m) = r.pointer("/response/model").and_then(Value::as_str) {
+                vec![RunEvent::Tuned { model: Some(m.to_owned()), effort: None }]
+            } else {
+                Vec::new()
+            }
+        }
         ("assistant", _) => v
             .pointer("/message/content")
             .and_then(Value::as_array)
@@ -685,6 +710,19 @@ fn spawn_daemon(bin: &Path, pitlane_home: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_answers_to_model_and_effort_changes() {
+        let ok = serde_json::json!({"type":"control_response","response":{"subtype":"success","request_id":"pit-model-r-1","response":{"model":"claude-sonnet-5-5"}}});
+        assert_eq!(read_claude_line(&ok), vec![RunEvent::Tuned { model: Some("claude-sonnet-5-5".into()), effort: None }]);
+        let effort = serde_json::json!({"type":"control_response","response":{"subtype":"success","request_id":"pit-effort-r-1"}});
+        assert!(read_claude_line(&effort).is_empty());
+        let no = serde_json::json!({"type":"control_response","response":{"subtype":"error","request_id":"pit-model-r-2","error":"unknown model"}});
+        assert!(matches!(&read_claude_line(&no)[..], [RunEvent::Note { text }] if text.contains("unknown model")));
+        // Someone else's request (the CLI's own) is not ours to show.
+        let other = serde_json::json!({"type":"control_response","response":{"subtype":"error","request_id":"x","error":"e"}});
+        assert!(read_claude_line(&other).is_empty());
+    }
 
     #[test]
     fn rules_for_the_same_command() {

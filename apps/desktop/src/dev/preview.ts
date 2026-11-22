@@ -19,7 +19,7 @@ const moved = (branch: string, dir: string) =>
 // A live run made from the first steps of the real one, on card #3's lane.
 const liveRun = () => ({ ...runMeta, id: "3-live", card: 3, card_title: "Strip scripts from SVG avatars", branch: "fix/avatar-svg",
   worktree: "/Users/you/.pitlane/wt/demo/fix-avatar-svg", state: "running", started_at: now() - 95, ended_at: null,
-  cost_usd: null, duration_ms: null, turns: null, handoff: null, tokens: zero, denied: [], error: null,
+  effort: "high", cost_usd: null, duration_ms: null, turns: null, handoff: null, tokens: zero, denied: [], error: null,
   waiting: [{ id: "toolu_demo", tool: "Bash", detail: "npm test -- avatar", input: { command: "npm test -- avatar" },
     rule: "Bash(npm test:*)", asked_at: now() - 12 }] });
 const liveTimeline = () =>

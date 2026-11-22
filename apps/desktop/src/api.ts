@@ -299,6 +299,8 @@ export interface RunMeta {
   worktree: string;
   agent: string;
   model: string | null;
+  /** The effort level (`--effort`, `/effort`), when set. */
+  effort?: string | null;
   session_id: string;
   pid: number | null;
   state: RunState;
@@ -385,6 +387,7 @@ export type RunEvent =
   | { kind: "tool"; id: string; name: string; detail: string; parent?: string; change?: { old: string; new: string; cut: number } }
   | { kind: "tool-done"; id: string; ok: boolean; detail: string; parent?: string; lines?: number }
   | { kind: "said"; text: string }
+  | { kind: "tuned"; model?: string; effort?: string }
   | { kind: "quota"; window: string; used: number; resets_at: number }
   | { kind: "finished"; ok: boolean; cost_usd: number; duration_ms: number; turns: number; tokens: Tokens; handoff: Handoff | null; denied: string[] }
   | { kind: "note"; text: string }
@@ -724,6 +727,8 @@ export const api = {
   accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),
   runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
+  /** `/model` and `/effort` while the session lives. */
+  runTune: (run: string, tune: { model?: string; effort?: string }) => invoke<void>("run_tune", { run, model: tune.model ?? null, effort: tune.effort ?? null }),
   runStop: (run: string) => invoke<void>("run_stop", { run }),
   runsStopAll: () => invoke<number>("runs_stop_all"),
   runDecide: (run: string, approval: string, decision: Decision, message?: string) =>

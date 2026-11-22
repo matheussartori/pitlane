@@ -371,6 +371,41 @@ function close(id: string) {
 
 // ---------------------------------------------------------------- one session, as a terminal
 
+/** The models `/model` offers: Claude Code's aliases for the newest of each. */
+const MODELS: { id: string; hint: string }[] = [
+  { id: "opus", hint: "Most capable, for the hard parts" },
+  { id: "sonnet", hint: "Fast and strong, for most work" },
+  { id: "haiku", hint: "Fastest, for small steps" },
+  { id: "fable", hint: "The newest family" },
+];
+const EFFORTS: { id: string; hint: string }[] = [
+  { id: "low", hint: "Quick, little thinking" },
+  { id: "medium", hint: "Balanced" },
+  { id: "high", hint: "Thinks more before acting" },
+  { id: "xhigh", hint: "Thinks a lot" },
+  { id: "max", hint: "Thinks the most, slowest" },
+];
+
+/** A model as Claude Code names it: `claude-opus-5-5` is Opus 5.5, `sonnet` is Sonnet. */
+export function modelLabel(m: string | null | undefined): string {
+  if (!m) return t("default model");
+  const wide = /\[1m\]$/i.test(m) ? " (1M)" : "";
+  const id = m.replace(/\[1m\]$/i, "");
+  const full = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);
+  const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
+  if (full) return `${cap(full[1]!)} ${full[2]}${full[3] ? `.${full[3]}` : ""}${wide}`;
+  return /^[a-z]+$/.test(id) ? cap(id) + wide : m;
+}
+
+interface Suggestion {
+  label: string;
+  hint: string;
+  /** What the field holds once picked; `run`: picking it also sends it. */
+  value: string;
+  run: boolean;
+  on?: boolean;
+}
+
 export function AgentPane(props: { onOpenRun: (id: string) => void }) {
   const m = () => sessions().find((x) => x.id === selected()?.id) ?? null;
   const sub = () => selected()?.sub ?? null;
@@ -423,10 +458,75 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
     ),
   );
 
+  // Slash commands, as in Claude Code: /model and /effort change the live session.
+  const [pick, setPick] = createSignal(0);
+  const suggestions = createMemo<Suggestion[]>(() => {
+    const v = text();
+    const mm = m();
+    if (!v.startsWith("/") || !mm || !live(mm)) return [];
+    const [cmd, ...rest] = v.slice(1).split(" ");
+    const arg = rest.join(" ").trim().toLowerCase();
+    if (rest.length === 0) {
+      return [
+        { label: "/model", hint: t("Switch the model ({now})", { now: modelLabel(mm.model) }), value: "/model ", run: false },
+        { label: "/effort", hint: t("Set how hard it thinks ({now})", { now: mm.effort ?? t("default") }), value: "/effort ", run: false },
+      ].filter((x) => x.label.startsWith(`/${cmd}`));
+    }
+    const list = cmd === "model" ? MODELS : cmd === "effort" ? EFFORTS : [];
+    const current = cmd === "model" ? (mm.model ?? "") : (mm.effort ?? "");
+    return list
+      .filter((x) => x.id.startsWith(arg))
+      .map((x) => ({
+        label: cmd === "model" ? modelLabel(x.id) : x.id,
+        hint: t(x.hint),
+        value: `/${cmd} ${x.id}`,
+        run: true,
+        on: current === x.id || current.includes(`-${x.id}-`),
+      }));
+  });
+  createEffect(on(() => suggestions().length, () => setPick(0)));
+  const tune = async (what: { model?: string; effort?: string }) => {
+    const mm = m();
+    if (!mm) return;
+    try {
+      await api.runTune(mm.id, what);
+      setText("");
+      keep(mm.id, true);
+    } catch (e) {
+      toast({ tone: "fail", title: t("Could not change it"), body: msg(e) });
+    }
+  };
+  /** A slash command it knows: run it and say true. Others (a skill, /compact) go to Claude Code as typed. */
+  const command = (line: string): boolean => {
+    const mt = /^\/(model|effort)(?:\s+(\S+))?\s*$/.exec(line);
+    if (!mt) return false;
+    const [, cmd, arg] = mt;
+    if (!arg) {
+      setText(`/${cmd} `);
+      input?.focus();
+      return true;
+    }
+    if (cmd === "effort" && !EFFORTS.some((x) => x.id === arg.toLowerCase())) {
+      toast({ tone: "fail", title: t("No such effort"), body: t("Use one of: {list}", { list: EFFORTS.map((x) => x.id).join(", ") }) });
+      return true;
+    }
+    void tune(cmd === "model" ? { model: arg } : { effort: arg.toLowerCase() });
+    return true;
+  };
+  const choose = (sg: Suggestion) => {
+    if (sg.run) command(sg.value);
+    else (setText(sg.value), input?.focus());
+  };
+  const ask = (cmd: "model" | "effort") => {
+    setText(`/${cmd} `);
+    input?.focus();
+  };
+
   const send = async () => {
     const mm = m();
     const msgText = text().trim();
     if (!mm || !msgText) return;
+    if (command(msgText)) return;
     try {
       await api.runSay(mm.id, msgText);
       setText("");
@@ -471,7 +571,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
               <span class="ag-bar-kind">{subLabel()}</span>
             </Show>
             <span class="ag-bar-meta">
-              {[mm().model, since(mm()), mm().cost_usd != null ? `$${mm().cost_usd!.toFixed(2)}` : null].filter(Boolean).join("  ·  ")}
+              {[since(mm()), mm().cost_usd != null ? `$${mm().cost_usd!.toFixed(2)}` : null].filter(Boolean).join("  ·  ")}
             </span>
             <span class="ag-bar-fill" />
             <Show when={(mm().kind ?? "run") === "run"}>
@@ -503,6 +603,30 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
             </Show>
           </div>
           <div class="ag-input" data-off={live(mm()) ? undefined : ""}>
+            <Show when={suggestions().length > 0}>
+              <div class="ag-suggest" role="listbox" aria-label={t("Commands")}>
+                <For each={suggestions()}>
+                  {(sg, i) => (
+                    <button
+                      type="button"
+                      role="option"
+                      class="ag-suggest-item"
+                      aria-selected={pick() === i()}
+                      data-on={sg.on ? "" : undefined}
+                      onPointerDown={(e) => e.preventDefault()}
+                      onPointerEnter={() => setPick(i())}
+                      onClick={() => choose(sg)}
+                    >
+                      <span class="ag-suggest-label">{sg.label}</span>
+                      <span class="ag-suggest-hint">{sg.hint}</span>
+                      <Show when={sg.on}>
+                        <span class="ag-suggest-on">{t("current")}</span>
+                      </Show>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
             <span class="ag-prompt">›</span>
             <input
               ref={input}
@@ -519,11 +643,43 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
               value={text()}
               onInput={(e) => setText(e.currentTarget.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.isComposing) (e.preventDefault(), void send());
+                const list = suggestions();
+                if (list.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                  e.preventDefault();
+                  setPick((pick() + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length);
+                } else if (list.length > 0 && (e.key === "Tab" || (e.key === "Enter" && !e.isComposing))) {
+                  e.preventDefault();
+                  choose(list[Math.min(pick(), list.length - 1)]!);
+                } else if (list.length > 0 && e.key === "Escape") {
+                  e.preventDefault();
+                  setText("");
+                } else if (e.key === "Enter" && !e.isComposing) (e.preventDefault(), void send());
                 e.stopPropagation();
                 onKey(e);
               }}
             />
+          </div>
+          <div class="ag-status" data-off={live(mm()) ? undefined : ""}>
+            <button type="button" class="ag-chip ag-chip-model" disabled={!live(mm())} title={live(mm()) ? t("Switch the model (/model)") : undefined} onClick={() => ask("model")}>
+              <span class="ag-chip-mark" aria-hidden="true">✻</span>
+              {modelLabel(mm().model)}
+            </button>
+            <button type="button" class="ag-chip" disabled={!live(mm())} title={live(mm()) ? t("Set the effort (/effort)") : undefined} onClick={() => ask("effort")}>
+              <span class="ag-effort" data-level={mm().effort ?? "default"} aria-hidden="true">
+                <i />
+                <i />
+                <i />
+                <i />
+                <i />
+              </span>
+              {t("{level} effort", { level: mm().effort ?? t("default") })}
+            </button>
+            <span class="ag-bar-fill" />
+            <Show when={live(mm())}>
+              <span class="ag-status-hint">
+                <span class="kbd">/</span> {t("for commands")}
+              </span>
+            </Show>
           </div>
         </div>
       )}
@@ -616,8 +772,14 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind:
       );
     case "note":
       return <div class="ag-line ag-muted">{e.text}</div>;
+    case "tuned":
+      return (
+        <div class="ag-line ag-muted">
+          {[e.model ? t("Model set to {model}", { model: modelLabel(e.model) }) : null, e.effort ? t("Effort set to {level}", { level: e.effort }) : null].filter(Boolean).join("  ·  ")}
+        </div>
+      );
     case "started":
-      return <div class="ag-line ag-muted">{e.model ? t("Session started on {model}", { model: e.model }) : t("Session started")}</div>;
+      return <div class="ag-line ag-muted">{e.model ? t("Session started on {model}", { model: modelLabel(e.model) }) : t("Session started")}</div>;
     case "approval":
       return (
         <div class="ag-line ag-needs">
