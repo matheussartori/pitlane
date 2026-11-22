@@ -72,12 +72,79 @@ pub struct Prefs {
     /// What agents write in for you (questions, notes, replies): "system" or a language tag.
     /// The daemon reads it from this file when it starts a session.
     pub agent_language: String,
+    /// Run all: at most this many agents work at once.
+    pub max_agents: u32,
+    /// Run all: fewer agents while this Mac is loaded, back up when it has room.
+    pub adaptive_agents: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { theme: "system".into(), notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true, ui_language: "system".into(), agent_language: "system".into() }
+        Self {
+            theme: "system".into(),
+            notify_approvals: true,
+            notify_runs: true,
+            notify_terminals: true,
+            code_prewarm: true,
+            ui_language: "system".into(),
+            agent_language: "system".into(),
+            max_agents: 3,
+            adaptive_agents: true,
+        }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Capacity {
+    /// How many agents Run all may have working now.
+    pub agents: u32,
+    pub max: u32,
+    /// The 1-minute load average and the cores it is measured against.
+    pub load: f64,
+    pub cores: u32,
+    /// Free memory, as a share of the total (0..1), when macOS says.
+    pub free_memory: Option<f64>,
+}
+
+/// How many agents fit now: the setting, lowered while the load runs past the cores or memory
+/// runs short (each agent brings its own tests and builds), raised again when they ease.
+#[tauri::command]
+async fn capacity() -> CmdResult<Capacity> {
+    blocking(|| {
+        let prefs = load_settings().prefs;
+        let max = prefs.max_agents.clamp(1, 16);
+        let cores = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(8);
+        let mut avg = [0f64; 3];
+        // SAFETY: getloadavg writes at most `nelem` doubles into the buffer we pass.
+        let load = if unsafe { libc::getloadavg(avg.as_mut_ptr(), 3) } >= 1 { avg[0] } else { 0.0 };
+        let free_memory = free_memory_share();
+        let mut agents = max;
+        if prefs.adaptive_agents {
+            let ratio = load / cores as f64;
+            let by_load = if ratio > 2.0 { max.saturating_sub(2) } else if ratio > 1.25 { max.saturating_sub(1) } else { max };
+            let by_memory = match free_memory {
+                Some(f) if f < 0.05 => 1,
+                Some(f) if f < 0.12 => max.saturating_sub(1),
+                _ => max,
+            };
+            agents = by_load.min(by_memory).max(1);
+        }
+        Ok(Capacity { agents, max, load, cores, free_memory })
+    })
+    .await
+}
+
+/// Free plus reclaimable memory over the total, from `vm_stat` and `hw.memsize`.
+fn free_memory_share() -> Option<f64> {
+    let total: f64 = std::process::Command::new("/usr/sbin/sysctl").args(["-n", "hw.memsize"]).output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())?;
+    let out = std::process::Command::new("/usr/bin/vm_stat").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let page: f64 = text.lines().next()?.split("page size of ").nth(1)?.split_whitespace().next()?.parse().ok()?;
+    let pages = |key: &str| -> f64 {
+        text.lines().find(|l| l.starts_with(key)).and_then(|l| l.rsplit(':').next()).and_then(|v| v.trim().trim_end_matches('.').parse().ok()).unwrap_or(0.0)
+    };
+    let free = (pages("Pages free") + pages("Pages inactive") + pages("Pages speculative") + pages("Pages purgeable")) * page;
+    (total > 0.0).then(|| (free / total).clamp(0.0, 1.0))
 }
 
 fn settings_path() -> PathBuf {
@@ -482,10 +549,10 @@ async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
 }
 
 #[tauri::command]
-async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>) -> CmdResult<RunMeta> {
+async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>, autopilot: Option<bool>) -> CmdResult<RunMeta> {
     blocking(move || {
         let root = open(&path)?.root;
-        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false), "into": into, "direct": direct.unwrap_or(false), "instructions": instructions }))?;
+        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false), "into": into, "direct": direct.unwrap_or(false), "instructions": instructions, "autopilot": autopilot.unwrap_or(false) }))?;
         Ok(serde_json::from_value(v["run"].clone())?)
     })
     .await
@@ -1302,6 +1369,7 @@ pub fn run() {
             card_update,
             card_answer,
             card_reanswer,
+            capacity,
             card_attach,
             card_detach,
             card_image,

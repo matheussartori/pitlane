@@ -60,6 +60,10 @@ pub struct StartOpts {
     pub direct: bool,
     /// What the person said for the whole batch (Run all's "when it is all done"), passed on.
     pub instructions: Option<String>,
+    /// Run all: take the next step without a person (see `RunMeta::autopilot`).
+    pub autopilot: bool,
+    /// Continuations after running out of turns so far.
+    pub extensions: u32,
 }
 
 /// What a person decides about a card in review.
@@ -430,6 +434,8 @@ impl Supervisor {
             brief: None,
             kind: SessionKind::Run,
             parent: None,
+            autopilot: opts.autopilot,
+            extensions: opts.extensions,
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -707,7 +713,73 @@ impl Supervisor {
         self.emit(&id, RunEvent::Exited { code: status.code(), state });
         self.live.lock().unwrap().remove(&id);
         card_result?;
+        if self.get(&id).is_ok_and(|m| m.autopilot) {
+            self.autopilot(&id).await;
+        }
         Ok(())
+    }
+
+    /// Run all's next step for a finished run, with nobody watching: more turns for a run that ran
+    /// out of them, a fix round for what the proofs or the judge found, else the work lands in its
+    /// Into branch. Only a card that cannot go on (proofs still failing, a blocked handoff, an
+    /// error) stays behind; the rest of the batch never waits on it.
+    async fn autopilot(self: &Arc<Self>, id: &str) {
+        let Ok(m) = self.get(id) else { return };
+        let home = self.cfg.home.clone();
+        let Ok(r) = Repo::open(&m.repo, &home_dir(), &home) else { return };
+        let next = StartOpts { autopilot: true, round: m.round, extensions: m.extensions, ..Default::default() };
+        let say = |text: String| {
+            let _ = cards::note(&r, m.card, "pitlane", &text);
+        };
+        match m.state {
+            // Out of turns: the same session goes on, twice at most.
+            RunState::Failed if m.handoff.is_none() && m.turns.is_some_and(|t| t + 1 >= r.flow.run.max_turns) => {
+                if m.extensions >= 2 {
+                    say(format!("Run {} ran out of turns a third time; the card waits for you.", m.id));
+                    return;
+                }
+                let msg = "You ran out of turns before finishing. Carry on from where you stopped: commit what works, \
+                           finish the card, and end with the handoff. Skip anything you already did.";
+                match self.start(m.repo.clone(), m.card, Some(m.id.clone()), StartOpts { message: Some(msg.into()), extensions: m.extensions + 1, ..next }) {
+                    Ok(n) => self.emit(id, RunEvent::Note { text: format!("Out of turns: continues as run {}.", n.id) }),
+                    Err(e) => say(format!("Run {} ran out of turns and could not continue: {e:#}", m.id)),
+                }
+            }
+            RunState::Done if m.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str) != Some("blocked") => {
+                let c = match cards::get(&r, m.card) {
+                    Ok(c) if c.state == CardState::Review => c,
+                    _ => return,
+                };
+                let proofs_failed = m.proofs_ok == Some(false);
+                let changes = m.verdict == Some(pit_core::verify::Verdict::Changes);
+                if (proofs_failed || changes) && m.round < r.flow.verify.max_rounds {
+                    let what = fix_request(&self.dir(id));
+                    let first = format!("Pitlane checked your work and it needs another pass:\n\n{what}\n\nFix it, commit, and end with the handoff.");
+                    match self.start(m.repo.clone(), m.card, Some(m.id.clone()), StartOpts { message: Some(first), round: m.round + 1, extensions: 0, ..next }) {
+                        Ok(n) => self.emit(id, RunEvent::Note { text: format!("Round {} starts on its own: run {}.", m.round + 1, n.id) }),
+                        Err(e) => say(format!("The fix round for run {} did not start: {e:#}", m.id)),
+                    }
+                    return;
+                }
+                if proofs_failed {
+                    let _ = cards::update(&r, m.card, CardPatch { state: Some(CardState::Blocked), ..Default::default() });
+                    say(format!("The checks still fail after {} rounds, so this card did not land. The rest of the batch went on.", m.round + 1));
+                    return;
+                }
+                if changes {
+                    say(format!("Landed after {} rounds; the judge still asked for changes. See its findings in the run.", m.round + 1));
+                }
+                let Some(lane) = c.lane.clone() else { return };
+                if c.direct() {
+                    let _ = cards::update(&r, m.card, CardPatch { state: Some(CardState::Done), ..Default::default() });
+                    return;
+                }
+                if let Err(e) = self.enqueue(&m.repo, &lane, c.target.as_deref()) {
+                    say(format!("Could not put {lane} in line to land: {e:#}"));
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Keeps the run record in step with what the agent reports.
@@ -939,7 +1011,7 @@ impl Supervisor {
         self.emit(&id, RunEvent::Exited { code, state: RunState::Failed });
         self.live.lock().unwrap().remove(&id);
 
-        match self.start(repo, card, None, StartOpts { allow_api_key: false, handoff_from: Some(id.clone()), round: meta.round, ..Default::default() }) {
+        match self.start(repo, card, None, StartOpts { allow_api_key: false, handoff_from: Some(id.clone()), round: meta.round, autopilot: meta.autopilot, extensions: meta.extensions, ..Default::default() }) {
             Ok(next) => {
                 let text = format!("{why} Continues as run {} with {}.", next.id, next.reason.clone().unwrap_or_default());
                 self.update_disk(&id, |m| m.error = Some(text.clone()));
@@ -1320,6 +1392,8 @@ impl Supervisor {
             brief: None,
             kind: side.kind,
             parent: side.parent.clone(),
+            autopilot: false,
+            extensions: 0,
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -1626,6 +1700,9 @@ impl Supervisor {
             .await
             .map_err(anyhow::Error::from)
             .and_then(|r| r);
+            if let Ok((Outcome::Conflict { files }, _)) = &result {
+                self.conflict_round(&job, files);
+            }
             let mut q = self.queue.lock().unwrap();
             if let Some(j) = q.iter_mut().find(|j| j.id == job.id) {
                 j.finished_at = Some(now_secs());
@@ -1645,6 +1722,34 @@ impl Supervisor {
                 }
             }
             let _ = pit_core::queue::save(&self.cfg.home, &q);
+        }
+    }
+
+    /// A Run all card whose lane conflicts with its Into branch: its agent brings the branch in and
+    /// resolves the conflicts itself, then the card lands as usual. Past the last round it waits.
+    fn conflict_round(self: &Arc<Self>, job: &pit_core::queue::ShipJob, files: &[String]) {
+        let Some(card) = job.card else { return };
+        let Ok(r) = Repo::open(&job.repo, &home_dir(), &self.cfg.home) else { return };
+        let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| l.into_iter().filter(|m| m.card == card && m.kind == SessionKind::Run).max_by_key(|m| (m.round, m.started_at))) else { return };
+        if !last.autopilot {
+            return;
+        }
+        if last.round >= r.flow.verify.max_rounds {
+            let _ = cards::note(&r, card, "pitlane", &format!("{} conflicts with {} in {}; out of rounds, so it waits for you.", job.branch, job.target, files.join(", ")));
+            let _ = cards::update(&r, card, CardPatch { state: Some(CardState::Blocked), ..Default::default() });
+            return;
+        }
+        let msg = format!(
+            "Your work could not land: {} changed meanwhile and conflicts with it in {}. Pitlane asks you to \
+             bring it in now: run `git merge {}`, resolve every conflict keeping both sides' intent, run the narrowest \
+             checks for what you touched, commit the merge, and end with the handoff.",
+            job.target,
+            files.join(", "),
+            job.target
+        );
+        let opts = StartOpts { autopilot: true, round: last.round + 1, message: Some(msg), ..Default::default() };
+        if let Err(e) = self.start(job.repo.clone(), card, Some(last.id.clone()), opts) {
+            let _ = cards::note(&r, card, "pitlane", &format!("The conflict round did not start: {e:#}"));
         }
     }
 
@@ -2069,6 +2174,31 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
     };
     cards::update(&r, m.card, CardPatch { state: Some(next), ..Default::default() })?;
     Ok(())
+}
+
+/// What a fix round is asked to fix: the failing proofs' tails and the judge's findings.
+fn fix_request(dir: &Path) -> String {
+    let Ok(v) = fs::read_to_string(dir.join("verify.json")).map_err(anyhow::Error::from).and_then(|t| Ok(serde_json::from_str::<pit_core::verify::Verification>(&t)?)) else {
+        return "The checks or the judge found problems; look at the diff again and fix what is wrong.".into();
+    };
+    let mut out = String::new();
+    for p in v.proofs.iter().filter(|p| !p.ok) {
+        out.push_str(&format!("- `{}` fails:\n```\n{}\n```\n", p.command, p.tail.trim()));
+    }
+    if let Some(j) = v.judge.as_ref().and_then(|j| j.judgement.as_ref()) {
+        if !j.findings.is_empty() || j.verdict == pit_core::verify::Verdict::Changes {
+            out.push_str(&format!("The reviewer says: {}\n", j.summary.trim()));
+        }
+        for f in &j.findings {
+            let at = match (&f.file, f.line) {
+                (Some(file), Some(l)) => format!(" ({file}:{l})"),
+                (Some(file), None) => format!(" ({file})"),
+                _ => String::new(),
+            };
+            out.push_str(&format!("- [{}]{at} {}\n", f.severity, f.text.trim()));
+        }
+    }
+    if out.is_empty() { "The checks or the judge found problems; look at the diff again and fix what is wrong.".into() } else { out }
 }
 
 /// A question a finished run raised anyway, as a note: what it asked and what it went with.

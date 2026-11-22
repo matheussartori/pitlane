@@ -556,6 +556,53 @@ async fn proofs_and_a_judge_then_your_review() {
     assert!(s.review(fx.repo.clone(), id, ReviewAction::Discard, None).await.is_err(), "no longer in review");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn run_all_fixes_and_lands_on_its_own() {
+    let fx = fx();
+    let origin = fx.home.parent().unwrap().join("origin.git");
+    git(fx.home.parent().unwrap(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    git(&fx.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&fx.repo, &["push", "-q", "origin", "main"]);
+    git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml"))
+        .unwrap()
+        .replace("[verify]\njudge = false\n", "[verify]\ncommands = [\"test -f README.md\"]\njudge = true\nmax_rounds = 1\n");
+    fs::write(fx.repo.join(".pitlane/flow.toml"), flow).unwrap();
+    let id = card(&fx, "Refuse SVG avatars");
+    git(&fx.repo, &["switch", "-q", "feat/x"]);
+    fs::write(fx.repo.join("validate.ts"), "export const refuseSvg = true;\n").unwrap();
+    git(&fx.repo, &["add", "validate.ts"]);
+    git(&fx.repo, &["commit", "-qm", "refuse svg"]);
+    git(&fx.repo, &["switch", "-q", "main"]);
+    let s = sup(&fx);
+    s.start_queue();
+
+    // The judge asks for changes every time: one round runs on its own, then the card lands anyway.
+    let opts = pitd::supervisor::StartOpts { autopilot: true, ..Default::default() };
+    s.start(fx.repo.clone(), id, None, opts).unwrap();
+    let mut state = CardState::Running;
+    for _ in 0..600 {
+        state = card_state(&fx, id).0;
+        if state == CardState::InDev || state == CardState::Blocked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(state, CardState::InDev, "landed without anyone approving");
+    let runs = s.list(None).unwrap();
+    let rounds: Vec<u32> = runs.iter().filter(|m| m.card == id).map(|m| m.round).collect();
+    assert!(rounds.contains(&0) && rounds.contains(&1), "a fix round ran by itself: {rounds:?}");
+    let fix = runs.iter().find(|m| m.card == id && m.round == 1).unwrap();
+    assert!(fix.autopilot);
+    assert!(fs::read_to_string(fix.worktree.join(".briefing-seen")).unwrap().contains("SVG is not refused."), "the findings went to the fix round");
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    assert!(cards::get(&r, id).unwrap().notes.iter().any(|n| n.text.contains("Landed after 2 rounds")));
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
+    assert!(merged.success(), "feat/x is in origin/dev");
+}
+
 async fn wait_job(s: &Arc<Supervisor>, id: &str) -> pit_core::queue::ShipJob {
     for _ in 0..300 {
         if let Some(j) = s.queue_list(None).into_iter().find(|j| j.id == id)

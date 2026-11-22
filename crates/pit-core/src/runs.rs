@@ -134,6 +134,17 @@ pub struct RunMeta {
     /// The run a side session belongs to (the judge's run).
     #[serde(default)]
     pub parent: Option<String>,
+    /// Started by Run all: nobody is watching, so Pitlane takes the next step itself (a fix round
+    /// for the judge's findings, more turns, landing the work) instead of waiting for a person.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub autopilot: bool,
+    /// How many times this card's work was continued after running out of turns.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub extensions: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Every Claude Code session Pitlane starts, so people can watch and talk to all of them.
@@ -492,7 +503,7 @@ pub fn handoff_schema() -> Value {
 /// Fixed rules for every run: the same bytes each time, so the prompt cache holds.
 pub const RULES: &str = "You are running inside Pitlane, on one card, in a git worktree made for it. \
 Work only inside the current directory. Commit your work on the current branch with clear messages; \
-never push, never switch branches, never merge. Read the card's spec and decisions before you start. \
+never push, never switch branches, and merge only when Pitlane asks you to bring a branch in. Read the card's spec and decisions before you start. \
 Nobody is watching this run: the person answered every question during the analysis, pressed Run and walked away, \
 so never stop to ask. Decide how to do the work yourself (worktrees, branches, commits, tests, file layout, naming, \
 what to measure, small calls on scope) from the spec, the decisions and the code: take the option you would have \

@@ -3060,6 +3060,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cpal",
+ "libc",
  "pit-core",
  "portable-pty",
  "serde",

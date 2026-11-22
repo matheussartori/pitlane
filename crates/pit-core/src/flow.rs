@@ -163,7 +163,7 @@ pub struct RunCfg {
 
 impl Default for RunCfg {
     fn default() -> Self {
-        Self { allow: Vec::new(), max_turns: 60, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into() }
+        Self { allow: Vec::new(), max_turns: 150, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into() }
     }
 }
 
@@ -304,7 +304,7 @@ max_rounds  = 3             # "ask for changes" rounds before the card comes bac
 
 [run]
 allow       = []            # extra tools for agents, e.g. ["Bash(npm test:*)", "Bash(npm run lint:*)"]
-max_turns   = 60
+max_turns   = 150
 branch_prefix = "feat/"     # a card without a lane runs on feat/<id>-<slug>
 brief = true                # tell the agent where to look, from Pitlane's index of the repository
 permission_mode = "auto"    # Claude Code's mode for every session: auto (asks rarely), acceptEdits or default

@@ -3,6 +3,11 @@ export default {
   "Pitlane’s language": "Idioma do Pitlane",
   "Menus, buttons and messages. System follows this Mac.": "Menus, botões e mensagens. Sistema segue este Mac.",
   "Agents’ language": "Idioma dos agentes",
+  "Run all": "Run all",
+  "Agents at once": "Agentes ao mesmo tempo",
+  "How many cards Claude works at the same time. Each one runs its own tests and builds.": "Quantos cards o Claude trabalha ao mesmo tempo. Cada um roda os próprios testes e builds.",
+  "Fit to this Mac": "Ajustar a este Mac",
+  "Start fewer while the Mac is loaded (CPU or memory) and more again once it has room.": "Começa menos enquanto o Mac está carregado (CPU ou memória) e volta a subir quando houver folga.",
   "What Claude writes for you: questions, notes, replies, summaries. Code and commits keep the repository’s style. From the next session on.":
     "O que o Claude escreve para você: perguntas, notas, respostas, resumos. Código e commits seguem o estilo do repositório. Vale a partir da próxima sessão.",
   "System default": "Padrão do sistema",

@@ -482,12 +482,16 @@ export default function App() {
         return (c.questions ?? []).every((x) => x.answer != null) && !planNote(plan(), id, all);
       });
       const started: number[] = [];
+      // How many agents this Mac takes now (the setting, lowered while it is loaded).
+      const room = await api.capacity().then((c) => c.agents, () => 3);
+      const working = () => busy.filter((b) => (runs() ?? []).some((r) => r.card === b && isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge")).length + started.length;
       for (const [i, id] of ready.entries()) {
         if (!current_(token)) return;
+        if (working() >= room) break;
         if (direct && busy.some((b) => queue().includes(b) || all.find((x) => x.id === b)?.target === into)) break;
         if (holdNote(id, all, busy)) continue;
         try {
-          const m = await api.runStart(path, id, allowApiKeyFor.includes(id), into, direct, choice().instructions || null);
+          const m = await api.runStart(path, id, allowApiKeyFor.includes(id), into, direct, choice().instructions || null, true);
           void api.runFollow(m.id, 0).catch(() => {});
           started.push(id);
           busy.push(id);
@@ -542,6 +546,13 @@ export default function App() {
       );
     }),
   );
+
+  // The Mac's room changes on its own (builds end, tests calm down): look again now and then.
+  createEffect(() => {
+    if (phase() !== "working") return;
+    const tick = window.setInterval(() => void advance(), 30_000);
+    onCleanup(() => clearInterval(tick));
+  });
 
   async function switchTo(path: string) {
     setMenu(false);

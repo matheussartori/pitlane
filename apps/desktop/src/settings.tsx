@@ -180,6 +180,27 @@ function General() {
           />
         </Row>
       </Group>
+      <Group title={t("Run all")}>
+        <Row label={t("Agents at once")} help={t("How many cards Claude works at the same time. Each one runs its own tests and builds.")} for="r-agents">
+          <input
+            id="r-agents"
+            class="input"
+            type="number"
+            min="1"
+            max="16"
+            style={{ width: "6ch" }}
+            value={prefs().max_agents}
+            onChange={(e) => {
+              const n = Math.round(Number(e.currentTarget.value));
+              if (n >= 1 && n <= 16) save({ max_agents: n });
+              else e.currentTarget.value = String(prefs().max_agents);
+            }}
+          />
+        </Row>
+        <Row label={t("Fit to this Mac")} help={t("Start fewer while the Mac is loaded (CPU or memory) and more again once it has room.")} for="r-adaptive">
+          <Toggle id="r-adaptive" label={t("Fit to this Mac")} on={prefs().adaptive_agents} onChange={(v) => save({ adaptive_agents: v })} />
+        </Row>
+      </Group>
       <Group title={t("Language")}>
         <Row label={t("Pitlane’s language")} help={t("Menus, buttons and messages. System follows this Mac.")} for="l-ui">
           <select id="l-ui" class="select" value={prefs().ui_language} onChange={(e) => save({ ui_language: e.currentTarget.value })}>

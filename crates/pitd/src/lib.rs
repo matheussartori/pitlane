@@ -101,7 +101,9 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let into = req.get("into").and_then(Value::as_str).map(str::to_owned);
             let direct = req.get("direct").and_then(Value::as_bool).unwrap_or(false);
             let instructions = req.get("instructions").and_then(Value::as_str).map(str::to_owned);
-            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, into, direct, instructions, ..Default::default() })? })
+            // Run all's cards run on autopilot: fix rounds, more turns and landing need nobody.
+            let autopilot = req.get("autopilot").and_then(Value::as_bool).unwrap_or(false);
+            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, into, direct, instructions, autopilot, ..Default::default() })? })
         }
         "analyze" => {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);

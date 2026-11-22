@@ -545,9 +545,32 @@ export interface Prefs {
   ui_language: string;
   /** What agents write in for you: "system" or a language tag. */
   agent_language: string;
+  /** Run all: at most this many agents at once. */
+  max_agents: number;
+  /** Run all: fewer agents while this Mac is loaded, more again when it has room. */
+  adaptive_agents: boolean;
 }
 
-export const DEFAULT_PREFS: Prefs = { theme: "system", notify_approvals: true, notify_runs: true, notify_terminals: true, code_prewarm: true, ui_language: "system", agent_language: "system" };
+export const DEFAULT_PREFS: Prefs = {
+  theme: "system",
+  notify_approvals: true,
+  notify_runs: true,
+  notify_terminals: true,
+  code_prewarm: true,
+  ui_language: "system",
+  agent_language: "system",
+  max_agents: 3,
+  adaptive_agents: true,
+};
+
+/** How many agents Run all may have working now, and why. */
+export interface Capacity {
+  agents: number;
+  max: number;
+  load: number;
+  cores: number;
+  free_memory: number | null;
+}
 
 export interface FlowFile {
   flow: { base: string; integration: string; production: string; remote: string; naming: string[]; stale_days: number };
@@ -584,8 +607,10 @@ export const api = {
   cards: (path: string) => invoke<CardList>("cards_list", { path }),
   runs: (path: string) => invoke<RunMeta[]>("runs_list", { path }),
   sessions: (path: string) => invoke<RunMeta[]>("sessions_list", { path }),
-  runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null) =>
-    invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions }),
+  capacity: () => invoke<Capacity>("capacity"),
+  /** `autopilot`: Run all's cards, which fix, continue and land on their own. */
+  runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null, autopilot = false) =>
+    invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions, autopilot }),
   runsStopAnalyses: () => invoke<number>("runs_stop_analyses"),
   runAllFinish: (path: string, cards: number[], instructions: string, into: string | null) =>
     invoke<Finish>("run_all_finish", { path, cards, instructions, into }),
