@@ -604,3 +604,13 @@ body[data-resizing] .pane { pointer-events: none; }
 .stepper-value { min-width: 3ch; text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink); }
 .link-btn { padding: 0; border: 0; background: none; color: var(--color-accent-text); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 2px; }
+
+/* ---------- Dictation: a quiet control beside a field's label ---------- */
+.field-head { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+.field-head .dictate { margin-inline-start: auto; }
+.dictate { height: 22px; padding-inline: var(--space-2xs); font-size: var(--text-sm); }
+.dictate[data-phase="listening"] { color: var(--color-ink); background: var(--color-paper-3); box-shadow: var(--ring); }
+.dictate[data-phase="listening"] .icon { color: var(--color-accent-text); }
+.dictate .figure { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
+.dictate-meter { display: inline-block; width: 28px; height: 3px; border-radius: 2px; background: var(--color-rule); overflow: hidden; }
+.dictate-meter > span { display: block; height: 100%; background: var(--color-ink-2); transform-origin: left; transition: transform 80ms linear; }

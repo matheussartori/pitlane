@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
+mod dictate;
 mod files;
 mod vscode;
 mod term;
@@ -953,6 +954,25 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 }
 
 #[tauri::command]
+fn dictate_start(app: tauri::AppHandle, d: tauri::State<'_, dictate::Dictation>) -> CmdResult<()> {
+    d.start(&app).map_err(|e| format!("{e:#}"))
+}
+
+/// Blocking work (the transcription), so off the main thread.
+#[tauri::command]
+async fn dictate_stop(app: tauri::AppHandle) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<dictate::Dictation>().stop(&app))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn dictate_cancel(d: tauri::State<'_, dictate::Dictation>) {
+    d.cancel()
+}
+
+#[tauri::command]
 fn term_write(terms: tauri::State<'_, term::Terms>, id: u32, data: String) -> CmdResult<()> {
     terms.write(id, &data).map_err(|e| format!("{e:#}"))
 }
@@ -1028,6 +1048,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Following::default())
         .manage(term::Terms::default())
+        .manage(dictate::Dictation::default())
         .manage(vscode::Vscode::default())
         .manage(CodeView::default())
         .menu(menu)
@@ -1039,6 +1060,9 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            dictate_start,
+            dictate_stop,
+            dictate_cancel,
             settings,
             prefs_set,
             remove_repo,

@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.pitlane.desktop",
   "build": {
-    "beforeDevCommand": "node scripts/code-server.mjs && node scripts/sidecar.mjs && npm run dev",
+    "beforeDevCommand": "node scripts/code-server.mjs && node scripts/whisper-model.mjs && node scripts/sidecar.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "node scripts/code-server.mjs && node scripts/sidecar.mjs --release && npm run build",
+    "beforeBuildCommand": "node scripts/code-server.mjs && node scripts/whisper-model.mjs && node scripts/sidecar.mjs --release && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -47,7 +47,8 @@
     "resources": {
       "resources/code-server.tar.gz": "code-server.tar.gz",
       "resources/code-server.version": "code-server.version",
-      "resources/vscode-extensions/": "vscode-extensions/"
+      "resources/vscode-extensions/": "vscode-extensions/",
+      "resources/whisper/": "whisper/"
     },
     "externalBin": [
       "binaries/pit"

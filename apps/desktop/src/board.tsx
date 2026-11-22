@@ -4,6 +4,7 @@ import { api, cardStates, isLive, type Card, type CardState, type Plan, type Run
 import { clock, elapsed, money, runStateView } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
 import { Icon } from "./icons";
+import { Dictate } from "./dictate";
 import { QuestionBlock } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
@@ -252,6 +253,7 @@ export function CardSheet(props: {
 }) {
   const [title, setTitle] = createSignal(props.card.title);
   const [body, setBody] = createSignal(props.card.body);
+  let specRef: HTMLTextAreaElement | undefined;
   const [state, setState] = createSignal<CardState>(props.card.state);
   const [lane, setLane] = createSignal(props.card.lane ?? "");
   const [busy, setBusy] = createSignal(false);
@@ -390,10 +392,14 @@ export function CardSheet(props: {
         </div>
       </Show>
       <div class="field">
-        <label class="field-label" for="card-body">
-          Spec
-        </label>
+        <div class="field-head">
+          <label class="field-label" for="card-body">
+            Spec
+          </label>
+          <Dictate field={() => specRef} value={body} onChange={setBody} />
+        </div>
         <textarea
+          ref={specRef}
           id="card-body"
           class="input textarea input-mono"
           rows="8"
@@ -461,6 +467,7 @@ export function CardSheet(props: {
 export function NewCardSheet(props: { repo: string; onDone: (id: number) => void; onClose: () => void }) {
   const [title, setTitle] = createSignal("");
   const [body, setBody] = createSignal("");
+  let newSpecRef: HTMLTextAreaElement | undefined;
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -515,10 +522,14 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
           />
         </div>
         <div class="field">
-          <label class="field-label" for="new-card-body">
-            Spec
-          </label>
+          <div class="field-head">
+            <label class="field-label" for="new-card-body">
+              Spec
+            </label>
+            <Dictate field={() => newSpecRef} value={body} onChange={setBody} />
+          </div>
           <textarea
+            ref={newSpecRef}
             id="new-card-body"
             class="input textarea input-mono"
             rows="6"

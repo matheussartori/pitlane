@@ -5,6 +5,8 @@ const paths: Record<string, () => JSX.Element> = {
   mark: () => (<><path d="M4 20V4" /><path d="M4 5h12l-2.5 4L16 13H4" /><path d="M14 20h6" /></>),
   needs: () => (<><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>),
   run: () => (<><path d="M21 12a9 9 0 1 1-9-9" /><path d="M12 7v5l3 2" /></>),
+  mic: () => (<><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></>),
+  stop: () => <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />,
   play: () => <path d="M7 5.5v13a.5.5 0 0 0 .77.42l10.2-6.5a.5.5 0 0 0 0-.84L7.77 5.08A.5.5 0 0 0 7 5.5z" />,
   verify: () => (<><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" /><path d="M9 12l2 2 4-4" /></>),
   review: () => (<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>),

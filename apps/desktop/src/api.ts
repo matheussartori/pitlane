@@ -566,3 +566,14 @@ export const landedProof: Record<Landed, string> = {
 };
 
 export const short = (sha: string) => sha.slice(0, 8);
+
+/** Dictation: the microphone, transcribed on this Mac by the bundled Whisper model. */
+export const dictation = {
+  available: inTauri,
+  start: () => invoke<void>("dictate_start"),
+  stop: () => invoke<string>("dictate_stop"),
+  cancel: () => invoke<void>("dictate_cancel"),
+  /** The microphone's loudness while listening, 0 to about 0.3, every 80ms. */
+  onLevel: async (f: (level: number) => void): Promise<() => void> =>
+    inTauri ? listen<number>("dictate-level", (e) => f(e.payload)) : () => {},
+};
