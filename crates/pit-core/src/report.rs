@@ -146,6 +146,31 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
     Ok(r)
 }
 
+/// A report's file name, refusing anything that is not one of ours (ids are timestamps).
+fn file_of(id: &str) -> Result<String> {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+        anyhow::bail!("no report {id}");
+    }
+    Ok(format!("{id}.json"))
+}
+
+/// Deletes a report: its file waits in `reports/deleted/` so the app can undo.
+pub fn delete(pitlane_home: &Path, id: &str) -> Result<()> {
+    let name = file_of(id)?;
+    let d = dir(pitlane_home);
+    std::fs::create_dir_all(d.join("deleted"))?;
+    std::fs::rename(d.join(&name), d.join("deleted").join(&name))?;
+    Ok(())
+}
+
+/// Brings back a report deleted with [`delete`].
+pub fn restore(pitlane_home: &Path, id: &str) -> Result<()> {
+    let name = file_of(id)?;
+    let d = dir(pitlane_home);
+    std::fs::rename(d.join("deleted").join(&name), d.join(&name))?;
+    Ok(())
+}
+
 /// A repository's reports, newest first.
 pub fn list(pitlane_home: &Path, repo: &Path) -> Vec<Report> {
     let mut all: Vec<Report> = std::fs::read_dir(dir(pitlane_home))

@@ -720,6 +720,8 @@ export const api = {
   reportCreate: (path: string, cards: number[], since: number, into: string | null, direct: boolean, instructions: string, finish: Finish | null) =>
     invoke<Report>("report_create", { path, cards, since, into, direct, instructions, finish }),
   reports: (path: string) => invoke<Report[]>("reports_list", { path }),
+  reportDelete: (id: string) => invoke<void>("report_delete", { id }),
+  reportRestore: (id: string) => invoke<void>("report_restore", { id }),
   printPage: () => invoke<void>("print_page"),
   cardsForget: (path: string, ids: number[]) => invoke<{ notes: number; questions: number }>("cards_forget", { path, ids }),
   cardDelete: (path: string, id: number) => invoke<void>("card_delete", { path, id }),

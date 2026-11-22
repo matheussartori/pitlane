@@ -710,6 +710,16 @@ async fn reports_list(path: String) -> CmdResult<Vec<pit_core::report::Report>> 
     blocking(move || Ok(pit_core::report::list(&default_homes().1, &open(&path)?.root))).await
 }
 
+#[tauri::command]
+async fn report_delete(id: String) -> CmdResult<()> {
+    blocking(move || pit_core::report::delete(&default_homes().1, &id)).await
+}
+
+#[tauri::command]
+async fn report_restore(id: String) -> CmdResult<()> {
+    blocking(move || pit_core::report::restore(&default_homes().1, &id)).await
+}
+
 /// The system print dialog for the window (the Reports screen prints only the report: Save as PDF).
 #[tauri::command]
 fn print_page(window: tauri::WebviewWindow) -> CmdResult<()> {
@@ -1521,6 +1531,8 @@ pub fn run() {
             run_all_finish,
             report_create,
             reports_list,
+            report_delete,
+            report_restore,
             print_page,
             board_assist,
             run_decide,

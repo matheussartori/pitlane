@@ -11,7 +11,7 @@ import { Spinner, toast } from "./ui";
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 const when = (secs: number) => new Date(secs * 1000).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
 
-export function ReportsView(props: { reports: Report[] | null; now: number }) {
+export function ReportsView(props: { reports: Report[] | null; now: number; onChanged: () => void }) {
   const [picked, setPicked] = createSignal<string | null>(null);
   const report = createMemo(() => {
     const all = props.reports ?? [];
@@ -22,6 +22,28 @@ export function ReportsView(props: { reports: Report[] | null; now: number }) {
       await api.printPage();
     } catch (e) {
       toast({ tone: "fail", title: t("Could not open the print dialog"), body: msg(e) });
+    }
+  };
+  const remove = async (r: Report) => {
+    const name = t("Run all on {repo}", { repo: r.repo_name });
+    try {
+      await api.reportDelete(r.id);
+      if (picked() === r.id) setPicked(null);
+      props.onChanged();
+      toast(
+        {
+          tone: "done",
+          title: t("Report deleted"),
+          body: `${name} · ${when(r.ended_at)}`,
+          action: {
+            label: t("Undo"),
+            run: () => void api.reportRestore(r.id).then(props.onChanged, (e) => toast({ tone: "fail", title: t("Could not restore the report"), body: msg(e) })),
+          },
+        },
+        12000,
+      );
+    } catch (e) {
+      toast({ tone: "fail", title: t("Could not delete the report"), body: msg(e) });
     }
   };
   return (
@@ -73,6 +95,9 @@ export function ReportsView(props: { reports: Report[] | null; now: number }) {
                   <div class="report-actions">
                     <button type="button" class="btn" onClick={() => void exportPdf()}>
                       <Icon name="ship" small /> {t("Export PDF")}
+                    </button>
+                    <button type="button" class="btn" title={t("Delete this report (you can undo)")} onClick={() => void remove(r)}>
+                      <Icon name="trash" small /> {t("Delete")}
                     </button>
                   </div>
                   </header>

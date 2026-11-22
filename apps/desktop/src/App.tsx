@@ -1062,7 +1062,7 @@ export default function App() {
                   </div>
                 </Match>
                 <Match when={tab() === "reports"}>
-                  <ReportsView reports={reports()} now={now()} />
+                  <ReportsView reports={reports()} now={now()} onChanged={() => void loadReports()} />
                 </Match>
                 <Match when={tab() === "performance"}>
                   <PerformanceView onOpen={openRun} />
