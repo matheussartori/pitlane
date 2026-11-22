@@ -973,22 +973,22 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 .perf .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
 
 .perf-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
-.perf-mode { display: grid; gap: var(--space-2xs); text-align: left; padding: var(--space-sm) var(--space-md); border: 0; border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: var(--ring); color: var(--color-ink-2); cursor: pointer; position: relative; overflow: hidden; transition: background var(--dur-short) var(--ease-out); }
+.perf-mode { display: grid; gap: var(--space-2xs); text-align: left; padding: var(--space-sm) var(--space-md); border: 0; border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: none; color: var(--color-ink-2); cursor: pointer; position: relative; overflow: hidden; transition: background var(--dur-short) var(--ease-out); }
 .perf-mode:hover { background: var(--color-paper-3); }
 .perf-mode:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; transition: none; }
 .perf-mode:active { transform: scale(0.99); }
-.perf-mode[aria-pressed="true"] { background: var(--color-paper-3); box-shadow: inset 0 0 0 1px var(--color-rule-strong); color: var(--color-ink); }
+.perf-mode[aria-pressed="true"] { background: var(--color-paper-3); color: var(--color-ink); }
 .perf-mode[aria-pressed="true"]::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--color-accent); }
 .perf-mode-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); }
 .perf-mode-title { font: var(--weight-display) var(--text-xl)/1.2 var(--font-display); color: var(--color-ink); }
 .perf-mode-line { font-size: var(--text-md); color: var(--color-ink-2); max-width: 46ch; }
-.perf-mode-facts { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-md); font-size: var(--text-sm); color: var(--color-muted); margin-top: var(--space-2xs); }
+.perf-mode-facts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2xs) var(--space-md); font-size: var(--text-sm); color: var(--color-muted); margin-top: var(--space-2xs); }
 .perf-inline { display: inline-flex; align-items: center; gap: var(--space-2xs); cursor: default; }
 .perf-num { width: 8ch; height: 22px; font-family: var(--font-mono); }
 .perf-note { grid-column: 1 / -1; font-size: var(--text-sm); color: var(--color-muted); display: flex; align-items: center; gap: var(--space-2xs); flex-wrap: wrap; }
 
 .perf-mac { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); }
-.perf-tile, .perf-chart { display: grid; gap: var(--space-2xs); align-content: start; padding: var(--space-sm); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: var(--ring); min-width: 0; margin: 0; }
+.perf-tile, .perf-chart { display: grid; gap: var(--space-2xs); align-content: start; padding: var(--space-sm); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: none; min-width: 0; margin: 0; } /* filled, never outlined: as the Board's cards */
 .perf-tile-wide { grid-column: span 1; }
 .perf-chart { grid-column: span 2; }
 .perf-tile-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-muted); min-width: 0; }
@@ -1005,6 +1005,11 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 .sw-mac { background: var(--color-ink-2); }
 .perf-legend { display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-sm); font-size: var(--text-xs); color: var(--color-muted); }
 .perf-legend b { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-ink-2); }
+.perf-tile .perf-legend { display: grid; gap: var(--space-3xs); margin-top: var(--space-2xs); } /* one row per share: the label left, the figure right, never wrapping mid-pair */
+.perf-tile .perf-legend > span { display: flex; align-items: center; gap: var(--space-2xs); }
+.perf-tile .perf-legend b { margin-inline-start: auto; }
+.perf .empty { padding-block: var(--space-xs); }
+.perf .empty-title { font-size: var(--text-md); }
 .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-inline-end: var(--space-2xs); vertical-align: baseline; }
 
 .perf-plot { position: relative; height: 120px; }
