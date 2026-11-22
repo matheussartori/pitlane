@@ -124,6 +124,18 @@ impl Dictation {
             let _ = rec.stop.send(());
         }
     }
+
+    /// Frees the model's Metal buffers. ggml aborts the process when its Metal device is torn down
+    /// at exit with buffers still alive, which macOS reports as a crash. False when a transcription
+    /// still holds the model, so it could not be freed.
+    pub fn release(&self) -> bool {
+        self.cancel();
+        let taken = self.model.lock().map(|mut g| g.take()).unwrap_or(None);
+        match taken {
+            Some(ctx) => Arc::try_unwrap(ctx).is_ok(),
+            None => true,
+        }
+    }
 }
 
 type Mic = (cpal::Stream, Arc<Mutex<Vec<f32>>>, Arc<AtomicU32>, u32);

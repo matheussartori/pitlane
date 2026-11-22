@@ -1436,6 +1436,12 @@ pub fn run() {
                 }
                 app.state::<term::Terms>().close_all();
                 app.state::<vscode::Vscode>().stop();
+                // The Whisper model's Metal buffers must go before the C++ teardown at exit, or
+                // ggml aborts and macOS shows "Pitlane quit unexpectedly". If a transcription
+                // still holds it, leave without running that teardown at all.
+                if !app.state::<dictate::Dictation>().release() {
+                    unsafe { libc::_exit(0) };
+                }
             }
         });
 }
