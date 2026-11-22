@@ -1,0 +1,36 @@
+# /etc/zshrc ran with our folder as ZDOTDIR: history belongs in yours.
+[[ $HISTFILE == $PITLANE_ZDOTDIR/.zsh_history ]] && HISTFILE=$PITLANE_USER_ZDOTDIR/.zsh_history
+[[ -n $SHELL_SESSION_DIR && $SHELL_SESSION_DIR == $PITLANE_ZDOTDIR/* ]] && SHELL_SESSION_DIR=$PITLANE_USER_ZDOTDIR/.zsh_sessions
+ZDOTDIR=$PITLANE_USER_ZDOTDIR
+[[ -f $ZDOTDIR/.zshrc ]] && builtin source $ZDOTDIR/.zshrc
+PITLANE_USER_ZDOTDIR=$ZDOTDIR
+ZDOTDIR=$PITLANE_ZDOTDIR
+
+if [[ -o interactive && -z $__pit_hooked ]]; then
+  __pit_hooked=1
+  __pit_ran=0
+  # A command line as an OSC payload: no control bytes, no ';' (VS Code's 633;E escaping).
+  __pit_esc() {
+    local s=${1//\\/\\\\}
+    s=${s//;/\\x3b}
+    s=${s//$'\n'/\\x0a}
+    s=${s//$'\a'/\\x07}
+    s=${s//$'\e'/\\x1b}
+    builtin print -rn -- "$s"
+  }
+  __pit_precmd() {
+    local ret=$?
+    (( __pit_ran )) && builtin printf '\e]133;D;%s\a' "$ret"
+    __pit_ran=0
+    builtin printf '\e]7;file://%s%s\a' "${HOST}" "${PWD// /%20}"
+    builtin printf '\e]133;A\a'
+  }
+  __pit_preexec() {
+    __pit_ran=1
+    builtin printf '\e]633;E;%s\a' "$(__pit_esc "$1")"
+    builtin printf '\e]133;C\a'
+  }
+  # First among the precmd hooks, so $? is still the command's; last among preexec.
+  precmd_functions=(__pit_precmd $precmd_functions)
+  preexec_functions+=(__pit_preexec)
+fi

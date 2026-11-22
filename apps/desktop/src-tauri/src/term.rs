@@ -118,6 +118,14 @@ impl Terms {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "Pitlane");
+        // zsh marks each command (OSC 133) through our startup files, which source yours first.
+        if Path::new(&shell).file_name().is_some_and(|n| n == "zsh")
+            && let Some(dir) = zsh_integration()
+        {
+            let user = std::env::var("ZDOTDIR").ok().filter(|d| !d.is_empty()).or_else(|| std::env::var("HOME").ok()).unwrap_or_default();
+            cmd.env("PITLANE_USER_ZDOTDIR", user);
+            cmd.env("ZDOTDIR", dir);
+        }
         let child = pair.slave.spawn_command(cmd).with_context(|| format!("could not start {shell}"))?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader()?;
@@ -232,6 +240,25 @@ impl Terms {
     }
 }
 
+/// The folder of zsh startup files that add command marks, written once per app run.
+fn zsh_integration() -> Option<&'static str> {
+    static DIR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join("pitlane-zsh");
+        std::fs::create_dir_all(&dir).ok()?;
+        for (name, body) in [
+            (".zshenv", include_str!("shell/zshenv")),
+            (".zprofile", include_str!("shell/zprofile")),
+            (".zshrc", include_str!("shell/zshrc")),
+            (".zlogin", include_str!("shell/zlogin")),
+        ] {
+            std::fs::write(dir.join(name), body).ok()?;
+        }
+        dir.to_str().map(str::to_owned)
+    })
+    .as_deref()
+}
+
 /// Ends shells and everything they started: the shell leads its own session, so a hangup to
 /// that session reaches the program in front (a dev server, an agent) and the jobs behind it;
 /// what is left a moment later is killed.
@@ -278,6 +305,14 @@ mod tests {
         };
         assert!(until(&|| seen.lock().unwrap().contains("pit42lane")), "{}", seen.lock().unwrap());
         assert!(terms.buffer(t.id).unwrap().contains("pit42lane"), "kept for a reload");
+        if std::env::var("SHELL").is_ok_and(|s| s.ends_with("/zsh")) {
+            // Command marks around each command, and the shell ends up with your own ZDOTDIR.
+            assert!(until(&|| seen.lock().unwrap().contains("\x1b]133;D;0\x07")), "{:?}", seen.lock().unwrap());
+            assert!(seen.lock().unwrap().contains("\x1b]633;E;echo pit$((40+2))lane\x07"));
+            terms.write(t.id, "echo zd=${ZDOTDIR}=\n").unwrap();
+            assert!(until(&|| seen.lock().unwrap().contains("zd=/")));
+            assert!(!seen.lock().unwrap().contains("zd=/private"), "ZDOTDIR given back");
+        }
         terms.write(t.id, "exit 3\n").unwrap();
         assert!(until(&|| exited.lock().unwrap().is_some()));
         assert_eq!(*exited.lock().unwrap(), Some(3));

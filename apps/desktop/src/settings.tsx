@@ -6,7 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { api, vscode, type FlowFile, type RepoEntry } from "./api";
 import { Icon } from "./icons";
 import { prefs, setPrefs } from "./prefs";
-import { setTerminalFont, setTerminalSide, terminalPrefs } from "./terminals";
+import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalSide, terminalPrefs } from "./terminals";
 import { t } from "./i18n";
 import { toast } from "./ui";
 
@@ -397,6 +397,9 @@ function Terminal() {
             ]}
             onChange={side}
           />
+        </Row>
+        <Row label="Font" help="Menlo reads as Warp does; SF Mono as Apple's Terminal.">
+          <Seg label="Font" value={p().face} options={TERMINAL_FACES.map((f) => ({ v: f.v, label: f.label }))} onChange={(v) => (setTerminalFace(v), setP(terminalPrefs()))} />
         </Row>
         <Row label="Font size" help="⌘= and ⌘- change it in the terminal too.">
           <div class="stepper">

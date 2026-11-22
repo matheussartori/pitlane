@@ -19,6 +19,15 @@
   --color-muted: oklch(59% 0.003 255);
   --color-term-ink: oklch(86% 0.002 90); /* terminal text: softer than UI ink, as in Warp */
   --color-term-select: oklch(30% 0.004 255);
+  /* The terminal's 16 colours, as Warp tunes them: calm, each normal and bright one distinct. */
+  --ansi-black: oklch(38% 0.004 255); --ansi-bright-black: oklch(56% 0.004 255);
+  --ansi-red: oklch(72% 0.15 25); --ansi-bright-red: oklch(80% 0.11 25);
+  --ansi-green: oklch(79% 0.14 145); --ansi-bright-green: oklch(87% 0.11 145);
+  --ansi-yellow: oklch(86% 0.12 95); --ansi-bright-yellow: oklch(92% 0.09 95);
+  --ansi-blue: oklch(75% 0.11 245); --ansi-bright-blue: oklch(84% 0.08 245);
+  --ansi-magenta: oklch(75% 0.13 320); --ansi-bright-magenta: oklch(84% 0.09 320);
+  --ansi-cyan: oklch(81% 0.09 200); --ansi-bright-cyan: oklch(88% 0.07 200);
+  --ansi-white: oklch(86% 0.002 90); --ansi-bright-white: oklch(97% 0.002 90);
 
   /* Accent: your move. Primary action, focus, selection, "needs you". Under 5% of any screen. */
   --color-accent: oklch(74% 0.15 58);
@@ -108,6 +117,14 @@
   --color-muted: oklch(50% 0.004 255);
   --color-term-ink: oklch(27% 0.003 255);
   --color-term-select: oklch(89% 0.004 255);
+  --ansi-black: oklch(30% 0.004 255); --ansi-bright-black: oklch(48% 0.004 255);
+  --ansi-red: oklch(52% 0.19 25); --ansi-bright-red: oklch(58% 0.17 25);
+  --ansi-green: oklch(50% 0.14 150); --ansi-bright-green: oklch(57% 0.13 150);
+  --ansi-yellow: oklch(56% 0.12 80); --ansi-bright-yellow: oklch(62% 0.12 85);
+  --ansi-blue: oklch(50% 0.14 250); --ansi-bright-blue: oklch(57% 0.13 250);
+  --ansi-magenta: oklch(50% 0.16 320); --ansi-bright-magenta: oklch(57% 0.14 320);
+  --ansi-cyan: oklch(52% 0.1 205); --ansi-bright-cyan: oklch(58% 0.09 205);
+  --ansi-white: oklch(64% 0.003 255); --ansi-bright-white: oklch(74% 0.003 255);
   --color-accent: oklch(70% 0.175 55);
   --color-accent-ink: oklch(20% 0.04 55);
   --color-accent-text: oklch(51% 0.16 48);
@@ -143,6 +160,14 @@
     --color-muted: oklch(50% 0.004 255);
   --color-term-ink: oklch(27% 0.003 255);
   --color-term-select: oklch(89% 0.004 255);
+    --ansi-black: oklch(30% 0.004 255); --ansi-bright-black: oklch(48% 0.004 255);
+    --ansi-red: oklch(52% 0.19 25); --ansi-bright-red: oklch(58% 0.17 25);
+    --ansi-green: oklch(50% 0.14 150); --ansi-bright-green: oklch(57% 0.13 150);
+    --ansi-yellow: oklch(56% 0.12 80); --ansi-bright-yellow: oklch(62% 0.12 85);
+    --ansi-blue: oklch(50% 0.14 250); --ansi-bright-blue: oklch(57% 0.13 250);
+    --ansi-magenta: oklch(50% 0.16 320); --ansi-bright-magenta: oklch(57% 0.14 320);
+    --ansi-cyan: oklch(52% 0.1 205); --ansi-bright-cyan: oklch(58% 0.09 205);
+    --ansi-white: oklch(64% 0.003 255); --ansi-bright-white: oklch(74% 0.003 255);
     --color-accent: oklch(70% 0.175 55);
     --color-accent-ink: oklch(20% 0.04 55);
     --color-accent-text: oklch(51% 0.16 48);

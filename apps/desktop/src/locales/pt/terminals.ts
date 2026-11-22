@@ -1,4 +1,8 @@
 export default {
+  "exit": "saída",
+  "Copy command": "Copiar comando",
+  "Copy output": "Copiar saída",
+  "Back to this command": "Voltar a este comando",
   "Could not open {path} in VS Code": "Não foi possível abrir {path} no VS Code",
   "Opening VS Code": "Abrindo o VS Code",
   "VS Code did not start": "O VS Code não iniciou",

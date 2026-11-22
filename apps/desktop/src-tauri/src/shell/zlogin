@@ -1,0 +1,4 @@
+ZDOTDIR=$PITLANE_USER_ZDOTDIR
+[[ -f $ZDOTDIR/.zlogin ]] && builtin source $ZDOTDIR/.zlogin
+# From here on the shell is yours: nested shells read your own files.
+unset PITLANE_USER_ZDOTDIR PITLANE_ZDOTDIR

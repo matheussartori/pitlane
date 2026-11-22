@@ -81,6 +81,8 @@ export default {
   "At the side": "Ao lado",
   "On top": "No topo",
   "Font size": "Tamanho da fonte",
+  "Font": "Fonte",
+  "Menlo reads as Warp does; SF Mono as Apple's Terminal.": "Menlo lê como o Warp; SF Mono como o Terminal da Apple.",
   "⌘= and ⌘- change it in the terminal too.": "⌘= e ⌘- também mudam no terminal.",
   "Smaller": "Menor",
   "Larger": "Maior",

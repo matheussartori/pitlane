@@ -1,0 +1,7 @@
+# Pitlane: zsh reads its startup files from here so the terminal can mark where each command
+# starts and ends (OSC 133). Every file sources yours first, with ZDOTDIR set to your folder.
+PITLANE_ZDOTDIR=$ZDOTDIR
+ZDOTDIR=${PITLANE_USER_ZDOTDIR:-$HOME}
+[[ -f $ZDOTDIR/.zshenv ]] && builtin source $ZDOTDIR/.zshenv
+PITLANE_USER_ZDOTDIR=$ZDOTDIR
+ZDOTDIR=$PITLANE_ZDOTDIR

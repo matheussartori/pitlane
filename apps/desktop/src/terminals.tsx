@@ -8,7 +8,10 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
+import { Blocks, duration } from "./blocks";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { files, onTerm, openExternal, terms, type Lane, type TermInfo } from "./api";
 import { AgentList, AgentPane, agentGroups, agentSelected, selectAgent } from "./agents";
@@ -142,6 +145,9 @@ interface Live {
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
+  blocks: Blocks;
+  /** Drawn on the GPU, as Warp does: crisp glyphs on the cell grid. Gone after a lost context. */
+  gl?: WebglAddon;
   el: HTMLDivElement;
   opened: boolean;
   /** The current burst of output, and the last keystroke: typing is not work. */
@@ -151,7 +157,15 @@ interface Live {
 }
 
 const live = new Map<number, Live>();
-const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number }>({ tabs: [], active: null, side: "left", font: 13 });
+/** Faces a terminal can wear. Menlo is the face Warp's default (Hack) grew from. */
+export const TERMINAL_FACES = [
+  { v: "menlo", label: "Menlo", css: 'Menlo, "SF Mono", monospace' },
+  { v: "sf", label: "SF Mono", css: 'ui-monospace, "SF Mono", Menlo, monospace' },
+  { v: "geist", label: "Geist Mono", css: '"Geist Mono Variable", Menlo, monospace' },
+] as const;
+type Face = (typeof TERMINAL_FACES)[number]["v"];
+const faceCss = (f: Face) => (TERMINAL_FACES.find((x) => x.v === f) ?? TERMINAL_FACES[0]).css;
+const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face }>({ tabs: [], active: null, side: "left", font: 13, face: "menlo" });
 const [meta, setMeta] = createStore<Record<number, Meta>>({});
 const [screenOn, setScreenOn] = createSignal(false);
 let nextTab = 1;
@@ -162,6 +176,7 @@ interface Saved {
   active: number | null;
   side: "left" | "top";
   font: number;
+  face?: Face;
   places: Record<number, { cwd: string; label: string; run?: string }>;
 }
 
@@ -170,7 +185,7 @@ function save() {
     const tabs = unwrap(st.tabs);
     const places: Saved["places"] = {};
     for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label, run: meta[id]!.run };
-    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, places } satisfies Saved));
+    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, face: st.face, places } satisfies Saved));
   } catch {
     /* no storage: the layout lives for this window */
   }
@@ -228,22 +243,22 @@ function theme() {
     selectionBackground: tok("--color-term-select"),
     scrollbarSliderBackground: dark() ? "#ffffff18" : "#00000018",
     scrollbarSliderHoverBackground: dark() ? "#ffffff30" : "#00000030",
-    black: tok("--color-paper-3"),
-    brightBlack: tok("--color-muted"),
-    red: tok("--color-fail"),
-    brightRed: tok("--color-fail"),
-    green: tok("--color-done"),
-    brightGreen: tok("--color-done"),
-    yellow: tok("--code-string"),
-    brightYellow: tok("--code-string"),
-    blue: tok("--color-run"),
-    brightBlue: tok("--code-fn"),
-    magenta: tok("--code-keyword"),
-    brightMagenta: tok("--code-keyword"),
-    cyan: tok("--code-number"),
-    brightCyan: tok("--code-number"),
-    white: tok("--color-ink-2"),
-    brightWhite: tok("--color-ink"),
+    black: tok("--ansi-black"),
+    brightBlack: tok("--ansi-bright-black"),
+    red: tok("--ansi-red"),
+    brightRed: tok("--ansi-bright-red"),
+    green: tok("--ansi-green"),
+    brightGreen: tok("--ansi-bright-green"),
+    yellow: tok("--ansi-yellow"),
+    brightYellow: tok("--ansi-bright-yellow"),
+    blue: tok("--ansi-blue"),
+    brightBlue: tok("--ansi-bright-blue"),
+    magenta: tok("--ansi-magenta"),
+    brightMagenta: tok("--ansi-bright-magenta"),
+    cyan: tok("--ansi-cyan"),
+    brightCyan: tok("--ansi-bright-cyan"),
+    white: tok("--ansi-white"),
+    brightWhite: tok("--ansi-bright-white"),
   };
 }
 
@@ -289,7 +304,22 @@ export function setTerminalNotify(on: boolean) {
 }
 
 /** Settings: the tab list's side and the font size, read and changed. */
-export const terminalPrefs = () => ({ side: st.side, font: st.font });
+export const terminalPrefs = () => ({ side: st.side, font: st.font, face: st.face });
+export function setTerminalFace(face: Face) {
+  setSt("face", face);
+  void document.fonts.load(`${st.font}px ${faceCss(face)}`).finally(() => {
+    for (const l of live.values()) {
+      l.term.options.fontFamily = faceCss(face);
+      l.gl?.clearTextureAtlas();
+      try {
+        l.fit.fit();
+      } catch {
+        /* hidden */
+      }
+    }
+  });
+  save();
+}
 export function setTerminalSide(side: "left" | "top") {
   setSt("side", side);
   save();
@@ -326,8 +356,11 @@ function seen(tab: Tab | undefined) {
 
 let ticker: ReturnType<typeof setInterval> | undefined;
 /** Busy for a while, then quiet: the program finished or stopped to ask. */
+/** A second hand for running blocks' clocks. */
+const [clock, setClock] = createSignal(performance.now());
 function tick() {
   const now = performance.now();
+  setClock(now);
   for (const [id, l] of live) {
     if (meta[id]?.status !== "busy" || now - l.last < 3500) continue;
     if (l.last - l.first > 8000 && !inView(id)) attend(id, "waiting", lastLine(l.term));
@@ -419,10 +452,17 @@ function linkFiles(term: Terminal, id: number) {
 
 function make(info: TermInfo, run?: string): Live {
   const term = new Terminal({
-    fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
+    fontFamily: faceCss(st.face),
     fontSize: st.font,
+    fontWeight: "normal",
+    fontWeightBold: "600",
     lineHeight: 1.35, // Warp-like air between lines
+    cursorStyle: "bar",
+    cursorWidth: 2,
+    cursorInactiveStyle: "outline",
     cursorBlink: true,
+    drawBoldTextInBrightColors: false,
+    rescaleOverlappingGlyphs: true,
     scrollback: 10000,
     macOptionIsMeta: true,
     allowProposedApi: true, // search decorations
@@ -433,10 +473,13 @@ function make(info: TermInfo, run?: string): Live {
   const search = new SearchAddon();
   term.loadAddon(fit);
   term.loadAddon(search);
+  // Emoji and wide glyphs (Claude Code's marks) take the cells they really take.
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = "11";
   // ⌘-click, as in iTerm2 and VS Code: a plain click selects text.
   term.loadAddon(new WebLinksAddon((e, uri) => e.metaKey && void openExternal(uri).catch(() => {})));
   linkFiles(term, info.id);
-  const l: Live = { term, fit, search, el: document.createElement("div"), opened: false, first: 0, last: 0, typed: 0 };
+  const l: Live = { term, fit, search, blocks: new Blocks(term), el: document.createElement("div"), opened: false, first: 0, last: 0, typed: 0 };
   l.el.className = "term-surface";
   term.onData((d) => {
     l.typed = performance.now();
@@ -469,6 +512,7 @@ function make(info: TermInfo, run?: string): Live {
 }
 
 function dispose(id: number) {
+  live.get(id)?.blocks.dispose();
   live.get(id)?.term.dispose();
   live.delete(id);
   setMeta(produce((m) => void delete m[id]));
@@ -496,6 +540,9 @@ export async function startTerminals() {
     },
   );
   const saved = loadSaved();
+  if (saved?.face && TERMINAL_FACES.some((f) => f.v === saved.face)) setSt("face", saved.face);
+  // Measure cells with the real face, never a fallback: a late font leaves gaps between letters.
+  await document.fonts.load(`13px ${faceCss(st.face)}`).catch(() => {});
   if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || saved.font === 12 ? 13 : saved.font)) }); // 12 was the old default: it moves to 13 with the Warp-like pass
   let existing: TermInfo[] = [];
   try {
@@ -684,6 +731,21 @@ function resizeFocused(side: Side) {
     s.sizes[a] = na;
     return { root };
   });
+}
+
+/** The GPU renderer, falling back to the DOM one when WebKit takes the context back. */
+function gpu(l: Live) {
+  try {
+    const gl = new WebglAddon();
+    gl.onContextLoss(() => {
+      gl.dispose();
+      l.gl = undefined;
+    });
+    l.term.loadAddon(gl);
+    l.gl = gl;
+  } catch {
+    /* no WebGL: the DOM renderer draws */
+  }
 }
 
 function fontSize(next: number) {
@@ -930,6 +992,7 @@ function PaneView(props: { term: number; tab: Tab; alone: boolean }) {
     if (!l.opened) {
       l.term.open(l.el);
       l.opened = true;
+      gpu(l);
       const id = props.term;
       l.term.textarea?.addEventListener("focus", () => {
         const t = tabOf(id);
@@ -972,8 +1035,16 @@ function PaneView(props: { term: number; tab: Tab; alone: boolean }) {
           </button>
         </div>
       </Show>
-      <div class="pane-body">
+      <div class="pane-body" onMouseMove={(e) => live.get(props.term)?.blocks.hover(e.clientY)} onMouseLeave={() => live.get(props.term)?.blocks.hover(null)}>
         <div class="pane-host" ref={host} />
+        <Show when={live.get(props.term)?.blocks.sticky()}>
+          {(s) => (
+            <button type="button" class="tb-sticky" data-fail={s().exit ? "" : undefined} title={t("Back to this command")} onClick={() => (live.get(props.term)?.blocks.reveal(s().line), live.get(props.term)?.term.focus())}>
+              <span class="tb-sticky-cmd">{s().cmd}</span>
+              <span class="tb-sticky-info">{s().ms != null ? (s().exit ? `${t("exit")} ${s().exit} · ${duration(s().ms!)}` : duration(s().ms!)) : duration(clock() - s().started)}</span>
+            </button>
+          )}
+        </Show>
       </div>
       <Show when={over()}>
         <div class="pane-drop" data-side={over()} aria-hidden="true" />
@@ -1194,6 +1265,9 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
     } else if (k === "enter" && e.shiftKey && t) {
       take();
       setTab(t.id, (x) => ({ zoom: !x.zoom }));
+    } else if ((e.code === "ArrowUp" || e.code === "ArrowDown") && !e.shiftKey && !e.altKey && !e.ctrlKey && t) {
+      // ⌘↑ / ⌘↓ walk the commands, as in Warp: the block is selected, so ⌘C copies it.
+      if (live.get(t.focus)?.blocks.jump(e.code === "ArrowUp" ? -1 : 1)) take();
     } else if (k === "k" && !e.shiftKey && t) {
       take();
       live.get(t.focus)?.term.clear();
@@ -1212,7 +1286,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
       fontSize(st.font - 1);
     } else if (k === "0") {
       take();
-      fontSize(12);
+      fontSize(13);
     }
   }
 
