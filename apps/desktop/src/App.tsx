@@ -62,6 +62,24 @@ export default function App() {
   const [settings, setSettings] = createSignal<Settings>({ repos: [], last: null });
   const [repo, setRepo] = createSignal<string | null>(null);
   const [tab, setTabSignal] = createSignal<Tab>(savedTab());
+  // The Tower stays folded until you open it; the rail's Lanes count already says when a lane needs you.
+  const [towerOpen, setTowerOpenSignal] = createSignal((() => {
+    try {
+      return localStorage.getItem("pitlane.tower") === "open";
+    } catch {
+      return false;
+    }
+  })());
+  const toggleTower = () => {
+    const open = !towerOpen();
+    setTowerOpenSignal(open);
+    try {
+      localStorage.setItem("pitlane.tower", open ? "open" : "closed");
+    } catch {
+      /* private window: the choice simply is not remembered */
+    }
+  };
+  const towerHere = () => towerOpen() && !["lanes", "terminal", "code", "settings"].includes(tab());
   const setTab = (t: Tab) => {
     setTabSignal(t);
     setRunView(null);
@@ -685,7 +703,10 @@ export default function App() {
     }, 4000);
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      if (e.metaKey && e.key === ",") {
+      if (e.metaKey && e.key === "\\") {
+        e.preventDefault();
+        toggleTower();
+      } else if (e.metaKey && e.key === ",") {
         e.preventDefault();
         setTab("settings");
       } else if (e.metaKey && e.key.toLowerCase() === "r") {
@@ -858,13 +879,14 @@ export default function App() {
               </button>
             )}
           </Show>
+          <RailItem icon="tower" label={towerOpen() ? "Hide the Tower" : "Show the Tower"} keys="⌘\" current={towerOpen()} onClick={toggleTower} />
           <RailItem icon="settings" label="Settings" keys="⌘," current={tab() === "settings"} onClick={() => setTab("settings")} />
         </div>
       </nav>
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
       <div class="panel">
-      <div class="body" data-tower={!["lanes", "terminal", "code", "settings"].includes(tab()) ? "" : undefined}>
+      <div class="body" data-tower={towerHere() ? "" : undefined}>
         <main class="main" data-flush={(tab() === "terminal" || tab() === "code" || tab() === "settings") && !runView() && reviewView() == null ? "" : undefined}>
           <Show
             when={tab() !== "settings"}
@@ -1140,7 +1162,7 @@ export default function App() {
             )}
           </Show>
         </main>
-        <Show when={!["lanes", "terminal", "code", "settings"].includes(tab())}>
+        <Show when={towerHere()}>
           <Tower
             yard={yard()}
             runs={runs() ?? []}

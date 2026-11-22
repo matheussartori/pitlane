@@ -90,5 +90,7 @@ export default {
   "Code": "Código",
   "Terminal": "Terminal",
   "Settings": "Configurações",
+  "Show the Tower": "Mostrar a Torre",
+  "Hide the Tower": "Esconder a Torre",
   "⌘T new": "⌘T novo",
 } as Record<string, string>;
