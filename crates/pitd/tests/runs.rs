@@ -38,6 +38,14 @@ while IFS= read -r line; do
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"blocked","summary":"Need a limit.","questions":[{"text":"Which limit?","options":["256 KB","1 MB"],"recommended":0}]}}'
     elif [ "$FAKE_MODE" = "ask-done" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"done","summary":"Did it.","questions":[{"text":"Also the studio?","options":["No","Yes"],"recommended":0}]}}'
+    elif [ "$FAKE_MODE" = "self-turn" ]; then
+      # Out of turns while a background task was due; Claude Code then starts a turn by itself.
+      echo '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"duration_ms":100,"total_cost_usd":0.02,"usage":{}}'
+      sleep 0.3
+      echo '{"type":"system","subtype":"init","session_id":"sess-1","model":"fake-model"}'
+      echo '{"type":"assistant","message":{"content":[{"type":"text","text":"The suite finished."}]}}'
+      sleep 1
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":10,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Did it."}}'
     else
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":1200,"total_cost_usd":0.05,"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":3},"structured_output":{"status":"done","summary":"Did it."}}'
     fi
@@ -169,6 +177,31 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
     assert_eq!(kinds, ["started", "text", "tool", "tool-done", "quota", "said", "finished", "text", "finished", "exited"]);
     assert_eq!(s.quota().len(), 1);
     assert!(s.say(&meta.id, "too late").await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_the_agent_starts_by_itself_still_hears_you() {
+    let fx = fx();
+    let id = card(&fx, "Add a line");
+    let wrapper = fx.home.join("self-turn.sh");
+    fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=self-turn exec {} \"$@\"\n", fx.fake.display())).unwrap();
+    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
+    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+
+    // Wait for the second turn, the one nobody sent, then talk to it.
+    for _ in 0..300 {
+        let started = s.subscribe(&meta.id, 0).unwrap().replay.iter().filter(|(_, e)| matches!(e, RunEvent::Started { .. })).count();
+        if started == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    s.say(&meta.id, "What is the progress?").await.unwrap();
+
+    let end = wait_end(&s, &meta.id).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    assert_eq!(end.handoff.as_ref().unwrap()["summary"], "Did it, with the note.");
 }
 
 #[tokio::test(flavor = "multi_thread")]

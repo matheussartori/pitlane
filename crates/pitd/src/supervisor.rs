@@ -78,6 +78,9 @@ struct Live {
     /// which is how a stream-json session ends.
     sent: usize,
     results: usize,
+    /// Background tasks (a test suite, a server) the agent left running: when one reports back,
+    /// Claude Code starts a turn by itself, so stdin stays open until they are done.
+    background: usize,
     stop_requested: bool,
     events: usize,
     tx: broadcast::Sender<(usize, RunEvent)>,
@@ -90,7 +93,7 @@ struct Live {
 
 pub struct Supervisor {
     pub cfg: Config,
-    live: Mutex<HashMap<String, Live>>,
+    live: Arc<Mutex<HashMap<String, Live>>>,
     /// Last usage events seen, per account.
     quota: Mutex<HashMap<String, Vec<RunEvent>>>,
     /// The merge queue, shipped one job at a time by `run_queue`.
@@ -137,7 +140,7 @@ impl Supervisor {
         let queue = pit_core::queue::load(&cfg.home);
         Arc::new(Self {
             cfg,
-            live: Mutex::new(HashMap::new()),
+            live: Arc::new(Mutex::new(HashMap::new())),
             quota: Mutex::new(HashMap::new()),
             queue: Mutex::new(queue),
             queue_wake: tokio::sync::Notify::new(),
@@ -438,6 +441,7 @@ impl Supervisor {
                 stdin: None,
                 sent: 0,
                 results: 0,
+                background: 0,
                 stop_requested: false,
                 events: 0,
                 tx,
@@ -630,6 +634,7 @@ impl Supervisor {
                 while let Ok(Some(line)) = lines.next_line().await {
                     let _ = writeln!(raw, "{line}");
                     let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                    me.note_background(&id, &v);
                     for ev in runs::read_claude_line(&v) {
                         let mut ok = None;
                         me.absorb(&id, &ev, &mut ok).await;
@@ -709,6 +714,14 @@ impl Supervisor {
     async fn absorb(&self, id: &str, ev: &RunEvent, finished_ok: &mut Option<bool>) {
         match ev {
             RunEvent::Started { model, session } => {
+                // A turn nobody asked for (a background task reported back after the last
+                // result): it ends with a result like a message would, so count it as one.
+                if let Some(l) = self.live.lock().unwrap().get_mut(id)
+                    && l.results > 0
+                    && l.results >= l.sent
+                {
+                    l.sent += 1;
+                }
                 let (model, session) = (model.clone(), session.clone());
                 self.update(id, move |m| {
                     m.model = Some(model);
@@ -757,20 +770,62 @@ impl Supervisor {
                 if let Some(h) = self.get(id).ok().and_then(|m| m.handoff) {
                     let _ = fs::write(self.dir(id).join("handoff.json"), serde_json::to_string_pretty(&h).unwrap_or_default());
                 }
-                // Every message answered: close stdin so the session ends.
+                if let Some(l) = self.live.lock().unwrap().get_mut(id) {
+                    l.results += 1;
+                }
+                self.close_when_idle(id);
+            }
+            _ => {}
+        }
+    }
+
+    /// Tracks the background tasks Claude Code reports, and lets the session end once the last
+    /// one is done and nothing else is pending.
+    fn note_background(&self, id: &str, v: &Value) {
+        if v.get("type").and_then(Value::as_str) != Some("system")
+            || v.get("subtype").and_then(Value::as_str) != Some("background_tasks_changed")
+        {
+            return;
+        }
+        let n = v.get("tasks").and_then(Value::as_array).map_or(0, Vec::len);
+        if let Some(l) = self.live.lock().unwrap().get_mut(id) {
+            l.background = n;
+        }
+        if n == 0 {
+            self.close_when_idle(id);
+        }
+    }
+
+    /// Closes stdin, which is how a stream-json session ends, once the session is idle: every
+    /// message answered, no background task left, and no new turn for a moment. Claude Code can
+    /// start a turn by itself right after a result (a task it waited on reported back); closing
+    /// at once would leave that turn unable to hear the person. A background task that never
+    /// ends (a dev server) keeps it open for at most a quarter of an hour.
+    fn close_when_idle(&self, id: &str) {
+        const GRACE: Duration = Duration::from_secs(2);
+        const BACKGROUND_WAIT: Duration = Duration::from_secs(15 * 60);
+        let (live, id) = (Arc::clone(&self.live), id.to_owned());
+        tokio::spawn(async move {
+            let since = tokio::time::Instant::now();
+            loop {
+                tokio::time::sleep(GRACE).await;
                 let stdin = {
-                    let mut live = self.live.lock().unwrap();
-                    live.get_mut(id).and_then(|l| {
-                        l.results += 1;
-                        (l.results >= l.sent).then(|| l.stdin.take()).flatten()
-                    })
+                    let mut live = live.lock().unwrap();
+                    let Some(l) = live.get_mut(&id) else { return };
+                    if l.results == 0 || l.results < l.sent {
+                        return; // working again: its next result checks once more
+                    }
+                    if l.background > 0 && since.elapsed() < BACKGROUND_WAIT {
+                        continue;
+                    }
+                    l.stdin.take()
                 };
                 if let Some(mut s) = stdin {
                     let _ = s.shutdown().await;
                 }
+                return;
             }
-            _ => {}
-        }
+        });
     }
 
     /// The agent asks to use a tool no rule allows. Answers at once when a rule of this run or of
@@ -1271,7 +1326,7 @@ impl Supervisor {
         let (tx, _) = broadcast::channel(1024);
         self.live.lock().unwrap().insert(
             id.clone(),
-            Live { meta, stdin: None, sent: 0, results: 0, stop_requested: false, events: 0, tx, rules: Vec::new(), limited: false, pending: HashMap::new() },
+            Live { meta, stdin: None, sent: 0, results: 0, background: 0, stop_requested: false, events: 0, tx, rules: Vec::new(), limited: false, pending: HashMap::new() },
         );
 
         let mut cmd = Command::new(&self.cfg.claude_bin);
@@ -1351,6 +1406,7 @@ impl Supervisor {
                 };
                 let _ = writeln!(raw, "{line}");
                 let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                self.note_background(&id, &v);
                 if v.get("type").and_then(Value::as_str) == Some("result") {
                     last = Some(line.clone());
                 }
