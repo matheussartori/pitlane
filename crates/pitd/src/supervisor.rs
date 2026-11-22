@@ -6,6 +6,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -52,6 +53,13 @@ pub struct StartOpts {
     pub round: u32,
     /// Leave Pitlane's map out of the first message (to compare runs with and without it).
     pub no_brief: bool,
+    /// Run all's "Into": the branch a card without a lane lands in. Its lane starts from it
+    /// (when it is a lane) and merges back into it.
+    pub into: Option<String>,
+    /// Work directly in `into`'s worktree, without a lane of its own.
+    pub direct: bool,
+    /// What the person said for the whole batch (Run all's "when it is all done"), passed on.
+    pub instructions: Option<String>,
 }
 
 /// What a person decides about a card in review.
@@ -88,6 +96,13 @@ pub struct Supervisor {
     /// The merge queue, shipped one job at a time by `run_queue`.
     queue: Mutex<Vec<pit_core::queue::ShipJob>>,
     queue_wake: tokio::sync::Notify,
+    /// Bumped by Stop all: work queued before it (analyses waiting for a slot) never starts.
+    epoch: AtomicU64,
+    /// Cards being started (routing can take a while): a second start of the same card waits out.
+    starting: Mutex<std::collections::HashSet<(PathBuf, u32)>>,
+    /// Analyses across every request: three at a time, one per card.
+    analysis_gate: Arc<tokio::sync::Semaphore>,
+    analysing: Mutex<std::collections::HashSet<(PathBuf, u32)>>,
 }
 
 /// What a side session needs: who it is for, where it runs, and Claude Code's arguments
@@ -105,6 +120,8 @@ struct Side {
     args: Vec<String>,
     prompt: String,
     limit: Duration,
+    /// Give it Pitlane's board tools too (`pit mcp`: add_card, list_cards, update_card, add_note).
+    board: bool,
 }
 
 pub struct Subscription {
@@ -122,6 +139,10 @@ impl Supervisor {
             quota: Mutex::new(HashMap::new()),
             queue: Mutex::new(queue),
             queue_wake: tokio::sync::Notify::new(),
+            epoch: AtomicU64::new(0),
+            starting: Mutex::new(Default::default()),
+            analysis_gate: Arc::new(tokio::sync::Semaphore::new(3)),
+            analysing: Mutex::new(Default::default()),
         })
     }
 
@@ -134,6 +155,19 @@ impl Supervisor {
         let mut n = 0;
         for mut m in self.list_disk()? {
             if m.state.is_live() {
+                // An agent the last daemon left behind (it crashed or was killed) must not keep
+                // editing the worktree with nobody watching: end its group, if it is still ours.
+                if let Some(pid) = m.pid
+                    && still_agent(pid)
+                {
+                    signal(pid, libc::SIGTERM);
+                    std::thread::sleep(Duration::from_millis(300));
+                    signal(pid, libc::SIGKILL);
+                }
+                if m.kind == SessionKind::Run {
+                    let _ = set_card_state(&m, CardState::Ready, &self.cfg.home);
+                }
+                m.pid = None;
                 m.state = RunState::Interrupted;
                 m.ended_at.get_or_insert(now_secs());
                 m.error.get_or_insert_with(|| "the daemon stopped while this run was open".into());
@@ -340,7 +374,13 @@ impl Supervisor {
             if let Some(l) = live.values().find(|l| l.meta.kind == SessionKind::Run && l.meta.repo == r.root && l.meta.card == card) {
                 bail!("card #{card} is already running ({})", l.meta.id);
             }
+            // Claimed under the same lock as the check, released once the run is in `live`.
+            if !self.starting.lock().unwrap().insert((r.root.clone(), card)) {
+                bail!("card #{card} is already starting");
+            }
         }
+        let claim = (r.root.clone(), card);
+        let _claim = Release(&self.starting, claim);
         let prev = resume.as_deref().map(|p| self.get(p)).transpose()?;
         let (choice, reason, exhausted) = self.choose(&r, prev.as_ref(), &opts)?;
         let (session_id, resumed_from) = match &prev {
@@ -436,7 +476,7 @@ impl Supervisor {
         choice: Choice,
         opts: StartOpts,
     ) -> Result<()> {
-        let StartOpts { handoff_from, message, no_brief, .. } = opts;
+        let StartOpts { handoff_from, message, no_brief, into, direct, instructions, .. } = opts;
         // Worktree and branch: blocking git work, off the async threads.
         let home = self.cfg.home.clone();
         let me = Arc::clone(&self);
@@ -445,9 +485,19 @@ impl Supervisor {
         let prev_texts = handoff_from.as_deref().map(|p| last_words(&self.read_timeline(p, 0))).unwrap_or_default();
         let repo_for_prep = repo.clone();
         let prep = tokio::task::spawn_blocking(move || {
-            prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), !no_brief, |t| me.emit(&rid, RunEvent::Note { text: t }))
+            prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), !no_brief, into.as_deref(), direct, |t| me.emit(&rid, RunEvent::Note { text: t }))
         })
         .await??;
+        // One agent per worktree: two in the same checkout would edit over each other.
+        if let Some(other) = self.live.lock().unwrap().values().find(|l| l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.worktree == prep.worktree) {
+            bail!("#{} is already working in {}; this card starts when it ends", other.meta.card, prep.worktree.display());
+        }
+        let mut prep = prep;
+        if let Some(i) = instructions.as_deref().map(str::trim).filter(|i| !i.is_empty()) {
+            let end = "\nWhen you finish, end with the handoff.\n";
+            let at = prep.briefing.rfind(end).unwrap_or(prep.briefing.len());
+            prep.briefing.insert_str(at, &format!("\n## What the person asked for this whole batch\n\nFollow what applies while you work this card (what is for the very end is done later, not by you):\n\n{i}\n"));
+        }
         let base_sha = pit_core::git::Git::new(&prep.worktree).run(&["rev-parse", "HEAD"]).ok();
         self.update(&id, |m| {
             m.branch = prep.branch.clone();
@@ -456,6 +506,20 @@ impl Supervisor {
             m.brief = prep.brief.clone();
         });
 
+        if self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested) {
+            self.emit(&id, RunEvent::Note { text: "Stopped before the agent started".into() });
+            let mut settled = self.get(&id)?;
+            settled.state = RunState::Stopped;
+            let home = self.cfg.home.clone();
+            let _ = tokio::task::spawn_blocking(move || settle_card(&settled, &home)).await;
+            self.update(&id, |m| {
+                m.state = RunState::Stopped;
+                m.ended_at = Some(now_secs());
+            });
+            self.emit(&id, RunEvent::Exited { code: None, state: RunState::Stopped });
+            self.live.lock().unwrap().remove(&id);
+            return Ok(());
+        }
         let session = self.get(&id)?.session_id;
         let mut cmd = Command::new(&self.cfg.claude_bin);
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]);
@@ -568,6 +632,14 @@ impl Supervisor {
         };
 
         let status = child.wait().await?;
+        // The agent is gone: its pid may be reused, and what it left in its group (a server, a
+        // watcher) must not outlive it.
+        if let Some(l) = self.live.lock().unwrap().get_mut(&id) {
+            l.meta.pid = None;
+        }
+        if let Some(pid) = pid {
+            end_group(pid);
+        }
         // A tool's child process can keep stdout open after the agent is gone: read what is
         // left for a moment, then let go.
         let mut reader = reader;
@@ -579,7 +651,7 @@ impl Supervisor {
             _ => Vec::new(),
         };
         let finished_ok = *finished.lock().unwrap();
-        let stopped = self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested);
+        let stopped = self.stop_requested(&id);
         let limited = !stopped && self.live.lock().unwrap().get(&id).is_some_and(|l| l.limited);
         if limited {
             return self.hand_off(id, repo, card, status.code()).await;
@@ -599,6 +671,8 @@ impl Supervisor {
         if state == RunState::Done && !blocked {
             self.verify(&id, card).await;
         }
+        // Stopped while it was being checked: back to ready, not to review.
+        let state = if self.stop_requested(&id) { RunState::Stopped } else { state };
         // The card follows the run first (a handoff moves it to review, its questions go to the
         // Inbox), so anyone who sees the run ended also sees where the card went.
         let mut settled = self.get(&id)?;
@@ -852,8 +926,11 @@ impl Supervisor {
 
         for cmd in &cfg.commands {
             self.emit(id, RunEvent::Note { text: format!("Checking: {cmd}") });
-            let (wt, c) = (meta.worktree.clone(), cmd.clone());
-            let proof = tokio::task::spawn_blocking(move || pit_core::verify::run_proof(&wt, &c)).await.unwrap_or_else(|e| pit_core::verify::Proof {
+            if self.stop_requested(id) {
+                break;
+            }
+            let (wt, c, me, rid) = (meta.worktree.clone(), cmd.clone(), Arc::clone(self), id.to_owned());
+            let proof = tokio::task::spawn_blocking(move || pit_core::verify::run_proof(&wt, &c, &|| me.stop_requested(&rid))).await.unwrap_or_else(|e| pit_core::verify::Proof {
                 command: cmd.clone(),
                 ok: false,
                 code: None,
@@ -868,7 +945,7 @@ impl Supervisor {
             self.update(id, move |m| m.proofs_ok = Some(ok));
         }
 
-        if cfg.judge {
+        if cfg.judge && !self.stop_requested(id) {
             let model = cfg.judge_model.clone();
             self.emit(id, RunEvent::Note { text: format!("The judge reads the diff ({}), in a session of its own.", model.as_deref().unwrap_or("default model")) });
             let judge = self.judge(&meta, &r, card, &v.proofs, model.clone()).await;
@@ -904,9 +981,7 @@ impl Supervisor {
         };
         let routing = Routing::load(&self.cfg.home).ok();
         let account = routing.as_ref().and_then(|rt| rt.account(&meta.account).cloned());
-        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default", "--permission-prompts", "none"]
-            .map(str::to_owned)
-            .to_vec();
+        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default"].map(str::to_owned).to_vec();
         args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)".into(), "--max-turns".into(), "30".into()]);
         args.extend(["--append-system-prompt".into(), pit_core::verify::JUDGE_RULES.into(), "--json-schema".into(), pit_core::verify::verdict_schema().to_string()]);
         if let Some(m) = &model {
@@ -928,6 +1003,7 @@ impl Supervisor {
             args,
             prompt,
             limit: Duration::from_secs(20 * 60),
+            board: false,
         };
         match self.side_session(side).await {
             Ok(stdout) => match pit_core::verify::read_judge(&stdout) {
@@ -954,18 +1030,25 @@ impl Supervisor {
             .into_iter()
             .find(|c| c.kind != accounts::Kind::ApiKey);
         let model = r.flow.verify.judge_model.clone();
-        let todo: Vec<cards::Card> = ids
-            .into_iter()
-            .filter_map(|id| cards::get(&r, id).ok())
-            .filter(|c| c.analyzed.is_none() && c.state != CardState::Done)
-            .collect();
-        let gate = Arc::new(tokio::sync::Semaphore::new(3));
+        let batch: Vec<cards::Card> = ids.into_iter().filter_map(|id| cards::get(&r, id).ok()).collect();
+        let todo: Vec<cards::Card> = batch.iter().filter(|c| c.analyzed.is_none() && c.state != CardState::Done).cloned().collect();
+        let gate = Arc::clone(&self.analysis_gate);
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        // A card already being analysed (another Run all) is not analysed twice.
+        let todo: Vec<cards::Card> = {
+            let mut busy = self.analysing.lock().unwrap();
+            todo.into_iter().filter(|c| busy.insert((r.root.clone(), c.id))).collect()
+        };
         let mut tasks = Vec::new();
         for card in todo {
             let (gate, me, root, choice, model) = (gate.clone(), self.clone(), r.root.clone(), choice.clone(), model.clone());
-            let prompt = pit_core::analyze::prompt(&r, &card);
+            let prompt = pit_core::analyze::prompt(&r, &card, &batch);
             tasks.push(tokio::spawn(async move {
+                let _busy = Release(&me.analysing, (root.clone(), card.id));
                 let _slot = gate.acquire().await;
+                if me.epoch.load(Ordering::SeqCst) != epoch {
+                    return (card.id, Err(anyhow::anyhow!("stopped before it started")));
+                }
                 let out = me.analyst(&root, &card, &prompt, choice.as_ref(), model.as_deref()).await;
                 (card.id, out)
             }));
@@ -986,9 +1069,7 @@ impl Supervisor {
     }
 
     async fn analyst(&self, repo: &Path, card: &cards::Card, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
-        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default", "--permission-prompts", "none"]
-            .map(str::to_owned)
-            .to_vec();
+        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default"].map(str::to_owned).to_vec();
         args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)".into(), "--max-turns".into(), "25".into()]);
         args.extend(["--append-system-prompt".into(), pit_core::analyze::RULES.into(), "--json-schema".into(), pit_core::analyze::schema().to_string()]);
         if let Some(m) = model {
@@ -1006,10 +1087,113 @@ impl Supervisor {
             model: model.map(str::to_owned),
             args,
             prompt: prompt.to_owned(),
-            limit: Duration::from_secs(10 * 60),
+            limit: Duration::from_secs(20 * 60),
+            board: false,
         };
         let stdout = self.side_session(side).await.map_err(|e| anyhow::anyhow!("the analysis {e:#}"))?;
         pit_core::analyze::read(&stdout)
+    }
+
+    /// Run all's closing step: one Claude Code session in the repository (or the target branch's
+    /// worktree) that does what the person asked for when everything is done. It edits files and
+    /// asks through Pitlane for anything no rule allows. Waits for it; returns its summary.
+    pub async fn finish(self: &Arc<Self>, repo: PathBuf, ids: Vec<u32>, instructions: String, into: Option<String>) -> Result<Value> {
+        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let cwd = match into.as_deref() {
+            Some(t) if !r.flow.flow.is_trunk(t) => actions::ensure_worktree(&r, t).unwrap_or_else(|_| r.root.clone()),
+            _ => r.root.clone(),
+        };
+        let routing = Routing::load(&self.cfg.home)?;
+        let choice = routing.choices(&r.root, &home_dir(), &self.cfg.home)?.into_iter().find(|c| c.kind != accounts::Kind::ApiKey);
+        let mut tools: Vec<String> = RUN_BASE_TOOLS.iter().map(|s| s.to_string()).collect();
+        tools.extend(r.flow.run.allow.iter().cloned());
+        let args: Vec<String> = vec![
+            "--setting-sources".into(),
+            "project,local".into(),
+            "--permission-mode".into(),
+            "acceptEdits".into(),
+            "--allowedTools".into(),
+            tools.join(","),
+            "--max-turns".into(),
+            "80".into(),
+        ];
+        let side = Side {
+            kind: SessionKind::Finish,
+            repo: r.root.clone(),
+            cwd,
+            card: 0,
+            card_title: "When it is all done".into(),
+            parent: None,
+            account: choice.as_ref().map(|c| c.account.clone()).unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
+            config_dir: choice.as_ref().and_then(|c| c.config_dir.clone()),
+            model: None,
+            args,
+            prompt: pit_core::report::finish_prompt(&r, &ids, &instructions, into.as_deref()),
+            limit: Duration::from_secs(90 * 60),
+            board: false,
+        };
+        let id_hint = now_secs();
+        let out = self.side_session(side).await;
+        // The session's id: the newest finish session of this repository.
+        let run = self.sessions(Some(&r.root))?.into_iter().find(|m| m.kind == SessionKind::Finish && m.started_at >= id_hint).map(|m| m.id);
+        Ok(match out {
+            Ok(line) => {
+                let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+                serde_json::json!({
+                    "run": run,
+                    "ok": !v.get("is_error").and_then(Value::as_bool).unwrap_or(false),
+                    "summary": v.get("result").and_then(Value::as_str),
+                    "cost_usd": v.get("total_cost_usd").and_then(Value::as_f64),
+                })
+            }
+            Err(e) => serde_json::json!({ "run": run, "ok": false, "summary": format!("{e:#}") }),
+        })
+    }
+
+    /// The Board's assistant: what the person typed or said ("make cards from this list") goes to
+    /// a Claude Code session in the repository that reads the code and writes cards with
+    /// Pitlane's board tools. It runs in the background, in view in the Agents dock; people can
+    /// keep talking to it while it works.
+    pub fn assist(self: &Arc<Self>, repo: PathBuf, text: String) -> Result<()> {
+        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        if self.cfg.pit_bin.is_none() {
+            bail!("the board assistant needs the pit executable for its board tools");
+        }
+        let routing = Routing::load(&self.cfg.home)?;
+        let choice = routing.choices(&r.root, &home_dir(), &self.cfg.home)?.into_iter().find(|c| c.kind != accounts::Kind::ApiKey);
+        let tools = "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*),mcp__pitlane__add_card,mcp__pitlane__list_cards,mcp__pitlane__get_card,mcp__pitlane__update_card,mcp__pitlane__add_note,mcp__pitlane__brief";
+        let args: Vec<String> = vec![
+            "--setting-sources".into(),
+            "project,local".into(),
+            "--permission-mode".into(),
+            "default".into(),
+            "--allowedTools".into(),
+            tools.into(),
+            "--max-turns".into(),
+            "60".into(),
+            "--append-system-prompt".into(),
+            ASSIST_RULES.into(),
+        ];
+        let side = Side {
+            kind: SessionKind::Assist,
+            repo: r.root.clone(),
+            cwd: r.root.clone(),
+            card: 0,
+            card_title: "Board assistant".into(),
+            parent: None,
+            account: choice.as_ref().map(|c| c.account.clone()).unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
+            config_dir: choice.as_ref().and_then(|c| c.config_dir.clone()),
+            model: None,
+            args,
+            prompt: text,
+            limit: Duration::from_secs(30 * 60),
+            board: true,
+        };
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = me.side_session(side).await;
+        });
+        Ok(())
     }
 
     /// A read-only Claude Code session beside the runs (analysis, judge), recorded and followed
@@ -1021,6 +1205,8 @@ impl Supervisor {
             SessionKind::Analysis => "analysis",
             SessionKind::Judge => "judge",
             SessionKind::Run => "run",
+            SessionKind::Finish => "finish",
+            SessionKind::Assist => "assist",
         };
         let id = format!("{}-{tag}-{now}-{}", side.card, &uuid::Uuid::new_v4().simple().to_string()[..4]);
         let meta = RunMeta {
@@ -1072,6 +1258,19 @@ impl Supervisor {
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
             .args(["--session-id", &self.get(&id)?.session_id])
             .args(&side.args);
+        // Like a run: what no rule allows (a read outside the repository, say) is asked to a
+        // person in Pitlane, instead of being denied with nobody to ask.
+        if let Some(pit) = &self.cfg.pit_bin {
+            let mut mcp = serde_json::json!({ "mcpServers": { "pitlane_run": { "command": pit, "args": ["mcp", "--approve", &id] } } });
+            if side.board {
+                mcp["mcpServers"]["pitlane"] = serde_json::json!({ "command": pit, "args": ["mcp"] });
+            }
+            cmd.args(["--mcp-config", &mcp.to_string()])
+                .args(["--permission-prompts", "host", "--permission-prompt-tool", "mcp__pitlane_run__approve"])
+                .env("MCP_TOOL_TIMEOUT", "86400000");
+        } else {
+            cmd.args(["--permission-prompts", "none"]);
+        }
         if let Some(dir) = &side.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }
@@ -1107,7 +1306,16 @@ impl Supervisor {
             let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
             let mut last = None::<String>;
             let mut ok = None::<bool>;
-            while let Ok(Some(line)) = lines.next_line().await {
+            let pid = child.id();
+            // Read until the agent exits (not until the pipe closes: a child it left could hold
+            // that open), then what is left for a moment.
+            let mut status = None;
+            loop {
+                let line = tokio::select! {
+                    l = lines.next_line() => match l { Ok(Some(l)) => l, _ => break },
+                    st = child.wait(), if status.is_none() => { status = Some(st?); continue; }
+                    _ = tokio::time::sleep(Duration::from_secs(3)), if status.is_some() => break,
+                };
                 let _ = writeln!(raw, "{line}");
                 let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
                 if v.get("type").and_then(Value::as_str) == Some("result") {
@@ -1120,7 +1328,16 @@ impl Supervisor {
                     self.emit(&id, ev);
                 }
             }
-            let status = child.wait().await?;
+            let status = match status {
+                Some(s) => s,
+                None => child.wait().await?,
+            };
+            if let Some(l) = self.live.lock().unwrap().get_mut(&id) {
+                l.meta.pid = None;
+            }
+            if let Some(pid) = pid {
+                end_group(pid);
+            }
             let stderr = err_task.await.unwrap_or_default();
             if !stderr.trim().is_empty() {
                 let _ = fs::write(self.dir(&id).join("stderr.log"), &stderr);
@@ -1147,7 +1364,7 @@ impl Supervisor {
             Ok(Err(e)) => (RunState::Failed, None, Err(e)),
             Err(_) => {
                 if let Some(pid) = self.get(&id).ok().and_then(|m| m.pid) {
-                    signal(pid, libc::SIGTERM);
+                    end_group(pid);
                 }
                 (RunState::Failed, None, Err(anyhow::anyhow!("took longer than {} minutes", side.limit.as_secs() / 60)))
             }
@@ -1197,7 +1414,13 @@ impl Supervisor {
             ReviewAction::Approve => {
                 // Approved work joins the merge queue; the card moves when its lane lands.
                 let branch = c.lane.clone().context("this card has no lane to ship")?;
-                let job = self.enqueue(&repo, &branch, None)?;
+                // Worked directly in its target: the work is already there.
+                if c.direct() {
+                    let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+                    cards::update(&r, card, CardPatch { state: Some(CardState::Done), ..Default::default() })?;
+                    return Ok(serde_json::json!({ "card": card, "landed_in": branch }));
+                }
+                let job = self.enqueue(&repo, &branch, c.target.as_deref())?;
                 Ok(serde_json::json!({ "card": card, "job": job, "shipped_to": job.target }))
             }
         }
@@ -1257,6 +1480,12 @@ impl Supervisor {
     }
 
     /// Takes a job out of line (not one that is shipping right now).
+    pub fn resume_queue(&self) -> Result<()> {
+        pit_core::queue::set_paused(&self.cfg.home, false)?;
+        self.queue_wake.notify_one();
+        Ok(())
+    }
+
     pub fn dequeue(&self, id: &str) -> Result<()> {
         use pit_core::queue::JobState;
         let mut q = self.queue.lock().unwrap();
@@ -1278,6 +1507,10 @@ impl Supervisor {
     async fn run_queue(self: Arc<Self>) {
         use pit_core::queue::{JobState, Outcome};
         loop {
+            if pit_core::queue::paused(&self.cfg.home) {
+                self.queue_wake.notified().await;
+                continue;
+            }
             let next = {
                 let mut q = self.queue.lock().unwrap();
                 let pick = q.iter_mut().filter(|j| j.state == JobState::Queued).min_by_key(|j| j.queued_at);
@@ -1367,6 +1600,71 @@ impl Supervisor {
         Ok(())
     }
 
+    fn stop_requested(&self, id: &str) -> bool {
+        self.live.lock().unwrap().get(id).is_some_and(|l| l.stop_requested)
+    }
+
+    /// Stops every session (runs, analyses, judges) and every analysis still waiting for a slot.
+    /// SIGINT first, SIGTERM after 4 s, SIGKILL after 8 s, always to the whole process group.
+    pub fn stop_all(self: &Arc<Self>) -> usize {
+        self.stop_where(|_| true)
+    }
+
+    /// Stops the sessions that match (and the analyses still waiting for a slot).
+    pub fn stop_where(self: &Arc<Self>, which: impl Fn(&RunMeta) -> bool) -> usize {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        let pids: Vec<(String, u32)> = {
+            let mut live = self.live.lock().unwrap();
+            live.iter_mut()
+                .filter(|(_, l)| which(&l.meta))
+                .filter_map(|(id, l)| {
+                    l.stop_requested = true;
+                    l.meta.pid.map(|p| (id.clone(), p))
+                })
+                .collect()
+        };
+        let n = pids.len();
+        for (_, pid) in &pids {
+            signal(*pid, libc::SIGINT);
+        }
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            for (after, sig) in [(4, libc::SIGTERM), (4, libc::SIGKILL)] {
+                tokio::time::sleep(Duration::from_secs(after)).await;
+                let live: Vec<String> = me.live.lock().unwrap().keys().cloned().collect();
+                for (id, pid) in &pids {
+                    if live.contains(id) {
+                        signal(*pid, sig);
+                    }
+                }
+            }
+        });
+        n
+    }
+
+    /// Stop all, wait for the sessions to go (at most 9 s), then end the daemon. Nothing it
+    /// started outlives it.
+    pub async fn shutdown(self: &Arc<Self>) {
+        // Work left in the merge queue waits for a person to resume it.
+        if self.queue.lock().unwrap().iter().any(|j| j.state.is_open()) {
+            let _ = pit_core::queue::set_paused(&self.cfg.home, true);
+        }
+        self.stop_all();
+        for _ in 0..90 {
+            if self.live.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        for l in self.live.lock().unwrap().values() {
+            if let Some(pid) = l.meta.pid {
+                signal(pid, libc::SIGKILL);
+            }
+        }
+        let _ = fs::remove_file(runs::socket_path(&self.cfg.home));
+        std::process::exit(0)
+    }
+
     /// SIGINT ends the current turn cleanly; if the agent is still there after 10 s, SIGTERM.
     pub fn stop(self: &Arc<Self>, id: &str) -> Result<()> {
         let pid = {
@@ -1375,20 +1673,59 @@ impl Supervisor {
             l.stop_requested = true;
             l.meta.pid
         };
-        let Some(pid) = pid else {
-            bail!("run {id} is still preparing its worktree; stop it once the agent starts");
-        };
+        // Sessions it opened (its judge) stop with it.
+        let children: Vec<String> = self.live.lock().unwrap().values().filter(|l| l.meta.parent.as_deref() == Some(id)).map(|l| l.meta.id.clone()).collect();
+        for c in children {
+            let _ = self.stop(&c);
+        }
+        // Still preparing its worktree, or being checked: `drive` and `verify` see the request.
+        let Some(pid) = pid else { return Ok(()) };
         signal(pid, libc::SIGINT);
         let me = Arc::clone(self);
         let run = id.to_owned();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            if me.live.lock().unwrap().contains_key(&run) {
-                signal(pid, libc::SIGTERM);
+            let same = me.live.lock().unwrap().get(&run).is_some_and(|l| l.meta.pid == Some(pid));
+            if same {
+                end_group(pid);
             }
         });
         Ok(())
     }
+}
+
+const ASSIST_RULES: &str = "You are Pitlane's board assistant. The person tells you, typed or dictated (so expect \
+spoken phrasing and transcription slips), what work they want on this repository's board. You turn it into cards with \
+the pitlane tools: one card per piece of work someone could finish on its own, a short imperative title, and a spec in \
+markdown that says what and why, with acceptance in a line or two. Read the code when it helps you write a precise spec \
+(paths, names), but never change files and never do the work itself. Before adding, list the cards to avoid duplicates; \
+update an existing card instead when it is the same work. When they ask to change or annotate cards, do that. End with a \
+one-line summary per card you added or changed (#id and title).";
+
+/// Removes its key from the set when dropped.
+struct Release<'a>(&'a Mutex<std::collections::HashSet<(PathBuf, u32)>>, (PathBuf, u32));
+impl Drop for Release<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// Is that pid still a Claude Code process (and not a stranger who got the number)?
+fn still_agent(pid: u32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("claude"))
+        .unwrap_or(false)
+}
+
+/// SIGTERM to the whole group, SIGKILL a moment later, off the async threads.
+fn end_group(pid: u32) {
+    signal(pid, libc::SIGTERM);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        signal(pid, libc::SIGKILL);
+    });
 }
 
 /// Signals the agent's whole process group, like Ctrl-C in a terminal: the agent and the
@@ -1445,16 +1782,30 @@ fn last_words(timeline: &[(usize, RunEvent)]) -> String {
     texts.iter().rev().take(2).rev().cloned().collect::<Vec<_>>().join("\n\n")
 }
 
-fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &str)>, brief: bool, note: impl Fn(String)) -> Result<Prepared> {
+#[allow(clippy::too_many_arguments)]
+fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &str)>, brief: bool, into: Option<&str>, direct: bool, note: impl Fn(String)) -> Result<Prepared> {
     let r = Repo::open(repo, &home_dir(), home)?;
     let c = cards::get(&r, card)?;
-    let branch = match &c.lane {
-        Some(b) => b.clone(),
-        None => {
+    let into = into.filter(|b| !b.trim().is_empty());
+    let branch = match (&c.lane, into) {
+        (Some(b), _) => b.clone(),
+        (None, Some(t)) if direct => {
+            note(format!("Working directly in {t}"));
+            cards::update(&r, card, CardPatch { lane: Some(Some(t.to_owned())), target: Some(Some(t.to_owned())), ..Default::default() })?;
+            t.to_owned()
+        }
+        (None, _) => {
             let branch = format!("{}{}-{}", r.flow.run.branch_prefix, c.id, cards::slug(&c.title));
-            note(format!("Creating lane {branch} from {}/{}", r.flow.flow.remote, r.flow.flow.base));
-            actions::new_lane(&r, &branch, NewOptions { fetch: true, setup: true })?;
-            cards::update(&r, card, CardPatch { lane: Some(Some(branch.clone())), ..Default::default() })?;
+            let from = into.filter(|t| !r.flow.flow.is_trunk(t));
+            match from {
+                Some(f) => note(format!("Creating lane {branch} from {f}")),
+                None => note(format!("Creating lane {branch} from {}/{}", r.flow.flow.remote, r.flow.flow.base)),
+            }
+            actions::new_lane_from(&r, &branch, NewOptions { fetch: true, setup: true }, from)?;
+            cards::update(&r, card, CardPatch { lane: Some(Some(branch.clone())), target: Some(into.map(str::to_owned)), ..Default::default() })?;
+            if let Some(t) = into {
+                note(format!("It lands in {t} once you approve it"));
+            }
             branch
         }
     };

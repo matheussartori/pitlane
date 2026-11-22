@@ -2,7 +2,8 @@
 //! Speaks JSON, one message per line, on a Unix socket only this user can open.
 //!
 //! Requests: `ping`, `start {repo, card}`, `resume {run}`, `list {repo?}`, `get {run}`,
-//! `say {run, text}`, `stop {run}`, `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
+//! `say {run, text}`, `stop {run}`, `stop_all`, `shutdown`, `hold` (the app; its end stops all
+//! and ends the daemon), `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
 //! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
 //! `{i, event}` lines and ends with `{end: <run>}`.
 
@@ -58,6 +59,13 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
                 continue;
             }
         };
+        if req.get("op").and_then(Value::as_str) == Some("hold") {
+            // The desktop app holds this connection while it is open. When it closes (quit,
+            // crash, force quit), everything the daemon started stops and the daemon ends.
+            send(&mut write, &json!({ "ok": true })).await?;
+            while let Ok(Some(_)) = lines.next_line().await {}
+            sup.shutdown().await;
+        }
         if req.get("op").and_then(Value::as_str) == Some("follow") {
             // A follow takes over the connection until the run ends.
             return follow(&sup, &req, &mut write).await;
@@ -90,12 +98,31 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let card = req.get("card").and_then(Value::as_u64).context("card is required")?;
             let allow_api_key = req.get("allow_api_key").and_then(Value::as_bool).unwrap_or(false);
             let no_brief = req.get("no_brief").and_then(Value::as_bool).unwrap_or(false);
-            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, ..Default::default() })? })
+            let into = req.get("into").and_then(Value::as_str).map(str::to_owned);
+            let direct = req.get("direct").and_then(Value::as_bool).unwrap_or(false);
+            let instructions = req.get("instructions").and_then(Value::as_str).map(str::to_owned);
+            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, into, direct, instructions, ..Default::default() })? })
         }
         "analyze" => {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
             let ids: Vec<u32> = serde_json::from_value(req.get("cards").cloned().context("cards is required")?)?;
             sup.analyze(repo, ids).await?
+        }
+        "finish" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let ids: Vec<u32> = serde_json::from_value(req.get("cards").cloned().context("cards is required")?)?;
+            let instructions = req.get("instructions").and_then(Value::as_str).context("instructions is required")?.to_owned();
+            let into = req.get("into").and_then(Value::as_str).map(str::to_owned);
+            sup.finish(repo, ids, instructions, into).await?
+        }
+        "assist" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let text = req.get("text").and_then(Value::as_str).context("text is required")?.trim().to_owned();
+            if text.is_empty() {
+                bail!("say what you want on the board");
+            }
+            sup.assist(repo, text)?;
+            json!({ "ok": true })
         }
         "resume" => {
             let prev = sup.get(run_arg(req)?)?;
@@ -117,6 +144,13 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
         }
         "stop" => {
             sup.stop(run_arg(req)?)?;
+            json!({ "ok": true })
+        }
+        "stop_all" => json!({ "stopped": sup.stop_all() }),
+        "stop_analyses" => json!({ "stopped": sup.stop_where(|m| m.kind == pit_core::runs::SessionKind::Analysis) }),
+        "shutdown" => {
+            let sup = Arc::clone(sup);
+            tokio::spawn(async move { sup.shutdown().await });
             json!({ "ok": true })
         }
         "quota" => json!({ "quota": sup.quota() }),
@@ -141,6 +175,10 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
         "queue" => {
             let repo = req.get("repo").and_then(Value::as_str).map(PathBuf::from);
             json!({ "jobs": sup.queue_list(repo.as_deref()) })
+        }
+        "queue_resume" => {
+            sup.resume_queue()?;
+            json!({ "ok": true })
         }
         "dequeue" => {
             sup.dequeue(req.get("id").and_then(Value::as_str).context("id is required")?)?;

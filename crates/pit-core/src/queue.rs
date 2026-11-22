@@ -60,6 +60,13 @@ pub enum Outcome {
 /// refuses (someone got there first) is planned again once against the new tip.
 pub fn ship(repo_path: &Path, home: &Path, pitlane_home: &Path, branch: &str, target: &str) -> Result<Outcome> {
     let repo = Repo::open(repo_path, home, pitlane_home)?;
+    // Into a lane (Run all into a feature branch): a local merge in its worktree, no push.
+    if !repo.flow.flow.is_trunk(target) {
+        return Ok(match actions::land_local(&repo, branch, target)? {
+            Ok(sha) => Outcome::Shipped { merge_sha: Some(sha) },
+            Err(files) => Outcome::Conflict { files },
+        });
+    }
     let mut attempt = 0;
     loop {
         attempt += 1;
@@ -82,10 +89,22 @@ pub fn ship(repo_path: &Path, home: &Path, pitlane_home: &Path, branch: &str, ta
 pub fn move_card(repo_path: &Path, home: &Path, pitlane_home: &Path, branch: &str, target: &str) -> Result<Option<u32>> {
     let repo = Repo::open(repo_path, home, pitlane_home)?;
     let (all, _) = cards::list(&repo)?;
-    let Some(card) = all.into_iter().find(|c| c.lane.as_deref() == Some(branch)) else { return Ok(None) };
-    let state = if target == repo.flow.flow.production { CardState::Done } else { CardState::InDev };
+    // Cards worked directly in this branch already landed; they do not move with it.
+    let Some(card) = all.into_iter().find(|c| c.lane.as_deref() == Some(branch) && !c.direct()) else { return Ok(None) };
+    let flow = &repo.flow.flow;
+    let state = if target == flow.production || !flow.is_trunk(target) { CardState::Done } else { CardState::InDev };
     cards::update(&repo, card.id, CardPatch { state: Some(state), ..Default::default() })?;
     Ok(Some(card.id))
+}
+
+/// The queue pauses when Pitlane closes with work in it; nothing ships until a person resumes it.
+pub fn paused(pitlane_home: &Path) -> bool {
+    pitlane_home.join("queue.paused").exists()
+}
+
+pub fn set_paused(pitlane_home: &Path, on: bool) -> std::io::Result<()> {
+    let f = pitlane_home.join("queue.paused");
+    if on { std::fs::write(f, b"") } else { std::fs::remove_file(f).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) }
 }
 
 /// `~/.pitlane/queue.json`: the queue survives a daemon restart (a job left shipping goes back to queued).

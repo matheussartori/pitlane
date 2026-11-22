@@ -173,6 +173,12 @@ export interface Card {
   tags?: string[];
   rank?: number;
   analyzed?: string;
+  /** Where its work lands (Run all's Into); equal to lane when worked directly there. */
+  target?: string;
+  /** Cards that must land first (from the analysis). */
+  after?: number[];
+  /** Shared parts of the code it changes; cards sharing one never run together. */
+  areas?: string[];
   notes?: CardNote[];
   created: string;
   updated: string;
@@ -180,6 +186,40 @@ export interface Card {
   body: string;
   open_questions: number;
   file: string;
+}
+
+export interface Finish {
+  run: string | null;
+  ok: boolean;
+  summary: string | null;
+  cost_usd: number | null;
+}
+
+export interface Report {
+  id: string;
+  repo: string;
+  repo_name: string;
+  started_at: number;
+  ended_at: number;
+  into: string | null;
+  direct: boolean;
+  instructions: string;
+  cards: {
+    id: number;
+    title: string;
+    state: string;
+    lane: string | null;
+    target: string | null;
+    summary: string | null;
+    verdict: string | null;
+    runs: number;
+    cost_usd: number;
+    duration_ms: number;
+    files: { path: string; added: number; removed: number }[];
+  }[];
+  sessions: number;
+  cost_usd: number;
+  finish: Finish | null;
 }
 
 export interface CardList {
@@ -292,7 +332,7 @@ export interface RunMeta {
   parent?: string | null;
 }
 
-export type SessionKind = "run" | "analysis" | "judge";
+export type SessionKind = "run" | "analysis" | "judge" | "finish";
 
 export interface Quota {
   /** The account the meters are about: this repository's. */
@@ -536,7 +576,16 @@ export const api = {
   cards: (path: string) => invoke<CardList>("cards_list", { path }),
   runs: (path: string) => invoke<RunMeta[]>("runs_list", { path }),
   sessions: (path: string) => invoke<RunMeta[]>("sessions_list", { path }),
-  runStart: (path: string, card: number, allowApiKey = false) => invoke<RunMeta>("run_start", { path, card, allowApiKey }),
+  runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null) =>
+    invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions }),
+  runsStopAnalyses: () => invoke<number>("runs_stop_analyses"),
+  runAllFinish: (path: string, cards: number[], instructions: string, into: string | null) =>
+    invoke<Finish>("run_all_finish", { path, cards, instructions, into }),
+  reportCreate: (path: string, cards: number[], since: number, into: string | null, direct: boolean, instructions: string, finish: Finish | null) =>
+    invoke<Report>("report_create", { path, cards, since, into, direct, instructions, finish }),
+  reports: (path: string) => invoke<Report[]>("reports_list", { path }),
+  printPage: () => invoke<void>("print_page"),
+  boardAssist: (path: string, text: string) => invoke<void>("board_assist", { path, text }),
   runContinue: (run: string, allowApiKey: boolean) => invoke<RunMeta>("run_continue", { run, allowApiKey }),
   accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),
   runVerification: (run: string) => invoke<Verification | null>("run_verification", { run }),
@@ -545,6 +594,8 @@ export const api = {
   dropHunk: (path: string, branch: string, base: string, head: string, file: string, header: string) =>
     invoke<string>("lane_drop_hunk", { path, branch, base, head, file, header }),
   queue: (path: string) => invoke<ShipJob[]>("queue_list", { path }),
+  queuePaused: () => invoke<number>("queue_paused"),
+  queueResume: () => invoke<void>("queue_resume"),
   enqueue: (path: string, branch: string, to?: string) => invoke<ShipJob>("queue_add", { path, branch, to: to ?? null }),
   dequeue: (id: string) => invoke<void>("queue_remove", { id }),
   cardReview: (path: string, card: number, action: "approve" | "changes" | "discard", message?: string) =>
@@ -553,6 +604,7 @@ export const api = {
   runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
   runStop: (run: string) => invoke<void>("run_stop", { run }),
+  runsStopAll: () => invoke<number>("runs_stop_all"),
   runDecide: (run: string, approval: string, decision: Decision, message?: string) =>
     invoke<void>("run_decide", { run, approval, decision, message: message ?? null }),
   runTimeline: (run: string) => invoke<[number, RunEvent][]>("run_timeline", { run }),

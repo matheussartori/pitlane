@@ -36,7 +36,9 @@ const KEEP_BYTES: usize = 256 * 1024;
 struct Term {
     info: TermInfo,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// Keystrokes go to a thread of their own: a program that stops reading can fill the PTY,
+    /// and that must never block the app (writes keep their order through the channel).
+    writer: std::sync::mpsc::Sender<Vec<u8>>,
     child: Box<dyn Child + Send + Sync>,
     buffer: Arc<Mutex<String>>,
 }
@@ -86,7 +88,15 @@ impl Terms {
         let child = pair.slave.spawn_command(cmd).with_context(|| format!("could not start {shell}"))?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
+        let mut pty_in = pair.master.take_writer()?;
+        let (writer, keys) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            for data in keys {
+                if pty_in.write_all(&data).and_then(|_| pty_in.flush()).is_err() {
+                    break;
+                }
+            }
+        });
 
         let id = {
             let mut n = self.next.lock().unwrap();
@@ -150,10 +160,9 @@ impl Terms {
     }
 
     pub fn write(&self, id: u32, data: &str) -> Result<()> {
-        let mut all = self.all.lock().unwrap();
-        let t = all.get_mut(&id).context("that terminal is gone")?;
-        t.writer.write_all(data.as_bytes())?;
-        t.writer.flush()?;
+        let all = self.all.lock().unwrap();
+        let t = all.get(&id).context("that terminal is gone")?;
+        t.writer.send(data.as_bytes().to_vec()).map_err(|_| anyhow::anyhow!("that terminal is gone"))?;
         Ok(())
     }
 
@@ -165,8 +174,9 @@ impl Terms {
     }
 
     pub fn close(&self, id: u32) -> Result<()> {
-        if let Some(mut t) = self.all.lock().unwrap().remove(&id) {
-            let _ = t.child.kill();
+        if let Some(t) = self.all.lock().unwrap().remove(&id) {
+            // Off the calling thread: the hangup waits a moment before the kill.
+            std::thread::spawn(move || end(vec![t]));
         }
         Ok(())
     }
@@ -184,9 +194,26 @@ impl Terms {
     }
 
     pub fn close_all(&self) {
-        for (_, mut t) in self.all.lock().unwrap().drain() {
-            let _ = t.child.kill();
+        let all: Vec<Term> = self.all.lock().unwrap().drain().map(|(_, t)| t).collect();
+        end(all);
+    }
+}
+
+/// Ends shells and everything they started: the shell leads its own session, so a hangup to
+/// that session reaches the program in front (a dev server, an agent) and the jobs behind it;
+/// what is left a moment later is killed.
+fn end(mut terms: Vec<Term>) {
+    let sids: Vec<String> = terms.iter().filter_map(|t| t.child.process_id()).map(|p| p.to_string()).collect();
+    let pkill = |sig: &str| {
+        if !sids.is_empty() {
+            let _ = std::process::Command::new("pkill").args([sig, "-s", &sids.join(",")]).status();
         }
+    };
+    pkill("-HUP");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    pkill("-KILL");
+    for t in &mut terms {
+        let _ = t.child.kill();
     }
 }
 

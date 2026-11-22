@@ -5,6 +5,7 @@ import { clock, elapsed, money, runStateView } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
+import { refreshAgents } from "./agents";
 import { QuestionBlock } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
@@ -76,6 +77,92 @@ export function planNote(plan: Plan | null | undefined, id: number, cards: Card[
   return `After ${called(other)}: both touch ${name(c.files[0]!)}`;
 }
 
+/**
+ * Ask Claude about the board, typed or dictated: "make cards from this list", "split #4". A
+ * session in the repository writes the cards; it shows in the Agents dock while it works.
+ */
+function BoardAsk(props: { repo: string }) {
+  const [text, setText] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  let field: HTMLTextAreaElement | undefined;
+  const fit = () => {
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 220)}px`;
+  };
+  const send = async () => {
+    const t = text().trim();
+    if (!t || busy()) return;
+    setBusy(true);
+    try {
+      await api.boardAssist(props.repo, t);
+      setText("");
+      requestAnimationFrame(fit);
+      // The session appears in the dock as soon as the daemon starts it.
+      for (const ms of [800, 2500, 6000]) setTimeout(() => void refreshAgents(), ms);
+      toast({ tone: "info", title: "Claude is on it", body: "New cards show up here as it writes them. Follow it in the Agents dock." });
+    } catch (e) {
+      toast({ tone: "fail", title: "Claude did not get it", body: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="board-ask">
+      <span class="ag-prompt" aria-hidden="true">›</span>
+      <textarea
+        ref={field}
+        class="board-ask-field"
+        rows="1"
+        aria-label="Ask Claude to write or change cards"
+        placeholder="Ask Claude: paste a list or say what you need, and it writes the cards (Enter sends, Shift+Enter for a new line)"
+        value={text()}
+        onInput={(e) => (setText(e.currentTarget.value), fit())}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) (e.preventDefault(), void send());
+        }}
+        disabled={busy()}
+      />
+      <Dictate field={() => field} value={text} onChange={(v) => (setText(v), requestAnimationFrame(fit))} />
+      <button type="button" class="btn btn-ghost" disabled={busy() || !text().trim()} aria-busy={busy()} onClick={() => void send()}>
+        <Show when={busy()} fallback={<Icon name="spark" small />}>
+          <Spinner />
+        </Show>
+        Ask
+      </button>
+    </div>
+  );
+}
+
+/** Landed where it was going: dependencies on it are met. */
+const landedState = (c: Card) => c.state === "done" || c.state === "in-dev";
+
+/**
+ * Why Run all holds a card back beyond the planner's file clashes: a card the analysis said must
+ * land first, or a shared area (an engine, a schema) another card is changing right now.
+ * `busy` is the cards running now (or started in this pass).
+ */
+export function holdNote(id: number, cards: Card[], busy: number[]): string | null {
+  const c = cards.find((x) => x.id === id);
+  if (!c) return null;
+  const called = (o: Card) => `#${o.id} ${o.title}`;
+  for (const a of c.after ?? []) {
+    const dep = cards.find((x) => x.id === a);
+    // A dependency both ways is the analysts disagreeing: the board order decides.
+    if (!dep || landedState(dep) || (dep.after ?? []).includes(id)) continue;
+    return `After ${called(dep)} lands: it builds on it`;
+  }
+  const mine = new Set(c.areas ?? []);
+  if (mine.size > 0)
+    for (const b of busy) {
+      const o = cards.find((x) => x.id === b);
+      const shared = o && o.id !== id ? (o.areas ?? []).find((a) => mine.has(a)) : undefined;
+      if (o && shared) return `Waits for ${called(o)}: both change ${shared}`;
+    }
+  return null;
+}
+
 export function BoardView(props: {
   cards: Card[] | null;
   problems: string[];
@@ -85,10 +172,16 @@ export function BoardView(props: {
   onOpen: (id: number) => void;
   onNew: () => void;
   /** Starts Run all on these backlog cards, in board order: analyse, ask, then work them. */
-  onRunAll: (ids: number[]) => void;
+  repo: string | null;
+  /** Claude reads the backlog cards not analysed yet (questions, notes, order). */
+  onAnalyse: (ids: number[]) => void;
+  /** Every backlog card analysed: choose where the work lands, then start. */
+  onStartDev: (ids: number[]) => void;
   onStopAll: () => void;
+  /** The queue is empty but cards wait for review: close the batch now. */
+  onFinish: () => void;
   /** Where Run all is. */
-  phase: "idle" | "analyzing" | "asking" | "working";
+  phase: "idle" | "analyzing" | "asking" | "working" | "finishing";
   /** Cards Run all still has to start. */
   queued: number[];
   /** The whole board's new order, after a card was dragged. */
@@ -115,7 +208,8 @@ export function BoardView(props: {
       const p = asking
         ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? "Wants to run" : `Wants ${asking.waiting[0]!.tool}`, why: `Asks to run ${asking.waiting[0]!.detail}` }
         : place(c, props.yard);
-      const note = props.queued.includes(c.id) ? planNote(props.plan, c.id, props.cards ?? []) : null;
+      const busy = props.runs.filter((r) => isLive(r.state)).map((r) => r.card);
+      const note = props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [])) : null;
       return { card: c, p: note && p.column === "backlog" ? { ...p, why: note } : p };
     }),
   );
@@ -190,8 +284,38 @@ export function BoardView(props: {
     return others[others.length - 1] === id ? "after" : undefined;
   };
 
+  const unanalysed = () => backlog().filter(({ card }) => !card.analyzed);
   const runLabel = () =>
-    props.phase === "analyzing" ? "Analysing" : props.phase === "asking" ? "Answer to go on" : props.phase === "working" ? `Stop (${props.queued.length} queued)` : "Run all";
+    props.phase === "analyzing"
+      ? "Stop analysing"
+      : props.phase === "asking"
+        ? "Answer to go on"
+        : props.phase === "finishing"
+          ? "Finishing"
+          : props.phase === "working"
+            ? props.queued.length > 0
+              ? `Stop (${props.queued.length} queued)`
+              : "Finish now"
+            : unanalysed().length > 0
+              ? `Analyse ${unanalysed().length}`
+              : "Start development";
+  const runAction = () => {
+    if (props.phase === "analyzing") return props.onStopAll();
+    if (props.phase === "working") return props.queued.length > 0 ? props.onStopAll() : props.onFinish();
+    if (props.phase !== "idle") return;
+    if (unanalysed().length > 0) return props.onAnalyse(unanalysed().map(({ card }) => card.id));
+    props.onStartDev(backlog().map(({ card }) => card.id));
+  };
+  const runTitle = () =>
+    props.phase === "working"
+      ? props.queued.length > 0
+        ? "Stops starting queued cards; runs already going keep going"
+        : "Close the batch now: the cards still in review stay there"
+      : props.phase === "analyzing"
+        ? "Stops the analysis; nothing starts"
+        : unanalysed().length > 0
+          ? "Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine"
+          : "Choose where the work lands and what happens at the end, then the agents start";
 
   return (
     <div class="board-screen">
@@ -211,6 +335,8 @@ export function BoardView(props: {
           New card <span class="kbd">C</span>
         </button>
       </header>
+
+      <Show when={props.repo}>{(r) => <BoardAsk repo={r()} />}</Show>
 
       <For each={props.problems}>{(p) => <ErrorLine>{p}</ErrorLine>}</For>
 
@@ -241,18 +367,15 @@ export function BoardView(props: {
                       <button
                         type="button"
                         class="btn btn-ghost col-action"
-                        disabled={props.phase === "analyzing" || props.phase === "asking"}
-                        aria-busy={props.phase === "analyzing"}
-                        title={
-                          props.phase === "working"
-                            ? "Stops starting queued cards; runs already going keep going"
-                            : "Claude reads every backlog card first, asks you what it needs one question at a time, then works them top to bottom until the backlog is empty"
-                        }
-                        onClick={() =>
-                          props.phase === "working" ? props.onStopAll() : props.onRunAll(backlog().map(({ card }) => card.id))
-                        }
+                        disabled={props.phase === "asking" || props.phase === "finishing"}
+                        aria-busy={props.phase === "analyzing" || props.phase === "finishing"}
+                        title={runTitle()}
+                        onClick={runAction}
                       >
-                        <Show when={props.phase === "analyzing"} fallback={<Icon name={props.phase === "working" ? "stop" : "play"} small />}>
+                        <Show
+                          when={props.phase === "analyzing" || props.phase === "finishing"}
+                          fallback={<Icon name={props.phase === "working" ? (props.queued.length > 0 ? "stop" : "done") : unanalysed().length > 0 ? "search" : "play"} small />}
+                        >
                           <Spinner />
                         </Show>
                         {runLabel()}
@@ -303,6 +426,11 @@ export function BoardView(props: {
                                   Running <span class="figure">{clock(elapsed(r(), props.now))}</span>
                                 </span>
                               )}
+                            </Show>
+                            <Show when={p.column === "backlog"}>
+                              <span class="card-analysis" data-on={card.analyzed ? "" : undefined} title={card.analyzed ? `Analysed ${card.analyzed}` : "Not analysed: Run all reads it first"}>
+                                {card.analyzed ? "Analysed" : "Not analysed"}
+                              </span>
                             </Show>
                             <Show when={(card.notes?.length ?? 0) > 0}>
                               <span class="card-notes" title={`${card.notes!.length} ${card.notes!.length === 1 ? "note" : "notes"}`}>
@@ -365,7 +493,7 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
   return (
     <Sheet
       title="Before the run"
-      onClose={props.onStop}
+      onClose={props.onDone}
       foot={
         <>
           <span class="sheet-note">

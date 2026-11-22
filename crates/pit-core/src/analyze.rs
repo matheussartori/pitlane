@@ -14,7 +14,13 @@ repository, and prepare the card so another session can work it without stopping
 spec cannot answer and what would change the work (scope, behaviour, a choice between real alternatives); never \
 ask what you can find out by reading. Each question gets two to four options and the one you recommend. Notes say \
 what you found that the working session needs: where the code is (paths and symbols), how it fits together, \
-risks, and how to verify. Keep each note short and specific. If the card is clear and small, return no questions.";
+risks, and how to verify. Keep each note short and specific. If the card is clear and small, return no questions. \
+You also say how this card sits among the other cards of the same batch, because they run in parallel on branches \
+of their own: `after` lists the cards whose work this one needs in place first (it builds on them, or would \
+conflict with them badly enough that it must start from their result); `areas` names the shared parts of the code \
+it changes that other cards may also change (an engine, a shared schema, a core module, a build config), as short \
+lowercase names; cards with an area in common never run at the same time. Leave both empty when the card is \
+independent. Never list a card in `after` without a concrete reason in a note.";
 
 /// What the analyst returns.
 pub fn schema() -> Value {
@@ -26,7 +32,9 @@ pub fn schema() -> Value {
                 "options": { "type": "array", "items": { "type": "string" } },
                 "recommended": { "type": "integer", "description": "0-based index into options." }
             }, "required": ["text", "options"] } },
-            "notes": { "type": "array", "items": { "type": "string" }, "description": "Findings in markdown, one per item." }
+            "notes": { "type": "array", "items": { "type": "string" }, "description": "Findings in markdown, one per item." },
+            "after": { "type": "array", "items": { "type": "integer" }, "description": "Ids of cards in this batch that must land first." },
+            "areas": { "type": "array", "items": { "type": "string" }, "description": "Shared parts of the code this card changes, short lowercase names." }
         },
         "required": ["questions", "notes"]
     })
@@ -38,15 +46,28 @@ pub struct Analysis {
     pub questions: Vec<NewQuestion>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub after: Vec<u32>,
+    #[serde(default)]
+    pub areas: Vec<String>,
 }
 
 /// The card as the analyst sees it: spec, decisions so far, notes and the project's decisions.
-pub fn prompt(repo: &Repo, card: &Card) -> String {
+/// `batch` is every card of this Run all (this one included), so the analyst can order them.
+pub fn prompt(repo: &Repo, card: &Card, batch: &[Card]) -> String {
     let mut p = crate::runs::briefing(repo, card);
     if let Some(i) = p.rfind("\nWhen you finish, end with the handoff.") {
         p.truncate(i);
     }
-    p.push_str("\n\nAnalyse this card for the session that will work it. Return questions and notes.\n");
+    let others: Vec<&Card> = batch.iter().filter(|c| c.id != card.id).collect();
+    if !others.is_empty() {
+        p.push_str("\n\n## The other cards of this batch\n");
+        for c in others {
+            let first: String = c.body.split("\n\n").next().unwrap_or("").chars().take(300).collect();
+            p.push_str(&format!("- #{} {}: {}\n", c.id, c.title, first.replace('\n', " ").trim()));
+        }
+    }
+    p.push_str("\n\nAnalyse this card for the session that will work it. Return questions, notes, after and areas.\n");
     p
 }
 
@@ -75,7 +96,7 @@ pub fn record(repo: &Repo, id: u32, a: Analysis) -> Result<Card> {
     if !qs.is_empty() {
         cards::ask(repo, id, qs)?;
     }
-    cards::mark_analyzed(repo, id)
+    cards::mark_analyzed(repo, id, a.after, a.areas)
 }
 
 #[cfg(test)]

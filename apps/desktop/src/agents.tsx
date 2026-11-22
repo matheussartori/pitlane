@@ -2,11 +2,12 @@
 // card, with the subagents each one opens. Shown in the Terminal screen and in a dock on the
 // Board. You can write to a session while it works and stop it with Ctrl+C. A session closes
 // itself a moment after it ends, unless you talked to it.
-import { For, Show, createEffect, createMemo, createSignal, on, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
 import { toast } from "./ui";
+import { ApprovalBlock } from "./approvals";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -76,6 +77,27 @@ export const agentGroups = createMemo<AgentGroup[]>(() => {
 export const agentsWorking = () => agentSessions().filter(live).length;
 export const agentsWanting = () => agentSessions().filter((m) => live(m) && m.waiting.length > 0).length;
 export const agentSelected = () => (selected() && agentSessions().some((m) => m.id === selected()!.id) ? selected() : null);
+/** Stop all: every session the daemon runs, and analyses still waiting for a slot. */
+export async function stopAllAgents(): Promise<void> {
+  try {
+    const n = await api.runsStopAll();
+    toast({ tone: "info", title: n > 0 ? `Stopping ${n} agent${n > 1 ? "s" : ""}` : "Nothing was running", body: n > 0 ? "Each ends its current step; anything still there after a few seconds is killed." : undefined });
+    void refreshAgents();
+  } catch (e) {
+    toast({ tone: "fail", title: "Could not stop the agents", body: msg(e) });
+  }
+}
+
+function StopAll() {
+  return (
+    <Show when={agentsWorking() > 0}>
+      <button type="button" class="btn btn-ghost ag-stop-all" title="Stop every agent Pitlane started" onClick={() => void stopAllAgents()}>
+        <Icon name="stop" small /> Stop all
+      </button>
+    </Show>
+  );
+}
+
 export function selectAgent(id: string | null, sub: string | null = null) {
   setSelected(id ? { id, sub } : null);
   if (id) void ensureTimeline(id);
@@ -164,7 +186,7 @@ export async function startAgents() {
 
 // ---------------------------------------------------------------- reading a session
 
-const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge" };
+const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant" };
 export function kindLabel(m: RunMeta): string {
   const k = KIND[m.kind ?? "run"] ?? "Run";
   return m.kind === "run" || !m.kind ? ((m.round ?? 0) > 0 ? `${k} · round ${(m.round ?? 0) + 1}` : k) : k;
@@ -254,6 +276,8 @@ export function AgentList(props: { compact: boolean }) {
             <Show when={agentsWorking() > 0}>
               <span class="ag-working">{agentsWorking()} working</span>
             </Show>
+            <span class="ag-bar-fill" />
+            <StopAll />
           </div>
           <For each={agentGroups()}>
             {(g) => (
@@ -351,6 +375,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
   const [text, setText] = createSignal("");
   let log: HTMLDivElement | undefined;
   let input: HTMLInputElement | undefined;
+  let pane: HTMLDivElement | undefined;
   let stick = true;
 
   createEffect(
@@ -359,6 +384,16 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
     }),
   );
   createEffect(on(() => selected()?.id, () => ((stick = true), requestAnimationFrame(() => input?.focus()))));
+  // A new question takes the keys, like a terminal prompt: 1-4 answer it, Esc goes back to typing.
+  createEffect(
+    on(
+      () => m()?.waiting.length ?? 0,
+      (n, prev) => {
+        if (n > (prev ?? 0) && document.activeElement === input) pane?.focus();
+        if (n > 0 && log) requestAnimationFrame(() => log && (log.scrollTop = log.scrollHeight));
+      },
+    ),
+  );
 
   const send = async () => {
     const mm = m();
@@ -393,7 +428,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
   return (
     <Show when={m()}>
       {(mm) => (
-        <div class="ag-pane" tabindex="-1" onKeyDown={onKey}>
+        <div class="ag-pane" ref={pane} tabindex="-1" onKeyDown={onKey}>
           <div class="ag-bar">
             <span class="ag-dot" data-s={look(mm()).s} />
             <span class="ag-bar-title">
@@ -430,20 +465,14 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
             </Show>
           </div>
           <div class="ag-log" ref={log} onScroll={(e) => (stick = e.currentTarget.scrollTop + e.currentTarget.clientHeight >= e.currentTarget.scrollHeight - 24)}>
-            <Show when={live(mm()) && mm().waiting.length > 0}>
-              <div class="ag-line ag-needs">
-                <Icon name="needs" small /> Waiting for you to allow {mm().waiting.map((w) => w.detail || w.tool).join(", ")}.
-                <Show when={(mm().kind ?? "run") === "run"}>
-                  {" "}
-                  <button type="button" class="ag-link" onClick={() => props.onOpenRun(mm().id)}>
-                    Answer in the run
-                  </button>
-                </Show>
-              </div>
-            </Show>
             <For each={events()} fallback={<div class="ag-line ag-muted">{live(mm()) ? "Starting…" : "Nothing recorded."}</div>}>
               {(e) => <Line e={e} m={mm()} />}
             </For>
+            <Show when={live(mm())}>
+              <div class="ag-asks">
+                <For each={mm().waiting}>{(a, i) => <ApprovalBlock run={mm().id} approval={a} keys={i() === 0} />}</For>
+              </div>
+            </Show>
           </div>
           <div class="ag-input" data-off={live(mm()) ? undefined : ""}>
             <span class="ag-prompt">›</span>
@@ -508,7 +537,7 @@ function Line(props: { e: RunEvent; m: RunMeta }) {
     case "approval":
       return (
         <div class="ag-line ag-needs">
-          Asks to use {e.approval.tool}: {e.approval.detail}
+          <span class="ag-glyph">?</span> Asks to use {e.approval.tool}: {e.approval.detail}
         </div>
       );
     case "decided":
@@ -552,6 +581,69 @@ function readDock(): boolean {
   }
 }
 
+const DOCK_H_KEY = "pitlane.agents.dock.h";
+const DOCK_H = { min: 64, def: 132 };
+const dockMax = () => Math.round(window.innerHeight * 0.6);
+const [dockH, setDockH] = createSignal(readDockH());
+function readDockH(): number {
+  try {
+    const v = Number(localStorage.getItem(DOCK_H_KEY));
+    return Number.isFinite(v) && v >= DOCK_H.min ? v : DOCK_H.def;
+  } catch {
+    return DOCK_H.def;
+  }
+}
+function saveDockH(h: number) {
+  const v = Math.round(Math.max(DOCK_H.min, Math.min(dockMax(), h)));
+  setDockH(v);
+  try {
+    localStorage.setItem(DOCK_H_KEY, String(v));
+  } catch {
+    /* fine */
+  }
+}
+
+/** The dock's top edge: drag to resize, double click for the default, arrows from the keyboard. */
+function DockGrip() {
+  let from = 0;
+  let start = 0;
+  const move = (e: PointerEvent) => saveDockH(start + (from - e.clientY));
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.style.removeProperty("cursor");
+  };
+  onCleanup(up);
+  return (
+    <div
+      class="ag-dock-grip"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize the agents dock"
+      aria-valuenow={dockH()}
+      aria-valuemin={DOCK_H.min}
+      tabindex="0"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        if (!dockOpen()) setDockOpen(true);
+        from = e.clientY;
+        start = dockH();
+        document.body.style.cursor = "ns-resize";
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      }}
+      onDblClick={() => saveDockH(DOCK_H.def)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          saveDockH(dockH() + (e.key === "ArrowUp" ? 24 : -24));
+        }
+      }}
+    />
+  );
+}
+
 export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () => void }) {
   const toggle = () => {
     setDockOpen(!dockOpen());
@@ -564,6 +656,7 @@ export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () =
   return (
     <Show when={agentSessions().length > 0}>
       <section class="ag-dock" aria-label="Agents" data-open={dockOpen() ? "" : undefined}>
+        <DockGrip />
         <div class="ag-dock-head">
           <button type="button" class="ag-dock-toggle" aria-expanded={dockOpen()} onClick={toggle}>
             <Icon name="chev" small class={dockOpen() ? "ag-chev-open" : undefined} />
@@ -574,12 +667,13 @@ export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () =
             </span>
           </button>
           <span class="ag-bar-fill" />
+          <StopAll />
           <button type="button" class="btn btn-ghost" onClick={props.onOpenAll}>
             <Icon name="term" small /> Open in Terminal
           </button>
         </div>
         <Show when={dockOpen()}>
-          <div class="ag-dock-list">
+          <div class="ag-dock-list" style={{ height: `${Math.min(dockH(), dockMax())}px` }}>
             <For each={agentSessions()}>
               {(m) => {
                 onMount(() => void ensureTimeline(m.id));

@@ -80,21 +80,64 @@ impl Verification {
     }
 }
 
-/// Runs one proof in the worktree, through the shell, like a person would.
-pub fn run_proof(worktree: &Path, command: &str) -> Proof {
+/// How long one proof may take before it is killed.
+pub const PROOF_LIMIT: std::time::Duration = std::time::Duration::from_secs(20 * 60);
+
+/// Runs one proof in the worktree, through the shell, like a person would. It runs in a process
+/// group of its own, killed whole when it ends, when it takes longer than `PROOF_LIMIT`, or when
+/// `cancelled` says so (a person stopped the run): a watcher or server it starts never lingers.
+pub fn run_proof(worktree: &Path, command: &str, cancelled: &dyn Fn() -> bool) -> Proof {
+    use std::os::unix::process::CommandExt;
     let t = Instant::now();
-    let out = Command::new("sh")
-        .arg("-c")
-        // Grouped, so stderr of every part of a compound command lands in the output.
-        .arg(format!("{{ {command}\n}} 2>&1"))
-        .current_dir(worktree)
-        .stdin(Stdio::null())
-        .output();
-    let (ok, code, text) = match out {
-        Ok(o) => (o.status.success(), o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned()),
-        Err(e) => (false, None, format!("could not run it: {e}")),
+    let done = |ok: bool, code: Option<i32>, text: &str| Proof { command: command.to_owned(), ok, code, duration_ms: t.elapsed().as_millis() as u64, tail: tail(text, 40, 4000) };
+    // Output to a file, not a pipe: a child that keeps the pipe open cannot hold the proof.
+    let out = match tempfile::NamedTempFile::new() {
+        Ok(f) => f,
+        Err(e) => return done(false, None, &format!("could not run it: {e}")),
     };
-    Proof { command: command.to_owned(), ok, code, duration_ms: t.elapsed().as_millis() as u64, tail: tail(&text, 40, 4000) }
+    let child = out.reopen().and_then(|f| {
+        Command::new("sh")
+            .arg("-c")
+            // Grouped, so stderr of every part of a compound command lands in the output.
+            .arg(format!("{{ {command}\n}} 2>&1"))
+            .current_dir(worktree)
+            .stdin(Stdio::null())
+            .stdout(f)
+            .process_group(0)
+            .spawn()
+    });
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => return done(false, None, &format!("could not run it: {e}")),
+    };
+    let group = child.id();
+    let kill_group = |sig: &str| {
+        let _ = Command::new("kill").args([sig, "--", &format!("-{group}")]).stderr(Stdio::null()).status();
+    };
+    let (status, why) = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break (Some(st), None),
+            Ok(None) if cancelled() => break (None, Some("stopped".to_owned())),
+            Ok(None) if t.elapsed() > PROOF_LIMIT => break (None, Some(format!("took longer than {} minutes; killed", PROOF_LIMIT.as_secs() / 60))),
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => break (None, Some(format!("could not wait for it: {e}"))),
+        }
+    };
+    kill_group("-TERM");
+    if status.is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    kill_group("-KILL");
+    let _ = child.wait();
+    let mut text = std::fs::read_to_string(out.path()).unwrap_or_default();
+    match (status, why) {
+        (Some(st), _) => done(st.success(), st.code(), &text),
+        (None, Some(w)) => {
+            text.push_str(&format!("\n[pitlane] {w}"));
+            done(false, None, &text)
+        }
+        (None, None) => done(false, None, &text),
+    }
 }
 
 fn tail(text: &str, lines: usize, bytes: usize) -> String {
@@ -319,9 +362,9 @@ mod tests {
     #[test]
     fn proofs_keep_the_tail() {
         let dir = std::env::temp_dir();
-        let ok = run_proof(&dir, "echo fine");
+        let ok = run_proof(&dir, "echo fine", &|| false);
         assert!(ok.ok && ok.tail.contains("fine"));
-        let bad = run_proof(&dir, "echo broken >&2; exit 3");
+        let bad = run_proof(&dir, "echo broken >&2; exit 3", &|| false);
         assert!(!bad.ok && bad.code == Some(3) && bad.tail.contains("broken"));
         assert_eq!(tail(&"x\n".repeat(100), 3, 1000), "x\nx\nx");
     }

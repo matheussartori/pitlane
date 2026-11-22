@@ -539,10 +539,13 @@ export async function startTerminals() {
   save();
   ticker ??= setInterval(tick, 1000);
   // The theme follows the system's light and dark.
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  const retheme = () => {
     const t = theme();
     for (const l of live.values()) l.term.options.theme = t;
-  });
+  };
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
+  // And the Appearance setting (light, dark or system), once its tokens are on the page.
+  window.addEventListener("pitlane-theme", () => requestAnimationFrame(retheme));
 }
 
 /** Opens a terminal in `cwd`, in a new tab, and shows it. */

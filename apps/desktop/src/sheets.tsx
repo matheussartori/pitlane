@@ -3,6 +3,7 @@ import { For, Match, Show, Switch, createResource, createSignal } from "solid-js
 import { api, landedLabel, short, type CleanPlan, type Lane, type ShipPlan } from "./api";
 import { Icon } from "./icons";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+import { Dictate } from "./dictate";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -399,6 +400,120 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
       <Show when={error()}>
         <ErrorLine>{error()}</ErrorLine>
       </Show>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------- Run all
+
+export interface RunAllChoice {
+  /** null: the repository's flow (a lane per card from the base, shipped through each stage). */
+  into: string | null;
+  direct: boolean;
+  /** What happens around and after the work, in the person's words; every agent reads it, and a
+   * closing session does the "when it is all done" part. */
+  instructions: string;
+}
+
+/**
+ * Before Run all starts: where the work lands. A lane per card, branched from the target when it
+ * is a lane and merged back into it once approved; or every card directly in the target's
+ * worktree, one at a time.
+ */
+export function RunAllSheet(props: {
+  count: number;
+  yard: Lane[];
+  base: string;
+  production: string;
+  integration: string | null;
+  /** The lane selected in the Tower, offered first. */
+  selected: string | null;
+  onStart: (c: RunAllChoice) => void;
+  onClose: () => void;
+}) {
+  const lanes = () => props.yard.filter((l) => l.local && l.branch !== props.production && l.branch !== props.integration);
+  const first = () => (props.selected && lanes().some((l) => l.branch === props.selected) ? props.selected : "");
+  const [into, setInto] = createSignal<string>(first());
+  const [direct, setDirect] = createSignal(false);
+  const [instructions, setInstructions] = createSignal("");
+  let notesRef: HTMLTextAreaElement | undefined;
+  const trunk = () => into() === props.production || into() === props.integration;
+  const target = () => into() || null;
+  const flowWords = () => `origin/${props.base}, then ${[props.integration, props.production].filter(Boolean).join(" and ")} through the merge queue`;
+  const help = () => {
+    const t = target();
+    if (!t) return `Each card gets a lane of its own from a freshly fetched ${flowWords()}.`;
+    if (direct()) return `Every card is worked in ${t}'s own worktree, one at a time, committing there. Nothing is pushed.`;
+    if (trunk()) return `Each card gets a lane from a freshly fetched origin/${props.base}; approved, it ships straight into ${t}.`;
+    return `Each card gets a lane branched from ${t}; approved, it is merged into ${t} on this machine (nothing pushed). Cards that build on others start once those landed.`;
+  };
+
+  return (
+    <Sheet
+      title={`Run all ${props.count} card${props.count === 1 ? "" : "s"}`}
+      onClose={props.onClose}
+      foot={
+        <>
+          <button type="button" class="btn btn-ghost" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button type="button" class="btn btn-primary" onClick={() => props.onStart({ into: target(), direct: direct() && !!target(), instructions: instructions().trim() })}>
+            <Icon name="play" small /> Start
+          </button>
+        </>
+      }
+    >
+      <div class="field">
+        <label class="field-label" for="run-all-into">
+          Into
+        </label>
+        <select id="run-all-into" class="select input-mono" value={into()} onChange={(e) => setInto(e.currentTarget.value)}>
+          <option value="">The flow ({[props.integration, props.production].filter(Boolean).join(" → ")})</option>
+          <For each={lanes()}>{(l) => <option value={l.branch}>{l.branch}</option>}</For>
+          <Show when={props.integration}>{(i) => <option value={i()}>{i()} only</option>}</Show>
+          <option value={props.production}>{props.production} directly</option>
+        </select>
+      </div>
+      <Show when={target()}>
+        <div class="field">
+          <span class="field-label">How</span>
+          <div class="seg" role="group" aria-label="How the cards are worked">
+            <button type="button" aria-pressed={!direct()} onClick={() => setDirect(false)}>
+              A lane per card
+            </button>
+            <button type="button" aria-pressed={direct()} onClick={() => setDirect(true)}>
+              Directly in {target()}
+            </button>
+          </div>
+        </div>
+      </Show>
+      <p class="field-help">{help()}</p>
+      <Show when={direct() && trunk()}>
+        <ErrorLine>
+          Agents will commit straight into {target()} in its checkout. Make sure nothing of yours is uncommitted there.
+        </ErrorLine>
+      </Show>
+      <div class="field">
+        <span class="field-label-row">
+          <label class="field-label" for="run-all-after">
+            When it is all done
+          </label>
+          <Dictate field={() => notesRef} value={instructions} onChange={setInstructions} />
+        </span>
+        <textarea
+          id="run-all-after"
+          ref={notesRef}
+          class="input run-all-after"
+          rows="4"
+          placeholder="Optional. E.g. never run the e2e tests; when everything landed, merge into dev and build a local dev version."
+          value={instructions()}
+          onInput={(e) => setInstructions(e.currentTarget.value)}
+        />
+        <span class="field-help">Every agent reads this. What is for the end is done by one closing session once the cards landed, then you get the report.</span>
+      </div>
+      <p class="field-help">
+        Cards start in board order. One that builds on another waits for it to land; two that change the same engine or schema never run together.
+      </p>
     </Sheet>
   );
 }

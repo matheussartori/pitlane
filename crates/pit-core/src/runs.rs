@@ -144,6 +144,10 @@ pub enum SessionKind {
     Run,
     Analysis,
     Judge,
+    /// Run all's closing step: what the person asked for when everything is done.
+    Finish,
+    /// The Board's assistant: turns what the person says into cards.
+    Assist,
 }
 
 fn default_account() -> String {
@@ -540,6 +544,14 @@ impl Client {
             bail!("{e}");
         }
         Ok(v)
+    }
+
+    /// Holds the daemon to this process: blocks while both live. When this connection closes,
+    /// the daemon stops every session it started and ends. Returns when the daemon goes away.
+    pub fn hold(mut self) -> Result<()> {
+        self.call(json!({ "op": "hold" }))?;
+        while self.read().ok().flatten().is_some() {}
+        Ok(())
     }
 
     /// Replays a run's events from `from` and then follows it live, until it ends or `each`

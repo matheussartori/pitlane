@@ -116,6 +116,17 @@ pub struct Card {
     /// When Run all's analysis read the card; it is not analysed twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analyzed: Option<String>,
+    /// Where the card's work lands (Run all's "Into"): its lane merges into this branch. When it
+    /// equals `lane`, the card was worked directly in that branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Cards whose work must land before this one starts (from the analysis).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<u32>,
+    /// Shared parts of the code this card changes (an engine, a schema): two cards with an area
+    /// in common never run at the same time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub areas: Vec<String>,
     pub created: String,
     pub updated: String,
     /// Kept last: TOML wants tables after plain values.
@@ -135,6 +146,11 @@ impl Card {
     /// Where the card sits on the board: its rank, or its id for cards never moved.
     pub fn order(&self) -> (i64, u32) {
         (self.rank.unwrap_or(self.id as i64), self.id)
+    }
+
+    /// Worked directly in its target branch, without a lane of its own.
+    pub fn direct(&self) -> bool {
+        self.target.is_some() && self.target == self.lane
     }
 
     pub fn open_questions(&self) -> usize {
@@ -213,6 +229,7 @@ pub struct CardPatch {
     pub state: Option<CardState>,
     pub lane: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
+    pub target: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -360,6 +377,9 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         tags: new.tags,
         rank: Some(rank),
         analyzed: None,
+        target: None,
+        after: Vec::new(),
+        areas: Vec::new(),
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
@@ -375,6 +395,7 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
 pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     let _lock = Lock::take(repo)?;
     let mut card = get(repo, id)?;
+    let (title_before, body_before) = (card.title.clone(), card.body.clone());
     if let Some(t) = patch.title {
         if t.trim().is_empty() {
             bail!("a card needs a title");
@@ -392,6 +413,15 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     }
     if let Some(t) = patch.tags {
         card.tags = t;
+    }
+    if let Some(t) = patch.target {
+        card.target = t.filter(|b| !b.trim().is_empty()).map(|b| b.trim().to_owned());
+    }
+    // A changed spec is a new card to the analyst: read it again before the next Run all.
+    if (title_before != card.title || body_before != card.body) && card.analyzed.is_some() {
+        card.analyzed = None;
+        card.after.clear();
+        card.areas.clear();
     }
     card.updated = timestamp(now_secs());
     write(&card)?;
@@ -416,10 +446,12 @@ pub fn reorder(repo: &Repo, ids: &[u32]) -> Result<()> {
 }
 
 /// Marks the card as analysed by Run all.
-pub fn mark_analyzed(repo: &Repo, id: u32) -> Result<Card> {
+pub fn mark_analyzed(repo: &Repo, id: u32, after: Vec<u32>, areas: Vec<String>) -> Result<Card> {
     let _lock = Lock::take(repo)?;
     let mut card = get(repo, id)?;
     card.analyzed = Some(timestamp(now_secs()));
+    card.after = after.into_iter().filter(|a| *a != id).collect();
+    card.areas = areas.into_iter().map(|a| a.trim().to_lowercase()).filter(|a| !a.is_empty()).collect();
     write(&card)?;
     Ok(card)
 }
@@ -662,6 +694,9 @@ mod tests {
             state: CardState::Inbox,
             lane: Some("fix/avatar".into()),
             tags: vec!["core".into()],
+            target: None,
+            after: Vec::new(),
+            areas: Vec::new(),
             created: "2026-11-20T10:00:00Z".into(),
             updated: "2026-11-20T10:00:00Z".into(),
             questions: vec![Question {

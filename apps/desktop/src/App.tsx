@@ -2,12 +2,12 @@
 import { For, Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type Plan, type RunMeta, type Settings, type ShipJob, type Yard, isOpenJob } from "./api";
+import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type Plan, type Report, type Finish, type RunMeta, type Settings, type ShipJob, type Yard, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
 import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
-import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, planNote } from "./board";
+import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, holdNote, planNote } from "./board";
 import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
@@ -16,11 +16,12 @@ import { TerminalScreen, openTerminal, startTerminals, terminalsWanting } from "
 import { AgentDock, agentsWanting, agentsWorking, selectAgent, setAgentsRepo, setAgentsWatch, startAgents } from "./agents";
 import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
+import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
-import { CleanSheet, NewLaneSheet, ShipSheet } from "./sheets";
+import { CleanSheet, NewLaneSheet, RunAllSheet, ShipSheet, type RunAllChoice } from "./sheets";
 import { Toasts, dismissable, toast } from "./ui";
 
-type Tab = "inbox" | "board" | "lanes" | "ledger" | "code" | "terminal" | "settings";
+type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "code" | "terminal" | "settings";
 type SheetState =
   | { kind: "ship"; lane: Lane; to: string }
   | { kind: "clean" }
@@ -29,10 +30,11 @@ type SheetState =
   | { kind: "new-card" }
   | { kind: "accounts" }
   | { kind: "questions" }
+  | { kind: "run-all"; ids: number[] }
   | null;
 
 const TAB_KEY = "pitlane.tab";
-const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "code" || t === "terminal" || t === "settings";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "reports" || t === "code" || t === "terminal" || t === "settings";
 /** The screen lives in the URL hash (#board), falling back to the last one used. */
 function savedTab(): Tab {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -185,6 +187,20 @@ export default function App() {
   // The merge queue: polled while something is in line; a job that finishes refreshes the lanes.
   const [jobs, setJobs] = createSignal<ShipJob[]>([]);
   let jobsGen = 0;
+  // Run all's reports, read when the screen opens and when a batch ends.
+  const [reports, setReports] = createSignal<Report[] | null>(null);
+  async function loadReports() {
+    const path = repo();
+    if (!path) return;
+    try {
+      const r = await api.reports(path);
+      if (path === repo()) setReports(r);
+    } catch {
+      setReports([]);
+    }
+  }
+  createEffect(on([tab, repo], ([t]) => t === "reports" && void loadReports()));
+
   async function loadQueue() {
     const path = repo();
     if (!path) return;
@@ -325,82 +341,166 @@ export default function App() {
   // Run all, as a session: analyse every backlog card (questions and notes from Claude), ask the
   // open questions one at a time, then start what can start and keep going as work lands, until
   // the queue is empty. The planner speaks only here.
-  const [phase, setPhase] = createSignal<"idle" | "analyzing" | "asking" | "working">("idle");
+  const [phase, setPhase] = createSignal<"idle" | "analyzing" | "asking" | "working" | "finishing">("idle");
   const [queue, setQueue] = createSignal<number[]>([]);
   let advancing = false;
   // While Run all works, the agents' list looks for new sessions every moment.
   createEffect(() => setAgentsWatch(phase() !== "idle"));
 
-  async function runAll(ids: number[]) {
+  // The session's target (Run all's Into) and a token: every await checks it is still the same
+  // session, so Stop, a new Run all or a repository switch end the old one for good.
+  let session = 0;
+  let sessionPath: string | null = null;
+  const [choice, setChoice] = createSignal<RunAllChoice>({ into: null, direct: false, instructions: "" });
+  const current_ = (token: number) => token === session && repo() === sessionPath;
+
+  /** Step one: Claude reads each card not analysed yet; its questions are asked one at a time. */
+  async function analyse(ids: number[]) {
     const path = repo();
     if (!path || phase() !== "idle" || ids.length === 0) return;
+    const token = ++session;
+    sessionPath = path;
     setQueue(ids);
     setPhase("analyzing");
     try {
       const r = await api.cardsAnalyze(path, ids);
-      const failed = r.analyzed.filter((a) => a.error);
+      if (!current_(token)) return;
+      const failed = r.analyzed.filter((a) => a.error && a.error !== "stopped before it started");
       if (failed.length > 0)
         toast({ tone: "fail", title: `Could not analyse ${failed.map((f) => `#${f.card}`).join(", ")}`, body: failed[0]!.error }, 0);
     } catch (e) {
+      if (!current_(token)) return;
       toast({ tone: "fail", title: "The analysis did not run", body: msg(e) }, 0);
     }
     await loadCards();
-    if (phase() !== "analyzing") return; // stopped meanwhile
-    try {
-      setPlan(await api.plan(path));
-    } catch {
-      setPlan(null);
-    }
+    if (!current_(token) || phase() !== "analyzing") return; // stopped meanwhile
     const asking = openQuestions((cards() ?? []).filter((c) => queue().includes(c.id)));
     if (asking.length > 0) {
       setPhase("asking");
       setSheet({ kind: "questions" });
-    } else {
-      setPhase("working");
-      void advance();
+    } else analysed();
+  }
+
+  /** The analysis is over (and its questions answered or left for later): development is next. */
+  function analysed() {
+    setPhase("idle");
+    setQueue([]);
+    session++;
+    toast({ tone: "done", title: "Analysis done", body: "Every card has its notes and decisions. Start development on the Board when you are ready." });
+  }
+
+  /** Step two: the agents work the cards into the chosen branch, in board order. */
+  let sessionIds: number[] = [];
+  let sessionStart = 0;
+  async function startDev(ids: number[], c: RunAllChoice) {
+    const path = repo();
+    if (!path || phase() !== "idle" || ids.length === 0) return;
+    const token = ++session;
+    sessionPath = path;
+    sessionIds = ids;
+    sessionStart = Math.floor(Date.now() / 1000) - 5;
+    setChoice(c);
+    setQueue(ids);
+    setPhase("working");
+    try {
+      const p = await api.plan(path);
+      if (!current_(token)) return;
+      setPlan(p);
+    } catch {
+      setPlan(null);
     }
+    void advance();
+  }
+
+  /** Step three: what the person asked for at the end, then the report. */
+  async function finishBatch() {
+    const path = repo();
+    if (!path || phase() !== "working" || path !== sessionPath) return;
+    const token = session;
+    const c = choice();
+    setPhase("finishing");
+    setQueue([]);
+    let finish: Finish | null = null;
+    if (c.instructions) {
+      toast({ tone: "info", title: "The closing step started", body: "Claude does what you asked for the end. Follow it in Terminal › Agents." });
+      try {
+        finish = await api.runAllFinish(path, sessionIds, c.instructions, c.into);
+      } catch (e) {
+        finish = { run: null, ok: false, summary: msg(e), cost_usd: null };
+      }
+    }
+    if (token !== session) return;
+    try {
+      const r = await api.reportCreate(path, sessionIds, sessionStart, c.into, c.direct, c.instructions, finish);
+      toast(
+        { tone: finish && !finish.ok ? "fail" : "done", title: "Run all is done", body: `${r.cards.length} cards, $${r.cost_usd.toFixed(2)}. The report is ready.`, action: { label: "Open the report", run: () => setTab("reports") } },
+        0,
+      );
+    } catch (e) {
+      toast({ tone: "fail", title: "The report was not written", body: msg(e) }, 0);
+    }
+    session++;
+    sessionPath = null;
+    setPhase("idle");
+    setPlan(null);
+    void loadReports();
   }
 
   function stopRunAll() {
+    const analysing = phase() === "analyzing";
+    session++;
+    sessionPath = null;
     setQueue([]);
     setPhase("idle");
     setPlan(null);
     if (sheet()?.kind === "questions") setSheet(null);
+    // Stopping while Claude reads the cards stops those readings too (runs already going keep going).
+    if (analysing) void api.runsStopAnalyses().catch(() => {});
   }
 
-  /** Starts every queued card that can start now: no open question, nothing the planner holds it for. */
-  async function advance(allowApiKey = false) {
+  /** Starts every queued card that can start now: no open question, nothing that must land first, nothing it would collide with. */
+  async function advance(allowApiKeyFor: number[] = []) {
     const path = repo();
-    if (!path || phase() !== "working" || advancing) return;
+    if (!path || phase() !== "working" || advancing || path !== sessionPath) return;
+    const token = session;
+    const { into, direct } = choice();
     advancing = true;
     try {
       const all = cards() ?? [];
-      const live = (id: number) => (runs() ?? []).some((r) => r.card === id && isLive(r.state));
+      const liveCards = (runs() ?? []).filter((r) => isLive(r.state)).map((r) => r.card);
+      const live = (id: number) => liveCards.includes(id);
       // Cards that started, finished or left the backlog leave the queue.
       const q = queue().filter((id) => {
         const c = all.find((x) => x.id === id);
         return c && !live(id) && (c.state === "inbox" || c.state === "ready" || c.state === "blocked");
       });
+      // Directly in one branch: one card at a time, in board order.
+      const busy = [...liveCards];
       const ready = q.filter((id) => {
         const c = all.find((x) => x.id === id)!;
         return (c.questions ?? []).every((x) => x.answer != null) && !planNote(plan(), id, all);
       });
       const started: number[] = [];
       for (const [i, id] of ready.entries()) {
+        if (!current_(token)) return;
+        if (direct && busy.some((b) => queue().includes(b) || all.find((x) => x.id === b)?.target === into)) break;
+        if (holdNote(id, all, busy)) continue;
         try {
-          const m = await api.runStart(path, id, allowApiKey);
+          const m = await api.runStart(path, id, allowApiKeyFor.includes(id), into, direct, choice().instructions || null);
           void api.runFollow(m.id, 0).catch(() => {});
           started.push(id);
+          busy.push(id);
         } catch (e) {
           const text = msg(e);
           if (text.startsWith(NEEDS_API_KEY)) {
-            const rest = ready.slice(i);
+            const rest = ready.slice(i).filter((x) => !started.includes(x));
             toast(
               {
                 tone: "info",
                 title: `Only the API key can take ${rest.map((x) => `#${x}`).join(", ")} now`,
                 body: `${text.slice(NEEDS_API_KEY.length)}. It is paid per token.`,
-                action: { label: "Use the API key", run: () => void advance(true) },
+                // Only these cards, and only while this Run all is still the one going.
+                action: { label: "Use the API key", run: () => void (current_(token) && advance(rest)) },
               },
               0,
             );
@@ -410,6 +510,7 @@ export default function App() {
           q.splice(q.indexOf(id), 1);
         }
       }
+      if (!current_(token)) return;
       const left = q.filter((id) => !started.includes(id));
       setQueue(left);
       if (started.length > 0) {
@@ -417,9 +518,11 @@ export default function App() {
         await loadRuns();
         void loadCards();
       }
+      // Nothing left to start and nothing working: once every card of the batch landed (or
+      // stopped short of review), the closing step and the report. Cards in review keep it open.
       if (left.length === 0 && !(runs() ?? []).some((r) => isLive(r.state))) {
-        setPhase("idle");
-        setPlan(null);
+        const waiting = (cards() ?? []).filter((c) => sessionIds.includes(c.id) && (c.state === "running" || c.state === "verifying" || c.state === "review"));
+        if (waiting.length === 0) void finishBatch();
       }
     } finally {
       advancing = false;
@@ -442,6 +545,8 @@ export default function App() {
   async function switchTo(path: string) {
     setMenu(false);
     if (path === repo()) return;
+    // Run all belongs to the repository it started in.
+    if (phase() !== "idle") stopRunAll();
     generation++;
     setRepo(path);
     setYard(null);
@@ -473,26 +578,46 @@ export default function App() {
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
     void startTerminals();
     void startAgents();
-    try {
-      const s = await api.settings();
-      setSettings(s);
-      loadPrefs(s.prefs);
-      const start = s.last ?? s.repos[0]?.path;
-      if (start) await switchTo(start);
-    } catch (e) {
-      setError(msg(e));
-    } finally {
-      setBooted(true);
-    }
+    // Boot without holding the listeners below: the first fetch can be slow or offline.
+    void (async () => {
+      try {
+        const s = await api.settings();
+        setSettings(s);
+        loadPrefs(s.prefs);
+        const start = s.last ?? s.repos[0]?.path;
+        if (start) await switchTo(start);
+      } catch (e) {
+        setError(msg(e));
+      } finally {
+        setBooted(true);
+      }
+      // Pitlane closed with work in the merge queue: it waits for a yes.
+      try {
+        const n = await api.queuePaused();
+        if (n > 0)
+          toast(
+            {
+              tone: "info",
+              title: `The merge queue is paused (${n} waiting)`,
+              body: "It paused when Pitlane closed. Nothing ships until you resume it.",
+              action: { label: "Resume", run: () => void api.queueResume().then(() => loadQueue(), (e) => toast({ tone: "fail", title: "Could not resume the queue", body: msg(e) })) },
+            },
+            0,
+          );
+      } catch {
+        /* the browser preview */
+      }
+    })();
 
     // The clock ticks every second while an agent runs, every 30 s otherwise.
     const tick = setInterval(() => {
       if ((runs() ?? []).some((r) => isLive(r.state)) || Date.now() - now() >= 30_000) setNow(Date.now());
     }, 1000);
-    const offRun = await onRun(
+    let offRun = () => {};
+    void onRun(
       (run, _i, e) => {
         if (e.kind !== "approval" && e.kind !== "decided") return;
         void loadRuns();
@@ -511,7 +636,7 @@ export default function App() {
           );
         }
       },
-    );
+    ).then((off) => (offRun = off));
     const onHash = () => {
       const r = runFromHash();
       setRunView(r);
@@ -565,8 +690,10 @@ export default function App() {
         } else if ((e.key === "c" || e.key === "C") && (tab() === "board" || tab() === "inbox")) {
           e.preventDefault();
           setSheet({ kind: "new-card" });
-        } else if (/^[1-4]$/.test(e.key) && e.altKey) {
-          setTab((["inbox", "board", "lanes", "ledger"] as const)[Number(e.key) - 1]!);
+        } else if (/^Digit[1-5]$/.test(e.code) && e.altKey) {
+          // e.code: on macOS Option+1 types ¡, so e.key is no use here.
+          e.preventDefault();
+          setTab((["inbox", "board", "lanes", "ledger", "reports"] as const)[Number(e.code.slice(5)) - 1]!);
         }
       }
       if (e.key === "Escape") setMenu(false);
@@ -677,6 +804,7 @@ export default function App() {
           <RailItem icon="board" label="Board" keys="⌥2" current={here("board")} onClick={() => setTab("board")} />
           <RailItem icon="lanes" label="Lanes" keys="⌥3" current={here("lanes")} onClick={() => setTab("lanes")} count={needs()} hot />
           <RailItem icon="ledger" label="Ledger" keys="⌥4" current={here("ledger")} onClick={() => setTab("ledger")} />
+          <RailItem icon="note" label="Reports" keys="⌥5" current={here("reports")} onClick={() => setTab("reports")} />
           <div class="navrail-sep" />
           <RailItem icon="code" label="Code" current={here("code")} onClick={() => setTab("code")} />
           <RailItem
@@ -849,7 +977,10 @@ export default function App() {
                   />
                 </Match>
                 <Match when={tab() === "board"}>
+                  <div class="board-pane">
+                  <div class="board-scroll">
                   <BoardView
+                    repo={repo()}
                     cards={cards()}
                     problems={problems()}
                     yard={yard()}
@@ -863,19 +994,24 @@ export default function App() {
                       else setSheet({ kind: "card", id });
                     }}
                     onNew={() => setSheet({ kind: "new-card" })}
-                    onRunAll={(ids) => void runAll(ids)}
+                    onAnalyse={(ids) => void analyse(ids)}
+                    onStartDev={(ids) => setSheet({ kind: "run-all", ids })}
+                    onFinish={() => void finishBatch()}
                     onStopAll={stopRunAll}
                     phase={phase()}
                     queued={queue()}
                     onReorder={(ids) => {
                       const path = repo();
                       if (!path) return;
+                      // A card poll already on its way would bring back the old order: drop it.
+                      cardsGen++;
                       void api.cardReorder(path, ids).then(
                         () => loadCards(),
                         (e) => toast({ tone: "fail", title: "The order was not saved", body: msg(e) }),
                       );
                     }}
                   />
+                  </div>
                   <AgentDock
                     onOpen={(id) => {
                       selectAgent(id);
@@ -883,6 +1019,10 @@ export default function App() {
                     }}
                     onOpenAll={() => setTab("terminal")}
                   />
+                  </div>
+                </Match>
+                <Match when={tab() === "reports"}>
+                  <ReportsView reports={reports()} now={now()} />
                 </Match>
                 <Match when={tab() === "ledger"}>
                   <LedgerView runs={runs()} now={now()} onOpen={openRun} />
@@ -915,6 +1055,24 @@ export default function App() {
               />
             )}
           </Show>
+          <Show when={sheet()?.kind === "run-all" && (sheet() as { ids: number[] })}>
+            {(s) => (
+              <RunAllSheet
+                count={s().ids.length}
+                yard={yard()?.lanes ?? []}
+                base={yard()?.production ?? "main"}
+                production={yard()?.production ?? "main"}
+                integration={yard()?.integration ?? null}
+                selected={selected()}
+                onClose={() => setSheet(null)}
+                onStart={(c) => {
+                  const ids = s().ids;
+                  setSheet(null);
+                  void startDev(ids, c);
+                }}
+              />
+            )}
+          </Show>
           <Show when={sheet()?.kind === "questions" && repo()}>
             {(path) => (
               <QuestionsSheet
@@ -923,10 +1081,7 @@ export default function App() {
                 onChanged={() => void loadCards()}
                 onDone={() => {
                   setSheet(null);
-                  if (phase() === "asking") {
-                    setPhase("working");
-                    void advance();
-                  }
+                  if (phase() === "asking") analysed();
                 }}
                 onStop={stopRunAll}
               />

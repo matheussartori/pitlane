@@ -307,6 +307,7 @@ async fn card_update(
             state: state.map(|s| CardState::parse(&s)).transpose()?,
             lane: lane.map(|l| Some(l).filter(|l| !l.trim().is_empty())),
             tags: None,
+            target: None,
         };
         Ok(cards::update(&open(&path)?, id, patch)?.into())
     })
@@ -419,10 +420,10 @@ async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
 }
 
 #[tauri::command]
-async fn run_start(path: String, card: u32, allow_api_key: Option<bool>) -> CmdResult<RunMeta> {
+async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>) -> CmdResult<RunMeta> {
     blocking(move || {
         let root = open(&path)?.root;
-        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false) }))?;
+        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false), "into": into, "direct": direct.unwrap_or(false), "instructions": instructions }))?;
         Ok(serde_json::from_value(v["run"].clone())?)
     })
     .await
@@ -454,6 +455,95 @@ async fn run_decide(run: String, approval: Option<String>, decision: String, mes
 #[tauri::command]
 async fn run_stop(run: String) -> CmdResult<()> {
     blocking(move || call(serde_json::json!({ "op": "stop", "run": run })).map(drop)).await
+}
+
+/// Stop all: every agent session the daemon runs, and the analyses waiting for a slot.
+#[tauri::command]
+async fn runs_stop_all() -> CmdResult<usize> {
+    blocking(move || {
+        // No daemon, nothing running.
+        let Ok(mut c) = Client::connect(&default_homes().1, None) else { return Ok(0) };
+        Ok(c.call(serde_json::json!({ "op": "stop_all" }))?["stopped"].as_u64().unwrap_or(0) as usize)
+    })
+    .await
+}
+
+/// Stops Run all's analyses (and the ones waiting for a slot); runs keep going.
+#[tauri::command]
+async fn runs_stop_analyses() -> CmdResult<usize> {
+    blocking(move || {
+        let Ok(mut c) = Client::connect(&default_homes().1, None) else { return Ok(0) };
+        Ok(c.call(serde_json::json!({ "op": "stop_analyses" }))?["stopped"].as_u64().unwrap_or(0) as usize)
+    })
+    .await
+}
+
+/// Run all's closing step: Claude does what the person asked for when it is all done. Waits.
+#[tauri::command]
+async fn run_all_finish(path: String, cards: Vec<u32>, instructions: String, into: Option<String>) -> CmdResult<pit_core::report::Finish> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        let v = call(serde_json::json!({ "op": "finish", "repo": root, "cards": cards, "instructions": instructions, "into": into }))?;
+        Ok(pit_core::report::Finish {
+            run: v["run"].as_str().map(str::to_owned),
+            ok: v["ok"].as_bool().unwrap_or(false),
+            summary: v["summary"].as_str().map(str::to_owned),
+            cost_usd: v["cost_usd"].as_f64(),
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn report_create(
+    path: String,
+    cards: Vec<u32>,
+    since: u64,
+    into: Option<String>,
+    direct: bool,
+    instructions: String,
+    finish: Option<pit_core::report::Finish>,
+) -> CmdResult<pit_core::report::Report> {
+    blocking(move || pit_core::report::create(&open(&path)?, &default_homes().1, &cards, since, into, direct, &instructions, finish)).await
+}
+
+#[tauri::command]
+async fn reports_list(path: String) -> CmdResult<Vec<pit_core::report::Report>> {
+    blocking(move || Ok(pit_core::report::list(&default_homes().1, &open(&path)?.root))).await
+}
+
+/// The system print dialog for the window (the Reports screen prints only the report: Save as PDF).
+#[tauri::command]
+fn print_page(window: tauri::WebviewWindow) -> CmdResult<()> {
+    window.print().map_err(|e| e.to_string())
+}
+
+/// The Board's assistant: Claude turns what you typed or said into cards, in the background.
+#[tauri::command]
+async fn board_assist(path: String, text: String) -> CmdResult<()> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        call(serde_json::json!({ "op": "assist", "repo": root, "text": text })).map(drop)
+    })
+    .await
+}
+
+/// Set when the app is quitting, so the hold below does not wait for a new daemon.
+static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While the app is open it holds any daemon that is up; when the app ends, however it ends
+/// (quit, crash, force quit), the connection drops and the daemon stops everything and exits.
+fn hold_daemon() {
+    std::thread::spawn(|| {
+        use std::sync::atomic::Ordering;
+        while !QUITTING.load(Ordering::SeqCst) {
+            if let Ok(c) = Client::connect(&default_homes().1, None) {
+                let _ = c.hold();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    });
 }
 
 #[derive(Debug, Serialize)]
@@ -529,6 +619,24 @@ async fn queue_list(path: String) -> CmdResult<Vec<pit_core::queue::ShipJob>> {
         Ok(serde_json::from_value(v["jobs"].clone())?)
     })
     .await
+}
+
+/// The merge queue paused when Pitlane closed, with how many jobs wait in it.
+#[tauri::command]
+async fn queue_paused() -> CmdResult<usize> {
+    blocking(move || {
+        let home = default_homes().1;
+        if !pit_core::queue::paused(&home) {
+            return Ok(0);
+        }
+        Ok(pit_core::queue::load(&home).iter().filter(|j| j.state.is_open()).count())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn queue_resume() -> CmdResult<()> {
+    blocking(move || call(serde_json::json!({ "op": "queue_resume" })).map(drop)).await
 }
 
 #[tauri::command]
@@ -1089,6 +1197,7 @@ fn extend_path() {
 
 pub fn run() {
     extend_path();
+    hold_daemon();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -1138,6 +1247,13 @@ pub fn run() {
             run_resume,
             run_say,
             run_stop,
+            runs_stop_all,
+            runs_stop_analyses,
+            run_all_finish,
+            report_create,
+            reports_list,
+            print_page,
+            board_assist,
             run_decide,
             run_continue,
             run_verification,
@@ -1161,6 +1277,8 @@ pub fn run() {
             term_list,
             term_buffer,
             queue_add,
+            queue_paused,
+            queue_resume,
             queue_remove,
             accounts_list,
             account_use,
@@ -1174,6 +1292,11 @@ pub fn run() {
         .run(|app, event| {
             // No shell outlives the app.
             if let tauri::RunEvent::Exit = event {
+                // Nothing outlives the app: the daemon stops every agent and ends.
+                QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+                if let Ok(mut c) = Client::connect(&default_homes().1, None) {
+                    let _ = c.call(serde_json::json!({ "op": "shutdown" }));
+                }
                 app.state::<term::Terms>().close_all();
                 app.state::<vscode::Vscode>().stop();
             }

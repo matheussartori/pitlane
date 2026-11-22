@@ -60,7 +60,14 @@ pub struct NewReport {
 }
 
 pub fn new_lane(repo: &Repo, branch: &str, opts: NewOptions) -> Result<NewReport> {
+    new_lane_from(repo, branch, opts, None)
+}
+
+/// A new lane that starts from `from` when that is a lane (Run all into a feature branch: its
+/// newest local work). A trunk or nothing means the flow's base, freshly fetched.
+pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&str>) -> Result<NewReport> {
     let flow = &repo.flow.flow;
+    let from = from.filter(|f| !flow.is_trunk(f));
     if repo.git.raw(&["check-ref-format", "--branch", branch])?.0 != 0 {
         bail!("{branch:?} is not a valid branch name");
     }
@@ -92,6 +99,16 @@ pub fn new_lane(repo: &Repo, branch: &str, opts: NewOptions) -> Result<NewReport
             repo.git
                 .run(&["worktree", "add", "--quiet", "--track", "-b", branch, &path_s, &remote_branch])?;
             (remote_branch, sha)
+        }
+        None if from.is_some() => {
+            let from = from.unwrap_or_default();
+            let sha = match repo.git.rev_parse(&format!("refs/heads/{from}"))? {
+                Some(s) => s,
+                None => repo.git.rev_parse(&repo.remote_ref(from))?.with_context(|| format!("branch {from} not found"))?,
+            };
+            repo.git.run(&["worktree", "add", "--quiet", "--no-track", "-b", branch, &path_s, &sha])?;
+            repo.git.config_set(&format!("branch.{branch}.pitBase"), &sha)?;
+            (from.to_owned(), sha)
         }
         None => {
             let Some(base) = Target::resolve(repo, &flow.base)? else {
@@ -150,6 +167,27 @@ pub fn new_lane(repo: &Repo, branch: &str, opts: NewOptions) -> Result<NewReport
 }
 
 /// The worktree of an existing local branch, creating one under the flow's root when it has none.
+/// Lands a lane in a branch that is not a trunk, on this machine: a merge commit in that
+/// branch's worktree, nothing pushed (the branch ships later like any lane). A conflict is
+/// undone and reported. The worktree must be clean, so nobody's edits are mixed in.
+pub fn land_local(repo: &Repo, branch: &str, into: &str) -> Result<Result<String, Vec<String>>> {
+    let wt = ensure_worktree(repo, into)?;
+    let g = crate::git::Git::new(&wt);
+    if !g.run(&["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {
+        bail!("{into} has changes that are not committed in {}; commit or stash them, then retry", wt.display());
+    }
+    let (code, _, _) = g.raw(&["merge", "--no-ff", "--no-edit", "-m", &format!("Merge {branch} into {into}"), branch])?;
+    if code != 0 {
+        let files: Vec<String> = g.run(&["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default().lines().map(str::to_owned).collect();
+        let _ = g.raw(&["merge", "--abort"]);
+        if files.is_empty() {
+            bail!("git could not merge {branch} into {into}");
+        }
+        return Ok(Err(files));
+    }
+    Ok(Ok(g.run(&["rev-parse", "HEAD"])?.trim().to_owned()))
+}
+
 pub fn ensure_worktree(repo: &Repo, branch: &str) -> Result<PathBuf> {
     if let Some(w) = repo.worktrees()?.into_iter().find(|w| w.branch.as_deref() == Some(branch) && !w.prunable) {
         return Ok(w.path);
