@@ -61,7 +61,28 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       if (new URLSearchParams(location.search).get("state") === "empty") return [] as T;
       return [liveRun(), failedRun(), { ...runMeta, round: 0, verdict: "changes", proofs_ok: false }] as T;
     }
+    case "sessions_list": {
+      if (new URLSearchParams(location.search).get("state") === "empty") return [] as T;
+      const now = Math.floor(Date.now() / 1000);
+      const live = liveRun();
+      return [
+        { ...live, id: "7-analysis-1", kind: "analysis", card: 7, card_title: "Rate-limit the invite endpoint", state: "running", started_at: now - 40, model: "sonnet", cost_usd: 0.03 },
+        { ...live, id: "8-analysis-1", kind: "analysis", card: 8, card_title: "Avatar upload refuses SVG", state: "running", started_at: now - 35, model: "sonnet", waiting: [] },
+        { ...live, started_at: now - 90 },
+      ] as T;
+    }
     case "run_timeline":
+      if (String(args?.run ?? "").includes("analysis"))
+        return pairs([
+          { kind: "started", model: "sonnet", session: "s" },
+          { kind: "text", text: "Reading the card and the invite routes." },
+          { kind: "tool", id: "a1", name: "Grep", detail: "rateLimit" },
+          { kind: "tool-done", id: "a1", ok: true, detail: "3 files" },
+          { kind: "tool", id: "task1", name: "Task", detail: "Find every caller of sendInvite" },
+          { kind: "tool", id: "s1", name: "Grep", detail: "sendInvite(", parent: "task1" },
+          { kind: "text", text: "Found two callers.", parent: "task1" },
+          { kind: "said", text: "Make sure it also covers resend." },
+        ]) as T;
       return (location.hash.includes("3-live") ? liveTimeline() : location.hash.includes("5-failed") ? failedTimeline() : pairs(runTimeline)) as T;
     case "run_follow":
       return undefined as T;

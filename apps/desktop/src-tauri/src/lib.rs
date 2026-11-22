@@ -383,13 +383,37 @@ async fn runs_list(path: String) -> CmdResult<Vec<RunMeta>> {
                 .flatten()
                 .filter_map(|e| std::fs::read_to_string(e.path().join("meta.json")).ok())
                 .filter_map(|t| serde_json::from_str::<RunMeta>(&t).ok())
-                .filter(|m| m.repo == root)
+                .filter(|m| m.repo == root && m.kind == runs::SessionKind::Run)
                 .collect();
             all.sort_by_key(|m| std::cmp::Reverse(m.started_at));
             return Ok(all);
         }
         let v = call(serde_json::json!({ "op": "list", "repo": root }))?;
         Ok(serde_json::from_value(v["runs"].clone())?)
+    })
+    .await
+}
+
+/// Every agent session of the repository, newest first: runs, Run all's analyses and judges.
+#[tauri::command]
+async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        let home = default_homes().1;
+        if Client::connect(&home, None).is_err() {
+            let mut all: Vec<RunMeta> = std::fs::read_dir(runs::runs_dir(&home))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|e| std::fs::read_to_string(e.path().join("meta.json")).ok())
+                .filter_map(|t| serde_json::from_str::<RunMeta>(&t).ok())
+                .filter(|m| m.repo == root)
+                .collect();
+            all.sort_by_key(|m| std::cmp::Reverse(m.started_at));
+            return Ok(all);
+        }
+        let v = call(serde_json::json!({ "op": "sessions", "repo": root }))?;
+        Ok(serde_json::from_value(v["sessions"].clone())?)
     })
     .await
 }
@@ -1142,6 +1166,7 @@ pub fn run() {
             account_use,
             run_timeline,
             run_follow,
+            sessions_list,
             quota
         ])
         .build(tauri::generate_context!())

@@ -105,6 +105,10 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let repo = req.get("repo").and_then(Value::as_str).map(PathBuf::from);
             json!({ "runs": sup.list(repo.as_deref())? })
         }
+        "sessions" => {
+            let repo = req.get("repo").and_then(Value::as_str).map(PathBuf::from);
+            json!({ "sessions": sup.sessions(repo.as_deref())? })
+        }
         "get" => json!({ "run": sup.get(run_arg(req)?)? }),
         "say" => {
             let text = req.get("text").and_then(Value::as_str).context("text is required")?;

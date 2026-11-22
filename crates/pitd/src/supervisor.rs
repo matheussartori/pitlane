@@ -17,7 +17,7 @@ use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::lanes::now_secs;
 use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
 use pit_core::flow;
-use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta, RunState};
+use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
@@ -90,6 +90,23 @@ pub struct Supervisor {
     queue_wake: tokio::sync::Notify,
 }
 
+/// What a side session needs: who it is for, where it runs, and Claude Code's arguments
+/// (without the stream-json ones, which `side_session` adds).
+struct Side {
+    kind: SessionKind,
+    repo: PathBuf,
+    cwd: PathBuf,
+    card: u32,
+    card_title: String,
+    parent: Option<String>,
+    account: String,
+    config_dir: Option<PathBuf>,
+    model: Option<String>,
+    args: Vec<String>,
+    prompt: String,
+    limit: Duration,
+}
+
 pub struct Subscription {
     pub replay: Vec<(usize, RunEvent)>,
     /// `None` when the run is not live: the replay is all there is.
@@ -141,7 +158,13 @@ impl Supervisor {
         Ok(out)
     }
 
+    /// A repository's runs, newest first. Side sessions (analysis, judge) are left out.
     pub fn list(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
+        Ok(self.sessions(repo)?.into_iter().filter(|m| m.kind == SessionKind::Run).collect())
+    }
+
+    /// Every session, runs and side sessions, newest first.
+    pub fn sessions(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
         let live = self.live.lock().unwrap();
         let mut all: Vec<RunMeta> = self
             .list_disk()?
@@ -314,7 +337,7 @@ impl Supervisor {
         }
         {
             let live = self.live.lock().unwrap();
-            if let Some(l) = live.values().find(|l| l.meta.repo == r.root && l.meta.card == card) {
+            if let Some(l) = live.values().find(|l| l.meta.kind == SessionKind::Run && l.meta.repo == r.root && l.meta.card == card) {
                 bail!("card #{card} is already running ({})", l.meta.id);
             }
         }
@@ -360,6 +383,8 @@ impl Supervisor {
             proofs_ok: None,
             base_sha: None,
             brief: None,
+            kind: SessionKind::Run,
+            parent: None,
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -879,41 +904,33 @@ impl Supervisor {
         };
         let routing = Routing::load(&self.cfg.home).ok();
         let account = routing.as_ref().and_then(|rt| rt.account(&meta.account).cloned());
-        let mut cmd = Command::new(&self.cfg.claude_bin);
-        cmd.args(["-p", "--output-format", "json", "--setting-sources", "project,local", "--permission-mode", "default"])
-            .args(["--permission-prompts", "none", "--allowedTools", "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"])
-            .args(["--max-turns", "30"])
-            .arg("--append-system-prompt")
-            .arg(pit_core::verify::JUDGE_RULES)
-            .arg("--json-schema")
-            .arg(pit_core::verify::verdict_schema().to_string());
+        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default", "--permission-prompts", "none"]
+            .map(str::to_owned)
+            .to_vec();
+        args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)".into(), "--max-turns".into(), "30".into()]);
+        args.extend(["--append-system-prompt".into(), pit_core::verify::JUDGE_RULES.into(), "--json-schema".into(), pit_core::verify::verdict_schema().to_string()]);
         if let Some(m) = &model {
-            cmd.args(["--model", m]);
-        }
-        if let Some(dir) = accounts::profile_dir(&meta.account, &self.cfg.home) {
-            cmd.env("CLAUDE_CONFIG_DIR", dir);
+            args.extend(["--model".into(), m.clone()]);
         }
         if let Some(helper) = account.and_then(|a| a.api_key_helper) {
-            cmd.arg("--settings").arg(serde_json::json!({ "apiKeyHelper": helper }).to_string());
+            args.extend(["--settings".into(), serde_json::json!({ "apiKeyHelper": helper }).to_string()]);
         }
-        cmd.current_dir(&meta.worktree)
-            .env_remove("CLAUDECODE")
-            .env_remove("CLAUDE_CODE_ENTRYPOINT")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let run = async {
-            let mut child = cmd.spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(prompt.as_bytes()).await?;
-                stdin.shutdown().await?;
-            }
-            let o = child.wait_with_output().await?;
-            anyhow::Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        let side = Side {
+            kind: SessionKind::Judge,
+            repo: meta.repo.clone(),
+            cwd: meta.worktree.clone(),
+            card,
+            card_title: meta.card_title.clone(),
+            parent: Some(meta.id.clone()),
+            account: meta.account.clone(),
+            config_dir: accounts::profile_dir(&meta.account, &self.cfg.home),
+            model: model.clone(),
+            args,
+            prompt,
+            limit: Duration::from_secs(20 * 60),
         };
-        match tokio::time::timeout(Duration::from_secs(20 * 60), run).await {
-            Ok(Ok(stdout)) => match pit_core::verify::read_judge(&stdout) {
+        match self.side_session(side).await {
+            Ok(stdout) => match pit_core::verify::read_judge(&stdout) {
                 Ok((j, cost, dur)) => {
                     out.judgement = Some(j);
                     out.cost_usd = cost;
@@ -921,8 +938,7 @@ impl Supervisor {
                 }
                 Err(e) => out.error = Some(format!("{e:#}")),
             },
-            Ok(Err(e)) => out.error = Some(format!("{e:#}")),
-            Err(_) => out.error = Some("the judge took longer than 20 minutes".into()),
+            Err(e) => out.error = Some(format!("the judge {e:#}")),
         }
         out
     }
@@ -950,7 +966,7 @@ impl Supervisor {
             let prompt = pit_core::analyze::prompt(&r, &card);
             tasks.push(tokio::spawn(async move {
                 let _slot = gate.acquire().await;
-                let out = me.analyst(&root, &prompt, choice.as_ref(), model.as_deref()).await;
+                let out = me.analyst(&root, &card, &prompt, choice.as_ref(), model.as_deref()).await;
                 (card.id, out)
             }));
         }
@@ -969,39 +985,185 @@ impl Supervisor {
         Ok(serde_json::json!({ "analyzed": results }))
     }
 
-    async fn analyst(&self, root: &Path, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
-        let mut cmd = Command::new(&self.cfg.claude_bin);
-        cmd.args(["-p", "--output-format", "json", "--setting-sources", "project,local", "--permission-mode", "default"])
-            .args(["--permission-prompts", "none", "--allowedTools", "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)"])
-            .args(["--max-turns", "25"])
-            .arg("--append-system-prompt")
-            .arg(pit_core::analyze::RULES)
-            .arg("--json-schema")
-            .arg(pit_core::analyze::schema().to_string());
+    async fn analyst(&self, repo: &Path, card: &cards::Card, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
+        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default", "--permission-prompts", "none"]
+            .map(str::to_owned)
+            .to_vec();
+        args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)".into(), "--max-turns".into(), "25".into()]);
+        args.extend(["--append-system-prompt".into(), pit_core::analyze::RULES.into(), "--json-schema".into(), pit_core::analyze::schema().to_string()]);
         if let Some(m) = model {
-            cmd.args(["--model", m]);
+            args.extend(["--model".into(), m.into()]);
         }
-        if let Some(dir) = choice.and_then(|c| c.config_dir.as_ref()) {
+        let side = Side {
+            kind: SessionKind::Analysis,
+            repo: repo.to_owned(),
+            cwd: repo.to_owned(),
+            card: card.id,
+            card_title: card.title.clone(),
+            parent: None,
+            account: choice.map(|c| c.account.clone()).unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
+            config_dir: choice.and_then(|c| c.config_dir.clone()),
+            model: model.map(str::to_owned),
+            args,
+            prompt: prompt.to_owned(),
+            limit: Duration::from_secs(10 * 60),
+        };
+        let stdout = self.side_session(side).await.map_err(|e| anyhow::anyhow!("the analysis {e:#}"))?;
+        pit_core::analyze::read(&stdout)
+    }
+
+    /// A read-only Claude Code session beside the runs (analysis, judge), recorded and followed
+    /// like a run, so the app shows it live and people can write to it while it works. Returns
+    /// the last `result` line it printed.
+    async fn side_session(&self, side: Side) -> Result<String> {
+        let now = now_secs();
+        let tag = match side.kind {
+            SessionKind::Analysis => "analysis",
+            SessionKind::Judge => "judge",
+            SessionKind::Run => "run",
+        };
+        let id = format!("{}-{tag}-{now}-{}", side.card, &uuid::Uuid::new_v4().simple().to_string()[..4]);
+        let meta = RunMeta {
+            id: id.clone(),
+            repo: side.repo.clone(),
+            card: side.card,
+            card_title: side.card_title.clone(),
+            branch: String::new(),
+            worktree: side.cwd.clone(),
+            agent: "claude-code".into(),
+            model: side.model.clone(),
+            session_id: uuid::Uuid::new_v4().to_string(),
+            pid: None,
+            state: RunState::Running,
+            started_at: now,
+            ended_at: None,
+            cost_usd: None,
+            duration_ms: None,
+            turns: None,
+            tokens: Default::default(),
+            handoff: None,
+            error: None,
+            denied: Vec::new(),
+            resumed_from: None,
+            waiting: Vec::new(),
+            account: side.account.clone(),
+            reason: None,
+            handoff_from: None,
+            exhausted: Vec::new(),
+            next: None,
+            resets_at: None,
+            round: 0,
+            verdict: None,
+            proofs_ok: None,
+            base_sha: None,
+            brief: None,
+            kind: side.kind,
+            parent: side.parent.clone(),
+        };
+        fs::create_dir_all(self.dir(&id))?;
+        self.write_meta(&meta)?;
+        let (tx, _) = broadcast::channel(1024);
+        self.live.lock().unwrap().insert(
+            id.clone(),
+            Live { meta, stdin: None, sent: 0, results: 0, stop_requested: false, events: 0, tx, rules: Vec::new(), limited: false, pending: HashMap::new() },
+        );
+
+        let mut cmd = Command::new(&self.cfg.claude_bin);
+        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
+            .args(["--session-id", &self.get(&id)?.session_id])
+            .args(&side.args);
+        if let Some(dir) = &side.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }
-        cmd.current_dir(root)
+        cmd.current_dir(&side.cwd)
             .env_remove("CLAUDECODE")
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0)
             .kill_on_drop(true);
-        let run = async {
-            let mut child = cmd.spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(prompt.as_bytes()).await?;
-                stdin.shutdown().await?;
+        let work = async {
+            let mut child = cmd.spawn().with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
+            let mut stdin = child.stdin.take().context("no stdin")?;
+            stdin.write_all(format!("{}\n", runs::claude_user_line(&side.prompt)).as_bytes()).await?;
+            stdin.flush().await?;
+            {
+                let mut live = self.live.lock().unwrap();
+                if let Some(l) = live.get_mut(&id) {
+                    l.stdin = Some(stdin);
+                    l.sent = 1;
+                    l.meta.pid = child.id();
+                }
             }
-            let o = child.wait_with_output().await?;
-            anyhow::Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+            self.update(&id, |_| {});
+            let mut err = child.stderr.take().context("no stderr")?;
+            let err_task = tokio::spawn(async move {
+                let mut s = String::new();
+                let _ = tokio::io::AsyncReadExt::read_to_string(&mut err, &mut s).await;
+                s
+            });
+            let mut raw = OpenOptions::new().create(true).append(true).open(self.dir(&id).join("events.jsonl"))?;
+            let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
+            let mut last = None::<String>;
+            let mut ok = None::<bool>;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = writeln!(raw, "{line}");
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                if v.get("type").and_then(Value::as_str) == Some("result") {
+                    last = Some(line.clone());
+                }
+                for ev in runs::read_claude_line(&v) {
+                    let mut done = None;
+                    self.absorb(&id, &ev, &mut done).await;
+                    ok = done.or(ok);
+                    self.emit(&id, ev);
+                }
+            }
+            let status = child.wait().await?;
+            let stderr = err_task.await.unwrap_or_default();
+            if !stderr.trim().is_empty() {
+                let _ = fs::write(self.dir(&id).join("stderr.log"), &stderr);
+            }
+            anyhow::Ok((last, ok, status, stderr))
         };
-        let stdout = tokio::time::timeout(Duration::from_secs(10 * 60), run).await.map_err(|_| anyhow::anyhow!("the analysis took longer than 10 minutes"))??;
-        pit_core::analyze::read(&stdout)
+        let outcome = tokio::time::timeout(side.limit, work).await;
+        let stopped = self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested);
+        let (state, code, result) = match outcome {
+            Ok(Ok((Some(line), Some(true), status, _))) => (RunState::Done, status.code(), Ok(line)),
+            Ok(Ok((last, _, status, stderr))) => {
+                let why = if stopped {
+                    "was stopped".to_owned()
+                } else {
+                    let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
+                    match last {
+                        Some(_) => "ended with an error".to_owned(),
+                        None if tail.is_empty() => format!("exited with {status}"),
+                        None => tail.into_iter().rev().collect::<Vec<_>>().join("\n"),
+                    }
+                };
+                (if stopped { RunState::Stopped } else { RunState::Failed }, status.code(), last.ok_or_else(|| anyhow::anyhow!(why)))
+            }
+            Ok(Err(e)) => (RunState::Failed, None, Err(e)),
+            Err(_) => {
+                if let Some(pid) = self.get(&id).ok().and_then(|m| m.pid) {
+                    signal(pid, libc::SIGTERM);
+                }
+                (RunState::Failed, None, Err(anyhow::anyhow!("took longer than {} minutes", side.limit.as_secs() / 60)))
+            }
+        };
+        let error = result.as_ref().err().map(|e| format!("{e:#}"));
+        self.update(&id, |m| {
+            m.state = state;
+            m.ended_at = Some(now_secs());
+            m.pid = None;
+            if m.error.is_none() {
+                m.error = error;
+            }
+        });
+        self.emit(&id, RunEvent::Exited { code, state });
+        self.live.lock().unwrap().remove(&id);
+        result
     }
 
     /// A person's decision on a card in review. Approve ships the lane one stage (into
@@ -1276,7 +1438,7 @@ fn last_words(timeline: &[(usize, RunEvent)]) -> String {
     let texts: Vec<&str> = timeline
         .iter()
         .filter_map(|(_, e)| match e {
-            RunEvent::Text { text } => Some(text.as_str()),
+            RunEvent::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

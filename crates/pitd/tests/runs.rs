@@ -15,10 +15,10 @@ use tempfile::TempDir;
 /// One result per user message, like the real CLI; exits when stdin closes.
 /// FAKE_MODE=slow waits on SIGINT before answering; FAKE_MODE=ask ends blocked with a question.
 const FAKE: &str = r#"#!/bin/bash
-# The judge: one prompt on stdin, one JSON result. FAKE_VERDICT picks the verdict.
-if [[ " $* " == *" --output-format json "* ]]; then
-  cat > "$PWD/.judge-prompt"
-  echo "{\"type\":\"result\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":40,\"structured_output\":{\"verdict\":\"${FAKE_VERDICT:-changes}\",\"summary\":\"Needs the SVG case.\",\"findings\":[{\"file\":\"a.ts\",\"line\":3,\"severity\":\"major\",\"text\":\"SVG is not refused.\"}]}}"
+# The judge, a side session: one prompt line on stdin, one result. FAKE_VERDICT picks the verdict.
+if [[ " $* " == *" --permission-prompts none "* ]]; then
+  IFS= read -r line; echo "$line" > "$PWD/.judge-prompt"
+  echo "{\"type\":\"result\",\"subtype\":\"success\",\"num_turns\":1,\"usage\":{},\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":40,\"structured_output\":{\"verdict\":\"${FAKE_VERDICT:-changes}\",\"summary\":\"Needs the SVG case.\",\"findings\":[{\"file\":\"a.ts\",\"line\":3,\"severity\":\"major\",\"text\":\"SVG is not refused.\"}]}}"
   exit 0
 fi
 trap 'echo "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"num_turns\":1,\"duration_ms\":5,\"total_cost_usd\":0.01,\"usage\":{}}"; exit 130' INT
@@ -464,6 +464,11 @@ async fn proofs_and_a_judge_then_your_review() {
     assert!(!prompt.contains("Reading the card."), "the agent's words stay out of the judge's context");
     let kinds: Vec<bool> = s.subscribe(&run, 0).unwrap().replay.iter().map(|(_, e)| matches!(e, RunEvent::Proof { .. } | RunEvent::Judged { .. })).collect();
     assert_eq!(kinds.iter().filter(|k| **k).count(), 3);
+    // The judge ran as a session of its own, watchable beside the run, never listed as a run.
+    let judge = s.sessions(None).unwrap().into_iter().find(|m| m.kind == pit_core::runs::SessionKind::Judge).expect("a judge session");
+    assert_eq!(judge.parent.as_deref(), Some(run.as_str()));
+    assert_eq!(judge.state, RunState::Done);
+    assert!(s.list(None).unwrap().iter().all(|m| m.kind == pit_core::runs::SessionKind::Run));
 
     // Ask for changes: the same session continues with the comments, one round allowed.
     let again = s.review(fx.repo.clone(), id, ReviewAction::Changes, Some("Also refuse SVG.".into())).await.unwrap();

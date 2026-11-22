@@ -776,7 +776,7 @@ fn run_figures(m: &RunMeta) -> String {
 fn print_event(e: &RunEvent) {
     match e {
         RunEvent::Started { model, .. } => println!("{} agent started ({model})", paint(RUN, "▸")),
-        RunEvent::Text { text } => println!("{}", text.trim_end()),
+        RunEvent::Text { text, .. } => println!("{}", text.trim_end()),
         RunEvent::Tool { name, detail, .. } => println!("  {} {}", paint(MUTED, name), paint(MUTED, detail)),
         RunEvent::ToolDone { ok: false, detail, .. } => println!("    {} {}", paint(FAIL, "✕"), paint(MUTED, detail)),
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}

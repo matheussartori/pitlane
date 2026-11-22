@@ -13,6 +13,7 @@ import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalsWanting } from "./terminals";
+import { AgentDock, agentsWanting, agentsWorking, selectAgent, setAgentsRepo, setAgentsWatch, startAgents } from "./agents";
 import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
 import { loadPrefs, prefs } from "./prefs";
@@ -251,6 +252,7 @@ export default function App() {
 
   // VS Code loads in the background on the repository, so the Code tab opens at once.
   createEffect(on(repo, (r) => r && prewarmCode(r)));
+  createEffect(on(repo, (r) => setAgentsRepo(r)));
   // VS Code's own folder picker offers the repository and the lanes' worktrees.
   createEffect(() => {
     const r = repo();
@@ -326,6 +328,8 @@ export default function App() {
   const [phase, setPhase] = createSignal<"idle" | "analyzing" | "asking" | "working">("idle");
   const [queue, setQueue] = createSignal<number[]>([]);
   let advancing = false;
+  // While Run all works, the agents' list looks for new sessions every moment.
+  createEffect(() => setAgentsWatch(phase() !== "idle"));
 
   async function runAll(ids: number[]) {
     const path = repo();
@@ -471,6 +475,7 @@ export default function App() {
 
   onMount(async () => {
     void startTerminals();
+    void startAgents();
     try {
       const s = await api.settings();
       setSettings(s);
@@ -680,8 +685,10 @@ export default function App() {
             keys="⌘T new"
             current={here("terminal")}
             onClick={() => setTab("terminal")}
-            count={terminalsWanting() > 0 ? terminalsWanting() : 0}
+            count={terminalsWanting() + agentsWanting()}
             hot
+            live={agentsWorking() > 0}
+            liveLabel={`${agentsWorking()} agent${agentsWorking() === 1 ? "" : "s"} working`}
           />
         </div>
         <div class="navrail-foot">
@@ -869,6 +876,13 @@ export default function App() {
                       );
                     }}
                   />
+                  <AgentDock
+                    onOpen={(id) => {
+                      selectAgent(id);
+                      setTab("terminal");
+                    }}
+                    onOpenAll={() => setTab("terminal")}
+                  />
                 </Match>
                 <Match when={tab() === "ledger"}>
                   <LedgerView runs={runs()} now={now()} onOpen={openRun} />
@@ -877,7 +891,7 @@ export default function App() {
                   <CodeScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />
                 </Match>
                 <Match when={tab() === "terminal"}>
-                  <TerminalScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />
+                  <TerminalScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} onOpenRun={openRun} />
                 </Match>
               </Switch>
             )}
@@ -972,17 +986,20 @@ export default function App() {
 }
 
 /** One screen in the rail: its icon, a count when something waits, its name and key on hover. */
-function RailItem(props: { icon: IconName; label: string; keys?: string; current: boolean; onClick: () => void; count?: number; hot?: boolean }) {
+function RailItem(props: { icon: IconName; label: string; keys?: string; current: boolean; onClick: () => void; count?: number; hot?: boolean; live?: boolean; liveLabel?: string }) {
   return (
     <button
       type="button"
       class="navrail-item"
       aria-current={props.current ? "page" : undefined}
-      aria-label={props.count ? `${props.label}, ${props.count} waiting` : props.label}
-      data-tip={props.keys ? `${props.label}  ${props.keys}` : props.label}
+      aria-label={[props.label, props.count ? `${props.count} waiting` : "", props.live ? props.liveLabel ?? "working" : ""].filter(Boolean).join(", ")}
+      data-tip={[props.keys ? `${props.label}  ${props.keys}` : props.label, props.live ? props.liveLabel : ""].filter(Boolean).join(" · ")}
       onClick={props.onClick}
     >
       <Icon name={props.icon} />
+      <Show when={props.live && !props.count}>
+        <span class="navrail-live" />
+      </Show>
       <Show when={props.count}>
         <span class="navrail-count" data-hot={props.hot ? "" : undefined}>
           {props.count! > 9 ? "9+" : props.count}

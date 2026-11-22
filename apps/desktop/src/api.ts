@@ -286,7 +286,13 @@ export interface RunMeta {
   base_sha?: string | null;
   /** The map of where to look that the run's first message carried. */
   brief?: { files: number; chars: number; ms: number; indexed: number; paths: string[] } | null;
+  /** A card's run, or a side session beside it (Run all's analysis, the judge). */
+  kind?: SessionKind;
+  /** The run a side session belongs to. */
+  parent?: string | null;
 }
+
+export type SessionKind = "run" | "analysis" | "judge";
 
 export interface Quota {
   /** The account the meters are about: this repository's. */
@@ -331,9 +337,9 @@ export type Decision = "once" | "run" | "always" | "deny";
 
 export type RunEvent =
   | { kind: "started"; model: string; session: string }
-  | { kind: "text"; text: string }
-  | { kind: "tool"; id: string; name: string; detail: string }
-  | { kind: "tool-done"; id: string; ok: boolean; detail: string }
+  | { kind: "text"; text: string; parent?: string }
+  | { kind: "tool"; id: string; name: string; detail: string; parent?: string }
+  | { kind: "tool-done"; id: string; ok: boolean; detail: string; parent?: string }
   | { kind: "said"; text: string }
   | { kind: "quota"; window: string; used: number; resets_at: number }
   | { kind: "finished"; ok: boolean; cost_usd: number; duration_ms: number; turns: number; tokens: Tokens; handoff: Handoff | null; denied: string[] }
@@ -529,6 +535,7 @@ export const api = {
   undoClean: (path: string, branch: string) => invoke<UndoReport>("undo_clean", { path, branch }),
   cards: (path: string) => invoke<CardList>("cards_list", { path }),
   runs: (path: string) => invoke<RunMeta[]>("runs_list", { path }),
+  sessions: (path: string) => invoke<RunMeta[]>("sessions_list", { path }),
   runStart: (path: string, card: number, allowApiKey = false) => invoke<RunMeta>("run_start", { path, card, allowApiKey }),
   runContinue: (run: string, allowApiKey: boolean) => invoke<RunMeta>("run_continue", { run, allowApiKey }),
   accounts: (path: string) => invoke<Accounts>("accounts_list", { path }),

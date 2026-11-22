@@ -11,6 +11,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { files, onTerm, openExternal, terms, type Lane, type TermInfo } from "./api";
+import { AgentList, AgentPane, agentGroups, agentSelected, selectAgent } from "./agents";
 import { openInCode } from "./code";
 import { Icon } from "./icons";
 import { dismissable, toast } from "./ui";
@@ -546,6 +547,7 @@ export async function startTerminals() {
 
 /** Opens a terminal in `cwd`, in a new tab, and shows it. */
 export async function openTerminal(cwd: string, label: string): Promise<boolean> {
+  selectAgent(null);
   try {
     const info = await terms.open(cwd, label, 100, 30);
     make(info);
@@ -608,6 +610,7 @@ export function closeTab(id: number) {
 }
 
 function selectTab(id: number) {
+  selectAgent(null);
   setSt("active", id);
   save();
 }
@@ -825,7 +828,7 @@ function TabRow(props: { tab: Tab; index: number }) {
       class="tt"
       role="presentation"
       data-tabrow={props.tab.id}
-      data-active={st.active === props.tab.id ? "" : undefined}
+      data-active={st.active === props.tab.id && !agentSelected() ? "" : undefined}
       data-drop={over()}
       data-dragging={drag()?.what.kind === "tab" && (drag()!.what as { id: number }).id === props.tab.id ? "" : undefined}
     >
@@ -1084,7 +1087,7 @@ function FindBar(props: { term: number; onClose: () => void }) {
   );
 }
 
-export function TerminalScreen(props: { repo: string; repoName: string; lanes: Lane[] }) {
+export function TerminalScreen(props: { repo: string; repoName: string; lanes: Lane[]; onOpenRun: (id: string) => void }) {
   const [menu, setMenu] = createSignal(false);
   let menuBox: HTMLDivElement | undefined;
   dismissable(() => menuBox, menu, () => setMenu(false));
@@ -1121,6 +1124,8 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
   // The Ghostty and iTerm2 keys. Taken before the terminal sees them; Ctrl keys stay the shell's.
   function onKey(e: KeyboardEvent) {
     if (!e.metaKey || e.ctrlKey && !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Equal"].includes(e.code)) return;
+    // An agent on screen: only the keys that leave it for a shell apply.
+    if (agentSelected() && !(e.key.toLowerCase() === "t" && !e.shiftKey) && !/^Digit[1-9]$/.test(e.code)) return;
     if (e.target instanceof HTMLInputElement && e.target.closest(".find")) {
       if (e.key.toLowerCase() !== "f") return;
     }
@@ -1195,9 +1200,12 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
   };
 
   return (
-    <div class="terms" data-side={st.side} data-empty={st.tabs.length === 0 ? "" : undefined}>
-      <Show when={st.tabs.length > 0}>
-        <div class="terms-tabs">
+    <div class="terms" data-side={st.side} data-empty={st.tabs.length === 0 && agentGroups().length === 0 ? "" : undefined}>
+      <Show when={st.tabs.length > 0 || agentGroups().length > 0}>
+        <div class="terms-tabs" data-agents={agentGroups().length > 0 ? "" : undefined}>
+          <div class="ag-side">
+            <AgentList compact={st.side === "top"} />
+          </div>
           <div class="terms-head">
             <Show when={st.side === "left"}>
               <span class="terms-title">Terminals</span>
@@ -1238,6 +1246,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
         </div>
       </Show>
       <div class="terms-stage">
+        <Show when={!agentSelected()} fallback={<AgentPane onOpenRun={props.onOpenRun} />}>
         <Show
           when={tab()}
           keyed
@@ -1272,6 +1281,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
               </Show>
             </div>
           )}
+        </Show>
         </Show>
       </div>
     </div>

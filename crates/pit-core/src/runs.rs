@@ -127,6 +127,23 @@ pub struct RunMeta {
     /// The map of where to look that the first message carried, if any.
     #[serde(default)]
     pub brief: Option<crate::brief::BriefStats>,
+    /// What this session is: a card's run (the default), or a side session the app shows beside
+    /// it (Run all's analysis, the judge).
+    #[serde(default)]
+    pub kind: SessionKind,
+    /// The run a side session belongs to (the judge's run).
+    #[serde(default)]
+    pub parent: Option<String>,
+}
+
+/// Every Claude Code session Pitlane starts, so people can watch and talk to all of them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionKind {
+    #[default]
+    Run,
+    Analysis,
+    Judge,
 }
 
 fn default_account() -> String {
@@ -211,9 +228,26 @@ pub fn rule_allows(rule: &str, tool: &str, input: &Value) -> bool {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RunEvent {
     Started { model: String, session: String },
-    Text { text: String },
-    Tool { id: String, name: String, detail: String },
-    ToolDone { id: String, ok: bool, detail: String },
+    /// `parent` is set inside a subagent: the id of the Task/Agent tool call that started it.
+    Text {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
+    Tool {
+        id: String,
+        name: String,
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
+    ToolDone {
+        id: String,
+        ok: bool,
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
     /// A message from the person, sent while the agent works.
     Said { text: String },
     Quota { window: String, used: f64, resets_at: u64 },
@@ -248,6 +282,8 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
     let ty = v.get("type").and_then(Value::as_str).unwrap_or_default();
     let sub = v.get("subtype").and_then(Value::as_str).unwrap_or_default();
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+    // Messages of a subagent carry the tool call that started it.
+    let parent = v.get("parent_tool_use_id").and_then(Value::as_str).filter(|p| !p.is_empty()).map(str::to_owned);
     match (ty, sub) {
         ("system", "init") => vec![RunEvent::Started { model: s(v, "model"), session: s(v, "session_id") }],
         ("assistant", _) => v
@@ -259,12 +295,13 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
                     .filter_map(|b| match b.get("type").and_then(Value::as_str) {
                         Some("text") => {
                             let t = s(b, "text");
-                            (!t.trim().is_empty()).then_some(RunEvent::Text { text: t })
+                            (!t.trim().is_empty()).then_some(RunEvent::Text { text: t, parent: parent.clone() })
                         }
                         Some("tool_use") if s(b, "name") != "StructuredOutput" => Some(RunEvent::Tool {
                             id: s(b, "id"),
                             name: s(b, "name"),
                             detail: tool_detail(&s(b, "name"), b.get("input").unwrap_or(&Value::Null)),
+                            parent: parent.clone(),
                         }),
                         _ => None,
                     })
@@ -283,6 +320,7 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
                         id: s(b, "tool_use_id"),
                         ok: !b.get("is_error").and_then(Value::as_bool).unwrap_or(false),
                         detail: first_line(&content_text(b.get("content"))),
+                        parent: parent.clone(),
                     })
                     .collect()
             })
@@ -576,10 +614,14 @@ mod tests {
         ]}});
         let ev = read_claude_line(&a);
         assert_eq!(ev.len(), 2);
-        assert_eq!(ev[1], RunEvent::Tool { id: "t1".into(), name: "Bash".into(), detail: "npm test -- validate".into() });
+        assert_eq!(ev[1], RunEvent::Tool { id: "t1".into(), name: "Bash".into(), detail: "npm test -- validate".into(), parent: None });
+
+        // Inside a subagent, every event names the Task call that opened it.
+        let sub = json!({"type":"assistant","parent_tool_use_id":"task1","message":{"content":[{"type":"text","text":"Looking."}]}});
+        assert_eq!(read_claude_line(&sub), vec![RunEvent::Text { text: "Looking.".into(), parent: Some("task1".into()) }]);
 
         let u = json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"FAIL validate.test.ts"}]}});
-        assert_eq!(read_claude_line(&u), vec![RunEvent::ToolDone { id: "t1".into(), ok: false, detail: "FAIL validate.test.ts".into() }]);
+        assert_eq!(read_claude_line(&u), vec![RunEvent::ToolDone { id: "t1".into(), ok: false, detail: "FAIL validate.test.ts".into(), parent: None }]);
 
         let r = json!({"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":4795,"total_cost_usd":0.19,
             "usage":{"input_tokens":2,"output_tokens":367,"cache_read_input_tokens":0,"cache_creation_input_tokens":23181},
