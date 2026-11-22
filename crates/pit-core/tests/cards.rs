@@ -134,6 +134,30 @@ fn the_interview_becomes_decisions() {
     cards::reanswer(&r, c.id, 3, "No").unwrap();
     let decisions = fs::read_to_string(cards::decisions_path(&r)).unwrap();
     assert!(decisions.contains("## D-03: Log refusals?\n\nNo\n") && decisions.ends_with("changed from: Yes, at info level\n"));
+
+    // Talking a decided question over: your turn, then Claude's, whose options become the
+    // question's; the decision stays until you choose again. It survives the card file.
+    assert!(cards::say(&r, c.id, 1, "you", "  ", None).is_err());
+    cards::say(&r, c.id, 1, "you", "And per API key?", None).unwrap();
+    let offer = cards::NewQuestion {
+        text: String::new(),
+        options: vec!["Per IP".into(), "Per API key".into(), " ".into()],
+        recommended: Some(1),
+        context: Some("Keys are what the partners share.".into()),
+    };
+    cards::say(&r, c.id, 1, "claude", "Per key is fairer to partners.", Some(offer)).unwrap();
+    let back = cards::get(&r, c.id).unwrap();
+    let q1 = &back.questions[0];
+    assert_eq!(q1.talk.len(), 2);
+    assert_eq!((q1.talk[0].by.as_str(), q1.talk[1].by.as_str()), ("you", "claude"));
+    assert_eq!(q1.options, vec!["Per IP", "Per API key"]);
+    assert_eq!(q1.recommended, Some(1));
+    assert_eq!(q1.context.as_deref(), Some("Keys are what the partners share."));
+    assert_eq!(q1.answer.as_deref(), Some("Per IP"));
+    assert_eq!(cards::reanswer(&r, c.id, 1, "2").unwrap().card.questions[0].answer.as_deref(), Some("Per API key"));
+    let prompt = pit_core::analyze::talk_prompt(&r, &cards::get(&r, c.id).unwrap(), 1).unwrap();
+    assert!(prompt.contains("The person already decided: Per API key (D-01)"));
+    assert!(prompt.contains("The person: And per API key?") && prompt.contains("You: Per key is fairer"));
 }
 
 #[test]

@@ -119,6 +119,8 @@ export function QuestionAbout(props: { q: OpenQuestion; card?: boolean }) {
 // same question sees the same wait.
 const [waiting, setWaiting] = createSignal<ReadonlyMap<string, string | null>>(new Map());
 const stopped = new Set<string>();
+// Decisions whose conversation is open: a re-read of the cards redraws them, open as they were.
+const [opened, setOpened] = createSignal<ReadonlySet<string>>(new Set());
 const talkKey = (repo: string, card: number, q: number) => `${repo}|${card}-${q}`;
 
 /** Whether Claude is answering on this question, or on any question of the card. */
@@ -324,7 +326,15 @@ export function QuestionTalk(props: {
  */
 export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<Card["questions"]>[number]; onChanged: () => void }) {
   const [editing, setEditing] = createSignal(false);
-  const [talkOpen, setTalkOpen] = createSignal(false);
+  const tk = () => talkKey(props.repo, props.card.id, props.q.id);
+  const talkOpen = () => opened().has(tk());
+  const setTalkOpen = (v: boolean) =>
+    setOpened((o) => {
+      const n = new Set(o);
+      if (v) n.add(tk());
+      else n.delete(tk());
+      return n;
+    });
   const [busy, setBusy] = createSignal(false);
   const asked = (): OpenQuestion => ({
     card: props.card,
@@ -456,6 +466,7 @@ export function InboxView(props: {
       if (document.querySelector("dialog[open]")) return;
       const q = current();
       if (!q) return;
+      if (/^[1-9]$|^Enter$/.test(e.key) && talking(props.repo, q.card.id, q.id)) return;
       if (e.key === "ArrowDown" || e.key === "j") {
         e.preventDefault();
         setIndex(Math.min(index() + 1, questions().length - 1));
@@ -477,6 +488,15 @@ export function InboxView(props: {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
+  /** Cards whose questions are all answered and that have not started: still time to go back. */
+  const settled = () =>
+    (props.cards ?? []).filter(
+      (c) =>
+        (c.state === "inbox" || c.state === "ready") &&
+        !c.lane &&
+        (c.questions ?? []).length > 0 &&
+        (c.questions ?? []).every((q) => q.answer != null),
+    );
   const cardsAsking = () => new Set(questions().map((q) => q.card.id)).size;
   /** One head per card, its answered questions as context, then its open ones. */
   const byCard = () => {
@@ -538,7 +558,14 @@ export function InboxView(props: {
       </For>
 
       <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> {t("Reading the cards")}</div>}>
-        <Show when={questions().length > 0} fallback={<Show when={props.approvals.length === 0}><InboxEmpty /></Show>}>
+        <Show
+          when={questions().length > 0}
+          fallback={
+            <Show when={props.approvals.length === 0 && settled().length === 0}>
+              <InboxEmpty />
+            </Show>
+          }
+        >
           <div class="inbox-list">
             <For each={byCard()}>
               {(g) => (
@@ -586,6 +613,32 @@ export function InboxView(props: {
               )}
             </For>
           </div>
+        </Show>
+        <Show when={settled().length > 0}>
+          <section class="inbox-settled" aria-label={t("Decided, not started")}>
+            <header class="inbox-settled-head">
+              <h2 class="cs-label">{t("Decided, not started")}</h2>
+              <p class="caption">{t("Until a card starts, any decision can change: choose again, or talk it over with Claude.")}</p>
+            </header>
+            <For each={settled()}>
+              {(c) => (
+                <section class="inbox-card" aria-label={t("Card {id}: {title}", { id: c.id, title: c.title })}>
+                  <header class="inbox-card-head">
+                    <button type="button" class="card-link" onClick={() => props.onOpenCard(c.id)}>
+                      <span class="card-id">#{c.id}</span>
+                      {c.title}
+                    </button>
+                    <span class="caption">{plural((c.questions ?? []).length, "{n} decision", "{n} decisions")}</span>
+                  </header>
+                  <dl class="decided">
+                    <For each={c.questions ?? []}>
+                      {(d) => <DecisionItem repo={props.repo} card={c} q={d} onChanged={props.onChanged} />}
+                    </For>
+                  </dl>
+                </section>
+              )}
+            </For>
+          </section>
         </Show>
       </Show>
     </div>

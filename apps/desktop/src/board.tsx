@@ -9,7 +9,7 @@ import { CardImages, attachImages, imagesIn } from "./images";
 import { Linked } from "./links";
 import { Prose, inline } from "./prose";
 import { refreshAgents } from "./agents";
-import { DecisionItem, QuestionAbout, QuestionBlock } from "./inbox";
+import { DecisionItem, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { locale, plural, t } from "./i18n";
@@ -618,15 +618,23 @@ export function BoardView(props: {
   );
 }
 
-/** Run all's questions, one at a time, each with its card as context. */
+/**
+ * Run all's questions, one at a time, each with its card as context and Claude to talk it over
+ * with. Once all are answered nothing starts by itself: every decision of the batch shows, each
+ * can change or be talked over again, and Start runs them.
+ */
 export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: () => void; onDone: () => void; onStop: () => void }) {
   const open = () => openQuestions(props.cards);
   // The count at the start, so "2 of 5" holds while answers land.
   const total = open().length;
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [review, setReview] = createSignal(total === 0);
   const current = () => open()[0];
-  createEffect(on(() => open().length, (n) => n === 0 && props.onDone(), { defer: true }));
+  createEffect(on(() => open().length, (n) => n === 0 && setReview(true), { defer: true }));
+  const decided = () => props.cards.filter((c) => (c.questions ?? []).some((q) => q.answer != null));
+  const decisions = () => decided().reduce((n, c) => n + (c.questions ?? []).filter((q) => q.answer != null).length, 0);
+  const thinking = () => props.cards.some((c) => talking(props.repo, c.id));
 
   async function answer(text: string) {
     const q = current();
@@ -645,33 +653,96 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 
   return (
     <Sheet
-      title={t("Before the run")}
+      title={review() && open().length === 0 ? t("All decided") : t("Before the run")}
       onClose={props.onDone}
       foot={
         <>
-          <span class="sheet-note">
-            {t("Question {i} of {total}", { i: Math.min(total, total - open().length + 1), total })}
-          </span>
+          <Show
+            when={!review()}
+            fallback={
+              <span class="sheet-note">
+                {open().length
+                  ? plural(open().length, "{n} question still open", "{n} questions still open")
+                  : plural(decisions(), "{n} decision, all can still change", "{n} decisions, all can still change")}
+              </span>
+            }
+          >
+            <span class="sheet-note">
+              {t("Question {i} of {total}", { i: Math.min(total, total - open().length + 1), total })}
+            </span>
+          </Show>
           <button type="button" class="btn btn-ghost" onClick={props.onStop} disabled={busy()}>
             {t("Stop Run all")}
           </button>
-          <button type="button" class="btn" onClick={props.onDone} disabled={busy()} title={t("Cards with open questions wait; the rest start now")}>
-            {t("Answer later")}
-          </button>
+          <Show when={!review() && decisions() > 0}>
+            <button type="button" class="btn btn-ghost" onClick={() => setReview(true)} disabled={busy()}>
+              {t("Review decisions")}
+            </button>
+          </Show>
+          <Show when={review() && open().length > 0}>
+            <button type="button" class="btn btn-ghost" onClick={() => setReview(false)}>
+              {t("Keep answering")}
+            </button>
+          </Show>
+          <Show
+            when={review() && open().length === 0}
+            fallback={
+              <button type="button" class="btn" onClick={props.onDone} disabled={busy()} title={t("Cards with open questions wait; the rest start now")}>
+                {t("Answer later")}
+              </button>
+            }
+          >
+            <button
+              type="button"
+              class="btn btn-primary"
+              onClick={props.onDone}
+              disabled={thinking()}
+              title={thinking() ? t("Claude is still answering on one of these cards") : undefined}
+            >
+              <Icon name="play" small />
+              {t("Start")}
+            </button>
+          </Show>
         </>
       }
     >
-      <Show when={current()} keyed>
-        {(q) => (
-          <div class="ask-one">
-            <p class="ask-card">
-              <span class="card-id">#{q.card.id}</span> {q.card.title}
+      <Show
+        when={!review()}
+        fallback={
+          <div class="ask-review">
+            <p class="caption">
+              {t("Go back to any of them before the cards start: choose again, or talk it over with Claude (\u201cand if we did it like this?\u201d).")}
             </p>
-            <p class="inbox-q">{inline(q.text)}</p>
-            <QuestionAbout q={q} />
-            <QuestionBlock q={q} selected busy={busy()} onAnswer={(a) => void answer(a)} />
+            <For each={decided()}>
+              {(c) => (
+                <section class="inbox-card">
+                  <p class="ask-card">
+                    <span class="card-id">#{c.id}</span> {c.title}
+                  </p>
+                  <dl class="decided">
+                    <For each={(c.questions ?? []).filter((q) => q.answer != null)}>
+                      {(q) => <DecisionItem repo={props.repo} card={c} q={q} onChanged={props.onChanged} />}
+                    </For>
+                  </dl>
+                </section>
+              )}
+            </For>
           </div>
-        )}
+        }
+      >
+        <Show when={current()} keyed>
+          {(q) => (
+            <div class="ask-one">
+              <p class="ask-card">
+                <span class="card-id">#{q.card.id}</span> {q.card.title}
+              </p>
+              <p class="inbox-q">{inline(q.text)}</p>
+              <QuestionAbout q={q} />
+              <QuestionBlock q={q} selected busy={busy() || talking(props.repo, q.card.id, q.id)} onAnswer={(a) => void answer(a)} />
+              <QuestionTalk repo={props.repo} card={q.card} q={q.id} talk={q.talk} onChanged={props.onChanged} />
+            </div>
+          )}
+        </Show>
       </Show>
       <Show when={error()}>
         <ErrorLine>{error()}</ErrorLine>
@@ -934,7 +1005,8 @@ export function CardSheet(props: {
                   <div class="sheet-question">
                     <p class="inbox-q">{inline(q.text)}</p>
                     <QuestionAbout q={q} card={false} />
-                    <QuestionBlock q={q} selected={false} busy={busy()} onAnswer={(a) => void answer(q.id, a)} />
+                    <QuestionBlock q={q} selected={false} busy={busy() || talking(props.repo, q.card.id, q.id)} onAnswer={(a) => void answer(q.id, a)} />
+                    <QuestionTalk repo={props.repo} card={q.card} q={q.id} talk={q.talk} onChanged={props.onChanged} />
                   </div>
                 )}
               </For>

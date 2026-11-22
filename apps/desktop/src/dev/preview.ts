@@ -252,7 +252,7 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
         ],
       } as T;
     case "cards_list":
-      return { cards: new URLSearchParams(location.search).get("state") === "empty" ? [] : [...cards].sort((a, b) => ((a as { rank?: number }).rank ?? a.id) - ((b as { rank?: number }).rank ?? b.id)), problems: [] } as T;
+      return { cards: new URLSearchParams(location.search).get("state") === "empty" ? [] : structuredClone(cards).sort((a, b) => ((a as { rank?: number }).rank ?? a.id) - ((b as { rank?: number }).rank ?? b.id)), problems: [] } as T;
     case "card_reorder": {
       const ids = (args as { ids: number[] }).ids;
       ids.forEach((id, i) => {
@@ -267,6 +267,39 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       (c.notes ??= []).push({ at: new Date().toISOString(), by: "you", text: a.text });
       return c as T;
     }
+    case "card_answer":
+    case "card_reanswer": {
+      const a = args as { id: number; question: number; answer: string };
+      const c = cards.find((x) => x.id === a.id) as unknown as { questions: { id: number; options?: string[]; answer?: string; decision?: string }[] };
+      const q = c.questions.find((x) => x.id === a.question)!;
+      const n = Number(a.answer);
+      q.answer = q.options?.[n - 1] && String(n) === a.answer ? q.options[n - 1] : a.answer;
+      q.decision ??= `D-${String(20 + a.question).padStart(2, "0")}`;
+      return { decision: q.decision, card: c } as T;
+    }
+    // Claude answers a question's conversation after a while, with a third way among the options.
+    case "card_talk": {
+      const a = args as { id: number; question: number; message: string | null };
+      const c = cards.find((x) => x.id === a.id) as unknown as {
+        questions: { id: number; options?: string[]; recommended?: number; talk?: { at: string; by: string; text: string; options?: string[]; recommended?: number }[] }[];
+      };
+      const q = c.questions.find((x) => x.id === a.question)!;
+      if (a.message) (q.talk ??= []).push({ at: new Date().toISOString(), by: "you", text: a.message });
+      await new Promise((r) => setTimeout(r, 2500));
+      const options = [...(q.options ?? []).slice(0, 2), "Per account, with a higher limit for workspace admins"];
+      q.options = options;
+      q.recommended = options.length - 1;
+      (q.talk ??= []).push({
+        at: new Date().toISOString(),
+        by: "claude",
+        text: "Good point. `src/invites/limit.ts` already knows the inviter's role, so a separate admin limit is one branch in `allowed()`, no schema change. I would go that way now: admins invite in bursts at onboarding, and a flat limit would block exactly them.",
+        options,
+        recommended: options.length - 1,
+      });
+      return { card: c } as T;
+    }
+    case "card_talk_stop":
+      return 1 as T;
     case "cards_analyze":
       await new Promise((r) => setTimeout(r, 1200));
       return { analyzed: (args as { ids: number[] }).ids.map((card) => ({ card, questions: 0, notes: 1 })) } as T;
