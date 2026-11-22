@@ -58,11 +58,8 @@ export function ReportsView(props: { reports: Report[] | null; now: number }) {
             <Show when={report()} keyed>
               {(r) => (
                 <article class="report-doc">
-                  <div class="report-actions">
-                    <button type="button" class="btn" onClick={() => void exportPdf()}>
-                      <Icon name="ship" small /> {t("Export PDF")}
-                    </button>
-                  </div>
+                  <header class="report-head">
+                  <div class="report-head-text">
                   <h2 class="report-title">
                     {t("Run all on {repo}", { repo: r.repo_name })}
                     {r.into ? ` ${t("into {branch}", { branch: r.into })}` : ""}
@@ -72,6 +69,13 @@ export function ReportsView(props: { reports: Report[] | null; now: number }) {
                     {money(r.cost_usd)}
                     {r.direct ? ` · ${t("worked directly in the branch")}` : ""}
                   </p>
+                  </div>
+                  <div class="report-actions">
+                    <button type="button" class="btn" onClick={() => void exportPdf()}>
+                      <Icon name="ship" small /> {t("Export PDF")}
+                    </button>
+                  </div>
+                  </header>
                   <Show when={r.instructions}>
                     <section class="report-sec">
                       <h3>{t("What you asked for")}</h3>
@@ -80,6 +84,9 @@ export function ReportsView(props: { reports: Report[] | null; now: number }) {
                   </Show>
                   <section class="report-sec">
                     <h3>{t("Cards")}</h3>
+                    <Show when={r.cards.length === 0}>
+                      <p class="report-meta">{t("No card was recorded in this run.")}</p>
+                    </Show>
                     <For each={r.cards}>
                       {(c) => (
                         <div class="report-card">

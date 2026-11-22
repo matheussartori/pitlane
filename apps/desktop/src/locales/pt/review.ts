@@ -30,6 +30,7 @@ export default {
   "{n} cards": "{n} cards",
   "into {branch}": "em {branch}",
   "Export PDF": "Exportar PDF",
+  "No card was recorded in this run.": "Nenhum card foi registrado nesta execução.",
   "Run all on {repo}": "Executar tudo em {repo}",
   "{from} to {to}": "{from} até {to}",
   "{n} agent session": "{n} sessão de agente",
