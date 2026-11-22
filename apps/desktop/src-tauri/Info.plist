@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Pitlane listens only while you hold the microphone in a card, and turns your words into text on this Mac.</string>
+  <string>Pitlane listens only after you click Dictate in a card, until you click it again, and turns your words into text on this Mac.</string>
 </dict>
 </plist>
