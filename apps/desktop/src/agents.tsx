@@ -279,23 +279,39 @@ export function AgentList(props: { compact: boolean }) {
             <span class="ag-bar-fill" />
             <StopAll />
           </div>
-          <For each={agentGroups()}>
-            {(g) => (
-              <div class="ag-group">
-                <div class="ag-card" title={g.title}>
-                  <span class="ag-num">#{g.card}</span>
-                  <span class="ag-title">{g.title}</span>
-                </div>
-                <For each={g.sessions}>
-                  {(m) => (
-                    <>
-                      <SessionRow m={m} />
-                      <For each={subagentsOf(m)}>{(s) => <SubRow m={m} s={s} />}</For>
-                    </>
+          {/* Keyed by card number and by subagent id, not by the objects rebuilt on every refresh:
+              rows keep their DOM while agents work, so a click is never lost to a re-render. */}
+          <For each={agentGroups().map((g) => g.card)}>
+            {(card) => {
+              const g = () => agentGroups().find((x) => x.card === card);
+              return (
+                <Show when={g()}>
+                  {(g) => (
+                    <div class="ag-group">
+                      <div class="ag-card" title={g().title}>
+                        <Show when={card > 0}>
+                          <span class="ag-num">#{card}</span>
+                        </Show>
+                        <span class="ag-title">{g().title}</span>
+                      </div>
+                      <For each={g().sessions}>
+                        {(m) => (
+                          <>
+                            <SessionRow m={m} />
+                            <For each={subagentsOf(m).map((s) => s.id)}>
+                              {(sid) => {
+                                const s = () => subagentsOf(m).find((x) => x.id === sid);
+                                return <Show when={s()}>{(s) => <SubRow m={m} s={s()} />}</Show>;
+                              }}
+                            </For>
+                          </>
+                        )}
+                      </For>
+                    </div>
                   )}
-                </For>
-              </div>
-            )}
+                </Show>
+              );
+            }}
           </For>
         </div>
       </Show>

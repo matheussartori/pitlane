@@ -585,6 +585,7 @@ export const api = {
     invoke<Report>("report_create", { path, cards, since, into, direct, instructions, finish }),
   reports: (path: string) => invoke<Report[]>("reports_list", { path }),
   printPage: () => invoke<void>("print_page"),
+  cardsForget: (path: string, ids: number[]) => invoke<{ notes: number; questions: number }>("cards_forget", { path, ids }),
   cardDelete: (path: string, id: number) => invoke<void>("card_delete", { path, id }),
   cardRestore: (path: string, id: number) => invoke<void>("card_restore", { path, id }),
   boardAssist: (path: string, text: string) => invoke<void>("board_assist", { path, text }),

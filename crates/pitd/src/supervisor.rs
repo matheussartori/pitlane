@@ -528,7 +528,7 @@ impl Supervisor {
         } else {
             cmd.args(["--session-id", &session]);
         }
-        cmd.args(["--setting-sources", "project,local", "--permission-mode", "acceptEdits"])
+        cmd.args(["--setting-sources", "project,local", "--permission-mode", &mode_for(&repo)])
             .arg("--allowedTools")
             .arg(prep.tools.join(","))
             .args(["--max-turns", &prep.max_turns.to_string()])
@@ -981,7 +981,7 @@ impl Supervisor {
         };
         let routing = Routing::load(&self.cfg.home).ok();
         let account = routing.as_ref().and_then(|rt| rt.account(&meta.account).cloned());
-        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default"].map(str::to_owned).to_vec();
+        let mut args: Vec<String> = read_only_args(&mode_for(&meta.repo));
         args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)".into(), "--max-turns".into(), "30".into()]);
         args.extend(["--append-system-prompt".into(), pit_core::verify::JUDGE_RULES.into(), "--json-schema".into(), pit_core::verify::verdict_schema().to_string()]);
         if let Some(m) = &model {
@@ -1069,7 +1069,7 @@ impl Supervisor {
     }
 
     async fn analyst(&self, repo: &Path, card: &cards::Card, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
-        let mut args: Vec<String> = ["--setting-sources", "project,local", "--permission-mode", "default"].map(str::to_owned).to_vec();
+        let mut args: Vec<String> = read_only_args(&mode_for(repo));
         args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)".into(), "--max-turns".into(), "25".into()]);
         args.extend(["--append-system-prompt".into(), pit_core::analyze::RULES.into(), "--json-schema".into(), pit_core::analyze::schema().to_string()]);
         if let Some(m) = model {
@@ -1111,7 +1111,7 @@ impl Supervisor {
             "--setting-sources".into(),
             "project,local".into(),
             "--permission-mode".into(),
-            "acceptEdits".into(),
+            mode_for(&r.root),
             "--allowedTools".into(),
             tools.join(","),
             "--max-turns".into(),
@@ -1166,7 +1166,9 @@ impl Supervisor {
             "--setting-sources".into(),
             "project,local".into(),
             "--permission-mode".into(),
-            "default".into(),
+            mode_for(&r.root),
+            "--disallowedTools".into(),
+            "Edit,Write,NotebookEdit,AskUserQuestion".into(),
             "--allowedTools".into(),
             tools.into(),
             "--max-turns".into(),
@@ -1701,6 +1703,17 @@ markdown that says what and why, with acceptance in a line or two. Read the code
 (paths, names), but never change files and never do the work itself. Before adding, list the cards to avoid duplicates; \
 update an existing card instead when it is the same work. When they ask to change, annotate or delete cards, do that. End with a \
 one-line summary per card you added or changed (#id and title).";
+
+/// The repository's permission mode for Claude Code (`[run] permission_mode`, `auto` by default).
+fn mode_for(repo: &Path) -> String {
+    Repo::open(repo, &home_dir(), &pit_core::default_homes().1).map(|r| r.flow.run.permission_mode).unwrap_or_else(|_| "auto".into())
+}
+
+/// A session that reads and never writes (analysis, judge): the repository's mode, without the
+/// editing tools, and without asking the person in the middle (its questions go in its answer).
+fn read_only_args(mode: &str) -> Vec<String> {
+    ["--setting-sources", "project,local", "--permission-mode", mode, "--disallowedTools", "Edit,Write,NotebookEdit,AskUserQuestion"].map(str::to_owned).to_vec()
+}
 
 /// Removes its key from the set when dropped.
 struct Release<'a>(&'a Mutex<std::collections::HashSet<(PathBuf, u32)>>, (PathBuf, u32));

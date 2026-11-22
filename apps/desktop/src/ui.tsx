@@ -27,7 +27,9 @@ export function Spinner() {
   return <span class="spinner" role="status" aria-label="Working" />;
 }
 
-/** Native <dialog>: Escape and focus trapping come free. Unmount it to close. */
+/** Native <dialog>: Escape and focus trapping come free; a click outside closes it too. Unmount
+ * it to close. With `dirty`, the first Escape or outside click only warns (the edits stay); a
+ * second one within a few seconds discards them. */
 export function Sheet(props: {
   title: string;
   wide?: boolean;
@@ -36,11 +38,29 @@ export function Sheet(props: {
   /** Replaces the plain title in the head. */
   head?: JSX.Element;
   onClose: () => void;
+  /** Unsaved edits: closing asks for a second Escape or click. */
+  dirty?: () => boolean;
   children: JSX.Element;
   foot: JSX.Element;
 }) {
   let ref!: HTMLDialogElement;
+  let warned = 0;
   onMount(() => ref.showModal());
+  const leave = () => {
+    if (props.dirty?.() && Date.now() - warned > 4000) {
+      warned = Date.now();
+      toast({ tone: "info", title: "You have unsaved changes", body: "Save them, or press Escape (or click outside) again to discard." }, 4000);
+      return;
+    }
+    props.onClose();
+  };
+  // Outside = both the press and the release fall outside the sheet's box (a text selection
+  // dragged out of a field does not close it).
+  const outside = (e: PointerEvent) => {
+    const r = ref.getBoundingClientRect();
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+  };
+  let downOutside = false;
   return (
     <dialog
       ref={ref}
@@ -48,7 +68,12 @@ export function Sheet(props: {
       aria-label={props.title}
       onCancel={(e) => {
         e.preventDefault();
-        props.onClose();
+        leave();
+      }}
+      onPointerDown={(e) => (downOutside = e.target === ref && outside(e))}
+      onPointerUp={(e) => {
+        if (downOutside && e.target === ref && outside(e)) leave();
+        downOutside = false;
       }}
     >
       <div class="sheet-head">{props.head ?? <h2>{props.title}</h2>}</div>

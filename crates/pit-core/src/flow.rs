@@ -155,11 +155,15 @@ pub struct RunCfg {
     pub branch_prefix: String,
     /// Add Pitlane's map of where to look (from the repository index) to each run's first message.
     pub brief: bool,
+    /// Claude Code's permission mode for every session Pitlane starts. `auto` (the default): a
+    /// classifier lets safe actions through and blocks risky ones, so agents rarely stop to ask;
+    /// `acceptEdits` or `default` ask more.
+    pub permission_mode: String,
 }
 
 impl Default for RunCfg {
     fn default() -> Self {
-        Self { allow: Vec::new(), max_turns: 60, model: None, branch_prefix: "feat/".into(), brief: true }
+        Self { allow: Vec::new(), max_turns: 60, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into() }
     }
 }
 
@@ -303,6 +307,7 @@ allow       = []            # extra tools for agents, e.g. ["Bash(npm test:*)", 
 max_turns   = 60
 branch_prefix = "feat/"     # a card without a lane runs on feat/<id>-<slug>
 brief = true                # tell the agent where to look, from Pitlane's index of the repository
+permission_mode = "auto"    # Claude Code's mode for every session: auto (asks rarely), acceptEdits or default
 # model     = "sonnet"
 "#;
 

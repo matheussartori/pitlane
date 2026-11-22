@@ -135,6 +135,67 @@ function BoardAsk(props: { repo: string }) {
   );
 }
 
+/** The card carries something of Claude's: the analysis mark, its notes or the judge's, or open questions. */
+export const hasMemory = (c: Card) =>
+  !!c.analyzed || (c.notes ?? []).some((n) => n.by !== "you") || (c.questions ?? []).some((q) => q.answer == null) || (c.after?.length ?? 0) > 0;
+
+/**
+ * Forget what Claude learned, to analyse again from scratch: its notes and the judge's, the open
+ * questions, the analysis mark and the order. Says exactly what goes and what stays, and needs a
+ * deliberate confirm (no Enter-to-confirm, the safe button has the focus).
+ */
+function ForgetSheet(props: { repo: string; cards: Card[]; onDone: () => void; onClose: () => void }) {
+  const [busy, setBusy] = createSignal(false);
+  const notes = () => props.cards.reduce((n, c) => n + (c.notes ?? []).filter((x) => x.by !== "you").length, 0);
+  const open = () => props.cards.reduce((n, c) => n + (c.questions ?? []).filter((q) => q.answer == null).length, 0);
+  const one = () => props.cards.length === 1;
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await api.cardsForget(props.repo, props.cards.map((c) => c.id));
+      props.onDone();
+      toast({ tone: "done", title: one() ? `#${props.cards[0]!.id} is back to not analysed` : `${props.cards.length} cards are back to not analysed`, body: `Forgot ${r.notes} note${r.notes === 1 ? "" : "s"} and ${r.questions} open question${r.questions === 1 ? "" : "s"}.` });
+      props.onClose();
+    } catch (e) {
+      toast({ tone: "fail", title: "Nothing was forgotten", body: e instanceof Error ? e.message : String(e) });
+      setBusy(false);
+    }
+  };
+  return (
+    <Sheet
+      title={one() ? `Forget the analysis of #${props.cards[0]!.id}` : `Forget the analysis of ${props.cards.length} cards`}
+      onClose={props.onClose}
+      foot={
+        <>
+          <button type="button" class="btn btn-ghost" autofocus onClick={props.onClose} disabled={busy()}>
+            Keep it
+          </button>
+          <button type="button" class="btn btn-danger" aria-busy={busy()} disabled={busy()} onClick={() => void go()}>
+            <Show when={busy()} fallback={<Icon name="undo" small />}>
+              <Spinner />
+            </Show>
+            Forget {one() ? "it" : "all"}
+          </button>
+        </>
+      }
+    >
+      <p>
+        Claude starts over on {one() ? "this card" : "these cards"}: the next Analyse reads {one() ? "it" : "them"} from scratch.
+      </p>
+      <ul class="forget-list">
+        <li>
+          <b>Goes:</b> {notes()} note{notes() === 1 ? "" : "s"} by Claude and the judge, {open()} unanswered question{open() === 1 ? "" : "s"}, the
+          analysis mark and the order it worked out.
+        </li>
+        <li>
+          <b>Stays:</b> the spec, your own notes, your answers to its questions, and any lane or run.
+        </li>
+      </ul>
+      <p class="field-help">This cannot be undone.</p>
+    </Sheet>
+  );
+}
+
 /** Deletes a card, with an undo in the toast (the file waits in the board's deleted folder). */
 export async function deleteCard(repo: string, card: Card, onChanged: () => void): Promise<boolean> {
   try {
@@ -246,9 +307,31 @@ export function BoardView(props: {
   const colIcon = { needs: "needs", backlog: "queued", progress: "run", landed: "done" } as const;
 
   // ---- dragging a card up or down its column
-  const [drag, setDrag] = createSignal<{ id: number; col: string; y0: number; dy: number; live: boolean } | null>(null);
+  // y0/s0: pointer and column scroll at the start; py: the pointer now. dy moves the lifted card
+  // with the pointer and with the column's own scrolling.
+  const [drag, setDrag] = createSignal<{ id: number; col: string; y0: number; s0: number; py: number; dy: number; live: boolean } | null>(null);
   let dragged = false;
   const columnEls: Record<string, HTMLElement | undefined> = {};
+  const bodyEls: Record<string, HTMLElement | undefined> = {};
+  /** Near the top or bottom edge of its column, a dragged card scrolls the column, faster the closer it gets. */
+  const EDGE = 64;
+  let scrolling = 0;
+  function autoscroll() {
+    scrolling = 0;
+    const d = drag();
+    const body = d?.live ? bodyEls[d.col] : undefined;
+    if (!d || !body) return;
+    const r = body.getBoundingClientRect();
+    const top = d.py - r.top;
+    const bottom = r.bottom - d.py;
+    const speed = top < EDGE ? -Math.ceil(((EDGE - Math.max(top, 0)) / EDGE) * 16) : bottom < EDGE ? Math.ceil(((EDGE - Math.max(bottom, 0)) / EDGE) * 16) : 0;
+    if (speed !== 0) {
+      const before = body.scrollTop;
+      body.scrollTop += speed;
+      if (body.scrollTop !== before) setDrag({ ...d, dy: d.py - d.y0 + (body.scrollTop - d.s0) });
+    }
+    scrolling = requestAnimationFrame(autoscroll);
+  }
 
   function moveTo(col: string, id: number, index: number) {
     const ids = byColumn(col).map((x) => x.card.id);
@@ -266,17 +349,21 @@ export function BoardView(props: {
 
   function onPointerDown(e: PointerEvent, col: string, id: number) {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input")) return;
-    setDrag({ id, col, y0: e.clientY, dy: 0, live: false });
+    setDrag({ id, col, y0: e.clientY, s0: bodyEls[col]?.scrollTop ?? 0, py: e.clientY, dy: 0, live: false });
     const move = (ev: PointerEvent) => {
       const d = drag();
       if (!d) return;
-      const dy = ev.clientY - d.y0;
-      if (!d.live && Math.abs(dy) < 5) return;
-      setDrag({ ...d, dy, live: true });
+      if (!d.live && Math.abs(ev.clientY - d.y0) < 5) return;
+      const scrolled = (bodyEls[d.col]?.scrollTop ?? 0) - d.s0;
+      setDrag({ ...d, py: ev.clientY, dy: ev.clientY - d.y0 + scrolled, live: true });
+      if (!scrolling) scrolling = requestAnimationFrame(autoscroll);
     };
     const up = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      cancelAnimationFrame(scrolling);
+      scrolling = 0;
       const d = drag();
       setDrag(null);
       if (!d?.live) return;
@@ -292,6 +379,7 @@ export function BoardView(props: {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   }
 
   /** The line that shows where the dragged card would land: before or after which card. */
@@ -299,7 +387,7 @@ export function BoardView(props: {
     const d = drag();
     if (!d?.live || d.col !== col || d.id === id) return undefined;
     const others = byColumn(col).map((x) => x.card.id).filter((x) => x !== d.id);
-    const y = d.y0 + d.dy;
+    const y = d.py;
     const els = others.map((x) => columnEls[col]?.querySelector<HTMLElement>(`[data-card-id="${x}"]`));
     const g = els.filter((el) => {
       const r = el?.getBoundingClientRect();
@@ -312,6 +400,9 @@ export function BoardView(props: {
   };
 
   const unanalysed = () => backlog().filter(({ card }) => !card.analyzed);
+  /** Backlog cards that carry something of Claude's: the analysis, its notes, its open questions. */
+  const remembered = () => backlog().map(({ card }) => card).filter(hasMemory);
+  const [forgetting, setForgetting] = createSignal<number[] | null>(null);
   const runLabel = () =>
     props.phase === "analyzing"
       ? "Stop analysing"
@@ -366,6 +457,16 @@ export function BoardView(props: {
       <Show when={props.repo}>{(r) => <BoardAsk repo={r()} />}</Show>
 
       <For each={props.problems}>{(p) => <ErrorLine>{p}</ErrorLine>}</For>
+      <Show when={forgetting() && props.repo}>
+        {(repo) => (
+          <ForgetSheet
+            repo={repo()}
+            cards={(props.cards ?? []).filter((c) => forgetting()!.includes(c.id))}
+            onDone={props.onChanged}
+            onClose={() => setForgetting(null)}
+          />
+        )}
+      </Show>
 
       <Show when={props.cards} fallback={<div class="loading-line"><Spinner /> Reading the cards</div>}>
         <Show
@@ -408,7 +509,19 @@ export function BoardView(props: {
                         {runLabel()}
                       </button>
                     </Show>
+                    <Show when={col === "backlog" && props.phase === "idle" && props.repo && remembered().length > 0}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-icon col-action col-forget"
+                        aria-label="Forget the analysis"
+                        title={`Forget what Claude learned on ${remembered().length} backlog card${remembered().length === 1 ? "" : "s"}, to analyse again`}
+                        onClick={() => setForgetting(remembered().map((c) => c.id))}
+                      >
+                        <Icon name="undo" small />
+                      </button>
+                    </Show>
                   </h2>
+                  <div class="col-body" ref={(el) => (bodyEls[col] = el)} onScroll={(e) => e.currentTarget.toggleAttribute("data-scrolled", e.currentTarget.scrollTop > 0)}>
                   <Show when={byColumn(col).length > 0} fallback={<p class="col-empty">{columnEmpty[col]}</p>}>
                     <For each={byColumn(col)}>
                       {({ card, p }, i) => (
@@ -488,6 +601,7 @@ export function BoardView(props: {
                       )}
                     </For>
                   </Show>
+                  </div>
                 </section>
               )}
             </For>
@@ -665,6 +779,7 @@ export function CardSheet(props: {
   const [error, setError] = createSignal<string | null>(null);
   const [note, setNote] = createSignal("");
   const [noting, setNoting] = createSignal(false);
+  const [forgetOne, setForgetOne] = createSignal(false);
   const dirty = () =>
     title().trim() !== props.card.title ||
     body() !== props.card.body ||
@@ -735,6 +850,7 @@ export function CardSheet(props: {
       title={`Card #${props.card.id}`}
       class="card-sheet"
       onClose={props.onClose}
+      dirty={() => dirty() || !!note().trim()}
       head={
         <div class="cs-head">
           <div class="cs-head-line">
@@ -853,7 +969,15 @@ export function CardSheet(props: {
             <h3 class="cs-label">
               Notes <span class="count">{notes().length}</span>
               <span class="cs-hint">What Claude learned working this card, and what you add. Every run reads them.</span>
+              <Show when={hasMemory(props.card)}>
+                <button type="button" class="btn btn-ghost cs-forget" disabled={!!live()} onClick={() => setForgetOne(true)} title="Forget Claude's notes, its open questions and the analysis, to analyse this card again">
+                  <Icon name="undo" small /> Forget
+                </button>
+              </Show>
             </h3>
+            <Show when={forgetOne()}>
+              <ForgetSheet repo={props.repo} cards={[props.card]} onDone={props.onChanged} onClose={() => setForgetOne(false)} />
+            </Show>
             <Show when={notes().length > 0} fallback={<p class="cs-empty">No notes yet. Run all's analysis and each run add theirs here.</p>}>
               <ol class="notes">
                 <For each={notes()}>
@@ -1014,6 +1138,7 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
     <Sheet
       title="New card"
       onClose={props.onClose}
+      dirty={() => !!title().trim() || !!body().trim()}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>

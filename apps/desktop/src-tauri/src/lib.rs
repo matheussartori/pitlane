@@ -320,6 +320,12 @@ async fn card_reorder(path: String, ids: Vec<u32>) -> CmdResult<()> {
     blocking(move || cards::reorder(&open(&path)?, &ids)).await
 }
 
+/// Forgets what Claude learned on these cards (its notes, open questions, the analysis).
+#[tauri::command]
+async fn cards_forget(path: String, ids: Vec<u32>) -> CmdResult<cards::Forgot> {
+    blocking(move || cards::forget(&open(&path)?, &ids)).await
+}
+
 /// Deletes a card (undo with `card_restore`).
 #[tauri::command]
 async fn card_delete(path: String, id: u32) -> CmdResult<()> {
@@ -1252,6 +1258,7 @@ pub fn run() {
             card_answer,
             card_reorder,
             card_delete,
+            cards_forget,
             card_restore,
             card_note,
             cards_analyze,

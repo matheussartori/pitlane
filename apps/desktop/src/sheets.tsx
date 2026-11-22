@@ -356,6 +356,7 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
     <Sheet
       title="New lane"
       onClose={props.onClose}
+      dirty={() => !!name().trim()}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
@@ -452,6 +453,7 @@ export function RunAllSheet(props: {
     <Sheet
       title={`Run all ${props.count} card${props.count === 1 ? "" : "s"}`}
       onClose={props.onClose}
+      dirty={() => !!instructions().trim()}
       foot={
         <>
           <button type="button" class="btn btn-ghost" onClick={props.onClose}>

@@ -192,4 +192,17 @@ fn delete_and_restore() {
     // Editing the spec makes it a new card to the analyst.
     let edited = cards::update(&r, b.id, CardPatch { body: Some("changed".into()), ..Default::default() }).unwrap();
     assert!(edited.analyzed.is_none() && edited.areas.is_empty());
+    // Forget: Claude's notes and open questions go, yours and your answers stay.
+    cards::note(&r, b.id, "claude", "found it in src/x.ts").unwrap();
+    cards::note(&r, b.id, "you", "mine").unwrap();
+    cards::ask(&r, b.id, vec![q("Open?", &["a", "b"], Some(0)), q("Answered?", &["a", "b"], Some(0))]).unwrap();
+    let qid = cards::get(&r, b.id).unwrap().questions[1].id;
+    cards::answer(&r, b.id, qid, "a").unwrap();
+    cards::mark_analyzed(&r, b.id, vec![], vec!["engine".into()]).unwrap();
+    let f = cards::forget(&r, &[b.id]).unwrap();
+    assert_eq!((f.notes, f.questions), (1, 1));
+    let left = cards::get(&r, b.id).unwrap();
+    assert!(left.analyzed.is_none() && left.areas.is_empty());
+    assert_eq!(left.notes.len(), 1);
+    assert_eq!(left.questions.len(), 1);
 }

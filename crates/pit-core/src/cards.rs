@@ -378,6 +378,35 @@ pub fn delete(repo: &Repo, id: u32) -> Result<Card> {
     Ok(card)
 }
 
+/// What `forget` took off a card.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Forgot {
+    pub notes: usize,
+    pub questions: usize,
+}
+
+/// Forgets what Claude learned on these cards, to analyse them again from scratch: its notes and
+/// the judge's, the questions nobody answered yet, the analysis mark and the order it worked out.
+/// Your own notes and your answers (decisions) stay.
+pub fn forget(repo: &Repo, ids: &[u32]) -> Result<Forgot> {
+    let _lock = Lock::take(repo)?;
+    let mut out = Forgot::default();
+    for &id in ids {
+        let mut card = get(repo, id)?;
+        let (n, q) = (card.notes.len(), card.questions.len());
+        card.notes.retain(|x| x.by == "you");
+        card.questions.retain(|x| !x.is_open());
+        out.notes += n - card.notes.len();
+        out.questions += q - card.questions.len();
+        card.analyzed = None;
+        card.after.clear();
+        card.areas.clear();
+        card.updated = timestamp(now_secs());
+        write(&card)?;
+    }
+    Ok(out)
+}
+
 /// Brings a deleted card back.
 pub fn restore(repo: &Repo, id: u32) -> Result<Card> {
     let _lock = Lock::take(repo)?;
