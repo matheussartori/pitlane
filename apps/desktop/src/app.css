@@ -628,8 +628,8 @@ body[data-resizing] .pane { pointer-events: none; }
 
 /* ---------- Dictation: a quiet control beside a field's label ---------- */
 .field-head { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
-.field-head .dictate { margin-inline-start: auto; }
-.dictate { height: 22px; padding-inline: var(--space-2xs); font-size: var(--text-sm); }
+.dictate { height: var(--control-h); padding-inline: var(--space-xs); font-size: var(--text-sm); } /* beside other controls it takes their height */
+.field-head .dictate { margin-inline-start: auto; height: 22px; padding-inline: var(--space-2xs); } /* beside a label it stays compact */
 .dictate[data-phase="listening"] { color: var(--color-ink); background: var(--color-paper-3); box-shadow: var(--ring); }
 .dictate[data-phase="listening"] .icon { color: var(--color-accent-text); }
 .dictate .figure { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
@@ -787,6 +787,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .board-ask { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); }
 .board-ask:focus-within { box-shadow: var(--ring-strong); }
 .board-ask .ag-prompt { line-height: 28px; }
+.board-ask > .btn { height: 28px; padding-inline: var(--space-xs); font-size: var(--text-sm); } /* Dictate and Ask share one height, size and baseline */
 .board-ask-field { flex: 1; min-width: 0; min-height: 28px; padding: 5px 0; border: 0; background: none; color: var(--color-ink); font: inherit; line-height: 1.4; resize: none; outline: none; }
 .board-ask-field::placeholder { color: var(--color-muted); }
 .field-label-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); }

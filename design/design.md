@@ -12,6 +12,9 @@ Live specimen: `design/index.html`. Research behind it: `docs/research/ux-resear
 ## Tokens
 `design/tokens.css` is the source of truth. Roles:
 - Frame: `--color-frame` around the content panel. Ground: `--color-paper` (near-black graphite, hue 255, low chroma), `-2` panels and cards, `-3` hover and menus, `-sunk` terminal, diff, inputs
+- Layers alternate, as in Warp (revised 22 nov 2026): neutral graphite with near-zero chroma, never one flat block. Dark: frame near-black, panel graphite, wells, terminals and inputs sunk back to near-black, cards and menus a step lighter. Light: frame grey, panel white, wells grey, cards white again. Adjacent surfaces always differ by one step
+- Terminal text uses `--color-term-ink` (softer than UI ink) at line-height 1.35, and selection uses `--color-term-select`: calm to read for hours
+- Alignment: controls in one row share one height (26, or 28 inside the Ask bar) and one font size; a compact 22px control only sits beside a label
 - Ink: `--color-ink`, `--color-ink-2`, `--color-muted`; rules `--color-rule`, `--color-rule-strong`
 - Accent `--color-accent` (signal orange, hue 58) means "your move" only: the one primary button, focus, and small marks (a 2px stripe, an icon and its word, a lane number). Never a fill behind a row or a card. Under 2% of a screen
 - States: `--color-run`, `--color-done`, `--color-fail` (+ `-wash`). Never colour alone: icon + word + colour

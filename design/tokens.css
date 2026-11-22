@@ -1,22 +1,24 @@
 /* Pitlane tokens. Single source of truth for the desktop app, the CLI's HTML views and the docs.
- * Dark is the default rendering; light is re-derived (never inverted). Hue anchor: 255 (asphalt).
+ * Dark is the default rendering; light is re-derived (never inverted). Grounds are neutral graphite (hue 255, near-zero chroma), in the line of Warp: layers alternate (frame darkest, panel, sunk wells and terminals), never one flat block.
  * Accent: signal orange, hue 58. It means "your move" and nothing else. */
 :root {
   color-scheme: dark;
 
   /* Ground: near-black graphite, small elevation steps, one sunk step for terminals and wells. */
-  --color-paper: oklch(16% 0.006 255);
-  --color-paper-2: oklch(18.5% 0.007 255);
-  --color-paper-3: oklch(22% 0.008 255);
-  --color-paper-sunk: oklch(13.5% 0.006 255);
-  --color-frame: oklch(11.5% 0.006 255); /* the window around the content panel, darkest */
-  --color-rule: oklch(25.5% 0.008 255);
-  --color-rule-strong: oklch(33% 0.01 255);
+  --color-paper: oklch(15.5% 0.002 255);
+  --color-paper-2: oklch(19% 0.002 255);
+  --color-paper-3: oklch(23.5% 0.003 255);
+  --color-paper-sunk: oklch(11.5% 0.001 255);
+  --color-frame: oklch(8.5% 0.001 255); /* the window around the content panel, darkest */
+  --color-rule: oklch(25% 0.003 255);
+  --color-rule-strong: oklch(33% 0.004 255);
 
   /* Ink. */
-  --color-ink: oklch(93% 0.004 255);
-  --color-ink-2: oklch(78% 0.006 255);
-  --color-muted: oklch(63% 0.008 255);
+  --color-ink: oklch(92% 0.002 90);
+  --color-ink-2: oklch(75% 0.002 255);
+  --color-muted: oklch(59% 0.003 255);
+  --color-term-ink: oklch(86% 0.002 90); /* terminal text: softer than UI ink, as in Warp */
+  --color-term-select: oklch(30% 0.004 255);
 
   /* Accent: your move. Primary action, focus, selection, "needs you". Under 5% of any screen. */
   --color-accent: oklch(74% 0.15 58);
@@ -94,16 +96,18 @@
  * Applied by an explicit [data-mode|data-theme="light"], or by the OS when no mode is set. */
 :root[data-mode="light"], :root[data-theme="light"] {
   color-scheme: light;
-  --color-paper: oklch(98.5% 0.002 255);
-  --color-paper-2: oklch(96.8% 0.003 255);
-  --color-paper-3: oklch(94% 0.004 255);
-  --color-paper-sunk: oklch(99% 0.003 255);
-  --color-frame: oklch(95.2% 0.004 255); /* the window around the content panel */
-  --color-rule: oklch(91% 0.005 255);
-  --color-rule-strong: oklch(83% 0.007 255);
-  --color-ink: oklch(21% 0.014 255);
-  --color-ink-2: oklch(36% 0.014 255);
-  --color-muted: oklch(49% 0.014 255);
+  --color-paper: oklch(99.6% 0 0);
+  --color-paper-2: oklch(96.6% 0.001 255);
+  --color-paper-3: oklch(93.2% 0.002 255);
+  --color-paper-sunk: oklch(97.4% 0.001 255);
+  --color-frame: oklch(93.8% 0.002 255); /* the window around the content panel */
+  --color-rule: oklch(90.5% 0.002 255);
+  --color-rule-strong: oklch(83% 0.003 255);
+  --color-ink: oklch(20% 0.003 255);
+  --color-ink-2: oklch(38% 0.003 255);
+  --color-muted: oklch(50% 0.004 255);
+  --color-term-ink: oklch(27% 0.003 255);
+  --color-term-select: oklch(89% 0.004 255);
   --color-accent: oklch(70% 0.175 55);
   --color-accent-ink: oklch(20% 0.04 55);
   --color-accent-text: oklch(51% 0.16 48);
@@ -127,16 +131,18 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-mode]):not([data-theme]) {
     color-scheme: light;
-    --color-paper: oklch(98.5% 0.002 255);
-    --color-paper-2: oklch(96.8% 0.003 255);
-    --color-paper-3: oklch(94% 0.004 255);
-    --color-paper-sunk: oklch(99% 0.003 255);
-    --color-frame: oklch(95.2% 0.004 255); /* the window around the content panel */
-    --color-rule: oklch(91% 0.005 255);
-    --color-rule-strong: oklch(83% 0.007 255);
-    --color-ink: oklch(21% 0.014 255);
-    --color-ink-2: oklch(36% 0.014 255);
-    --color-muted: oklch(49% 0.014 255);
+    --color-paper: oklch(99.6% 0 0);
+    --color-paper-2: oklch(96.6% 0.001 255);
+    --color-paper-3: oklch(93.2% 0.002 255);
+    --color-paper-sunk: oklch(97.4% 0.001 255);
+    --color-frame: oklch(93.8% 0.002 255); /* the window around the content panel */
+    --color-rule: oklch(90.5% 0.002 255);
+    --color-rule-strong: oklch(83% 0.003 255);
+    --color-ink: oklch(20% 0.003 255);
+    --color-ink-2: oklch(38% 0.003 255);
+    --color-muted: oklch(50% 0.004 255);
+  --color-term-ink: oklch(27% 0.003 255);
+  --color-term-select: oklch(89% 0.004 255);
     --color-accent: oklch(70% 0.175 55);
     --color-accent-ink: oklch(20% 0.04 55);
     --color-accent-text: oklch(51% 0.16 48);

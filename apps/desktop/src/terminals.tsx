@@ -220,10 +220,10 @@ const dark = () => getComputedStyle(document.documentElement).getPropertyValue("
 function theme() {
   return {
     background: tok("--color-paper-sunk"),
-    foreground: tok("--color-ink"),
+    foreground: tok("--color-term-ink"),
     cursor: tok("--color-accent"),
     cursorAccent: tok("--color-paper-sunk"),
-    selectionBackground: dark() ? "#3a3f4b" : "#d6dbe4",
+    selectionBackground: tok("--color-term-select"),
     scrollbarSliderBackground: dark() ? "#ffffff18" : "#00000018",
     scrollbarSliderHoverBackground: dark() ? "#ffffff30" : "#00000030",
     black: tok("--color-paper-3"),
@@ -419,7 +419,7 @@ function make(info: TermInfo): Live {
   const term = new Terminal({
     fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
     fontSize: st.font,
-    lineHeight: 1.25,
+    lineHeight: 1.35, // Warp-like air between lines
     cursorBlink: true,
     scrollback: 10000,
     macOptionIsMeta: true,
