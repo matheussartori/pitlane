@@ -32,7 +32,7 @@ export function Spinner() {
   return <span class="spinner" role="status" aria-label={t("Working")} />;
 }
 
-/** Tooltips for any element with `data-tip` (the nav rail draws its own, to the right): one floating label, placed in the window (never
+/** Tooltips for any element with `data-tip` (beside the nav rail, below or above elsewhere): one floating label, placed in the window (never
  *  clipped by a scrolling list), after a short hover or at once on keyboard focus. Install once. */
 let tipsInstalled = false;
 export function installTips() {
@@ -50,8 +50,16 @@ export function installTips() {
     tip.textContent = text;
     tip.dataset.on = "";
     const r = el.getBoundingClientRect();
+    const side = el.classList.contains("navrail-item");
+    if (side) tip.dataset.side = "";
+    else delete tip.dataset.side;
     const w = tip.offsetWidth;
     const h = tip.offsetHeight;
+    if (side) {
+      tip.style.left = `${r.right + 8}px`;
+      tip.style.top = `${r.top + r.height / 2 - h / 2}px`;
+      return;
+    }
     const below = r.bottom + 6 + h <= window.innerHeight;
     const x = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
     tip.style.left = `${x}px`;
@@ -63,7 +71,7 @@ export function installTips() {
     delete tip.dataset.on;
   };
   document.addEventListener("pointerover", (e) => {
-    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]:not(.navrail-item)") ?? null;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]") ?? null;
     if (el === on) return;
     hide();
     if (!el) return;
@@ -71,7 +79,7 @@ export function installTips() {
     timer = window.setTimeout(() => on === el && show(el), 350);
   });
   document.addEventListener("focusin", (e) => {
-    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]:not(.navrail-item)") ?? null;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]") ?? null;
     hide();
     if (el?.matches(":focus-visible")) (on = el), show(el);
   });

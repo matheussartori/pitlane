@@ -18,9 +18,16 @@ pit-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2", features = ["unstable"] }
+tauri = { version = "2", features = ["unstable", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 portable-pty = "0.9"
 whisper-rs = { version = "0.16", features = ["metal"] }
 cpal = "0.18"
+
+# The Code tab cuts holes in VS Code's view for the app's tooltips and toasts (see `holes.rs`).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGPath"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "objc2-core-graphics", "CALayer", "CAShapeLayer"] }

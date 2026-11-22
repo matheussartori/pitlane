@@ -492,6 +492,8 @@ export const vscode = {
   /** Puts VS Code on the tab; true when it is already drawn, else it comes in by itself (onVscodeReady). */
   show: (folder: string, r: { x: number; y: number; w: number; h: number }, bg: string) => invoke<boolean>("vscode_show", { folder, ...r, bg }),
   hide: () => invoke<void>("vscode_hide"),
+  /** What the page draws over VS Code (window rects: x, y, w, h, corner radius), shown through it. */
+  holes: (holes: [number, number, number, number, number][]) => invoke<void>("vscode_holes", { holes }),
   /** The folders VS Code's own picker offers. */
   places: (places: { root: string; label: string; kind: "repo" | "lane" }[]) => invoke<void>("vscode_places", { places }),
   open: (path: string, line?: number, col?: number) => invoke<void>("vscode_open", { path, line: line ?? null, col: col ?? null }),

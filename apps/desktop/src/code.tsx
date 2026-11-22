@@ -226,6 +226,28 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       else void place();
     });
     mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
+    // Tooltips and toasts stay with VS Code in view: its view gets a hole where each one draws.
+    let sent = "[]";
+    const cutHoles = () => {
+      const area = host.getBoundingClientRect();
+      const holes: [number, number, number, number, number][] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(".tip[data-on], .toasts > .toast")) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.right <= area.left || r.left >= area.right || r.bottom <= area.top || r.top >= area.bottom) continue;
+        holes.push([r.left, r.top, r.width, r.height, parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0]);
+      }
+      const now = JSON.stringify(holes);
+      if (now === sent) return;
+      sent = now;
+      void vscode.holes(holes).catch(() => {});
+    };
+    let frame = 0;
+    const holesSoon = () => {
+      if (!frame) frame = requestAnimationFrame(() => ((frame = 0), cutHoles()));
+    };
+    const ho = new MutationObserver(holesSoon);
+    ho.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-on", "style"] });
+    window.addEventListener("resize", holesSoon);
     let offReady: (() => void) | null = null;
     let offPlace: (() => void) | null = null;
     void onVscodeReady((folder) => folder === root() && setState("ready")).then((off) => (alive ? (offReady = off) : off()));
@@ -239,6 +261,10 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       offPlace?.();
       ro.disconnect();
       mo.disconnect();
+      ho.disconnect();
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", holesSoon);
+      if (sent !== "[]") void vscode.holes([]).catch(() => {});
       window.removeEventListener("pitlane-code-open", onRequest);
       void vscode.hide().catch(() => {});
     });
