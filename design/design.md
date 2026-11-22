@@ -19,7 +19,7 @@ Live specimen: `design/index.html`. Research behind it: `docs/research/ux-resear
 - Accent `--color-accent` (signal orange, hue 58) means "your move" only: the one primary button, focus, and small marks (a 2px stripe, an icon and its word, a lane number). Never a fill behind a row or a card. Under 2% of a screen
 - States: `--color-run`, `--color-done`, `--color-fail` (+ `-wash`). Never colour alone: icon + word + colour
 - Faces: Geist (variable) for everything, 400/500 in the UI and 600 only for titles; Geist Mono for code, terminal, branch names, lane numbers and figures that compare (tabular-nums)
-- Scale: 13px UI, 12 secondary, 11 meta; prose 14; titles 15 (sheets) and 16 (screens); nothing above 18. Space: 4px grid (`--space-*`), rows 30 to 38, controls 26 (30 prominent). Radius 3/5/7, no pills (round only for switches and meters)
+- Scale: 14px UI, 13 secondary, 12 meta; prose 15; titles 16 (sheets) and 18 (screens); nothing above 20. Space: 4px grid (`--space-*`), rows 32 to 40, controls 28 (32 prominent). Dark grounds are charcoal (frame L 16.5%, panel 22%), never near-black. Terminal: Hack 14 (Warp's face), bundled. Radius 3/5/7, no pills (round only for switches and meters)
 - Depth on dark is lightness + inset hairline (`--ring`), never drop shadow
 
 ## Controls

@@ -993,7 +993,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-dot[data-s="fail"] { color: var(--color-fail); }
 .cc-dot[data-s="work"] { color: var(--color-muted); animation: shimmer 1.2s var(--ease-in-out) infinite; }
 .cc-dot[data-s="ended"] { color: var(--color-muted); }
-.cc-text { min-width: 0; color: var(--color-ink); font-family: var(--font-body); font-size: 13.5px; line-height: 1.55; }
+.cc-text { min-width: 0; color: var(--color-ink); font-family: var(--font-body); font-size: 14.5px; line-height: 1.55; }
 .cc-text :where(p, ul, pre) { margin: 0 0 var(--space-2xs); }
 .cc-text code { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-accent-text); }
 .cc-text pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: var(--color-paper-2); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; }

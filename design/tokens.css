@@ -1,26 +1,26 @@
 /* Pitlane tokens. Single source of truth for the desktop app, the CLI's HTML views and the docs.
- * Dark is the default rendering; light is re-derived (never inverted). Grounds are neutral graphite (hue 255, near-zero chroma), in the line of Warp: layers alternate (frame darkest, panel, sunk wells and terminals), never one flat block.
+ * Dark is the default rendering; light is re-derived (never inverted). Grounds are neutral charcoal (hue 255, near-zero chroma), lifted off black as Warp's are: layers alternate (frame darkest, panel, sunk wells and terminals), never one flat block.
  * Accent: signal orange, hue 58. It means "your move" and nothing else. */
 :root {
   color-scheme: dark;
 
-  /* Ground: near-black graphite, small elevation steps, one sunk step for terminals and wells. */
-  --color-paper: oklch(15.5% 0.002 255);
-  --color-paper-2: oklch(19% 0.002 255);
-  --color-paper-3: oklch(23.5% 0.003 255);
-  --color-paper-sunk: oklch(11.5% 0.001 255);
-  --color-frame: oklch(8.5% 0.001 255); /* the window around the content panel, darkest */
-  --color-rule: oklch(25% 0.003 255);
-  --color-rule-strong: oklch(33% 0.004 255);
+  /* Ground: charcoal, never near-black, small elevation steps, one sunk step for terminals and wells. */
+  --color-paper: oklch(22% 0.003 255);
+  --color-paper-2: oklch(25.5% 0.003 255);
+  --color-paper-3: oklch(30% 0.004 255);
+  --color-paper-sunk: oklch(19% 0.002 255);
+  --color-frame: oklch(16.5% 0.002 255); /* the window around the content panel, darkest */
+  --color-rule: oklch(31% 0.004 255);
+  --color-rule-strong: oklch(39% 0.005 255);
 
   /* Ink. */
-  --color-ink: oklch(92% 0.002 90);
-  --color-ink-2: oklch(75% 0.002 255);
-  --color-muted: oklch(59% 0.003 255);
-  --color-term-ink: oklch(86% 0.002 90); /* terminal text: softer than UI ink, as in Warp */
-  --color-term-select: oklch(30% 0.004 255);
+  --color-ink: oklch(94% 0.002 90);
+  --color-ink-2: oklch(80% 0.002 255);
+  --color-muted: oklch(66% 0.003 255);
+  --color-term-ink: oklch(90% 0.002 90); /* terminal text: softer than UI ink, as in Warp */
+  --color-term-select: oklch(37% 0.006 255);
   /* The terminal's 16 colours, as Warp tunes them: calm, each normal and bright one distinct. */
-  --ansi-black: oklch(38% 0.004 255); --ansi-bright-black: oklch(56% 0.004 255);
+  --ansi-black: oklch(45% 0.004 255); --ansi-bright-black: oklch(62% 0.004 255);
   --ansi-red: oklch(72% 0.15 25); --ansi-bright-red: oklch(80% 0.11 25);
   --ansi-green: oklch(79% 0.14 145); --ansi-bright-green: oklch(87% 0.11 145);
   --ansi-yellow: oklch(86% 0.12 95); --ansi-bright-yellow: oklch(92% 0.09 95);
@@ -33,21 +33,21 @@
   --color-accent: oklch(74% 0.15 58);
   --color-accent-ink: oklch(20% 0.035 58);
   --color-accent-text: oklch(78% 0.13 60);
-  --color-accent-wash: oklch(22% 0.03 58);
+  --color-accent-wash: oklch(28% 0.035 58);
   --color-focus: oklch(76% 0.15 58);
 
   /* Agent states. Never colour alone: every state also has an icon and a word. */
   --color-run: oklch(80% 0.07 235);
   --color-done: oklch(78% 0.14 152);
   --color-fail: oklch(70% 0.17 25);
-  --color-fail-wash: oklch(27% 0.06 25);
+  --color-fail-wash: oklch(32% 0.06 25);
   --color-scrim: oklch(8% 0.01 255 / 0.6); /* behind a modal */
 
   /* Diff. */
-  --color-add: oklch(29% 0.055 152);
-  --color-add-strong: oklch(38% 0.09 152);
-  --color-del: oklch(28% 0.055 25);
-  --color-del-strong: oklch(37% 0.1 25);
+  --color-add: oklch(33% 0.055 152);
+  --color-add-strong: oklch(42% 0.09 152);
+  --color-del: oklch(32% 0.055 25);
+  --color-del-strong: oklch(41% 0.1 25);
 
   /* Code. */
   --code-keyword: oklch(80% 0.09 285);
@@ -62,15 +62,15 @@
   --font-outlier: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
   --font-mono: var(--font-outlier);
 
-  /* Scale: 13px is the UI default; nothing in the app is larger than 18. Prose reads at --text-lg. */
-  --text-xs: 0.6875rem;   /* 11: meta, kbd, figures under a row */
-  --text-sm: 0.75rem;     /* 12: secondary rows, labels */
-  --text-md: 0.8125rem;   /* 13: UI default */
-  --text-lg: 0.875rem;    /* 14: prose (specs, walkthroughs) */
-  --text-xl: 0.9375rem;   /* 15: sheet and panel titles */
-  --text-2xl: 1rem;       /* 16: screen titles */
-  --text-3xl: 0.75rem;    /* 12: lane numbers, in mono */
-  --text-display: 1.125rem;/* 18: an empty state's head */
+  /* Scale: 14px is the UI default (Warp-sized, not a cramped IDE); nothing in the app is larger than 20. Prose reads at --text-lg. */
+  --text-xs: 0.75rem;     /* 12: meta, kbd, figures under a row */
+  --text-sm: 0.8125rem;   /* 13: secondary rows, labels */
+  --text-md: 0.875rem;    /* 14: UI default */
+  --text-lg: 0.9375rem;   /* 15: prose (specs, walkthroughs) */
+  --text-xl: 1rem;        /* 16: sheet and panel titles */
+  --text-2xl: 1.125rem;   /* 18: screen titles */
+  --text-3xl: 0.8125rem;  /* 13: lane numbers, in mono */
+  --text-display: 1.25rem; /* 20: an empty state's head */
   --weight-regular: 400; --weight-strong: 500; --weight-display: 600;
   --leading-tight: 1.2; --leading-ui: 1.45; --leading-prose: 1.6;
   --tracking-display: -0.011em;
@@ -79,8 +79,8 @@
   --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px;
   --space-lg: 24px; --space-xl: 32px; --space-2xl: 48px; --space-3xl: 64px; --space-4xl: 96px;
 
-  /* Sizes. Dense, desktop: controls 26 (default) and 30 (prominent), rows 30. */
-  --control-h: 26px; --control-h-lg: 30px; --row-h: 30px; --bar-h: 40px;
+  /* Sizes. Desktop: controls 28 (default) and 32 (prominent), rows 32. */
+  --control-h: 28px; --control-h-lg: 32px; --row-h: 32px; --bar-h: 44px;
   --tower-w: 264px; --rail-w: 220px; --measure: 72ch;
   --container: 1280px; --gutter: 24px;
 

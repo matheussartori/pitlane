@@ -166,15 +166,16 @@ interface Live {
 }
 
 const live = new Map<number, Live>();
-/** Faces a terminal can wear. Menlo is the face Warp's default (Hack) grew from. */
+/** Faces a terminal can wear. Hack is Warp's default face, bundled so every Mac draws the same. */
 export const TERMINAL_FACES = [
+  { v: "hack", label: "Hack", css: 'Hack, Menlo, monospace' },
   { v: "menlo", label: "Menlo", css: 'Menlo, "SF Mono", monospace' },
   { v: "sf", label: "SF Mono", css: 'ui-monospace, "SF Mono", Menlo, monospace' },
   { v: "geist", label: "Geist Mono", css: '"Geist Mono Variable", Menlo, monospace' },
 ] as const;
 type Face = (typeof TERMINAL_FACES)[number]["v"];
 const faceCss = (f: Face) => (TERMINAL_FACES.find((x) => x.v === f) ?? TERMINAL_FACES[0]).css;
-const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face }>({ tabs: [], active: null, side: "left", font: 13, face: "menlo" });
+const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face }>({ tabs: [], active: null, side: "left", font: 14, face: "hack" });
 const [meta, setMeta] = createStore<Record<number, Meta>>({});
 const [screenOn, setScreenOn] = createSignal(false);
 let nextTab = 1;
@@ -186,6 +187,7 @@ interface Saved {
   side: "left" | "top";
   font: number;
   face?: Face;
+  face2?: Face; // the face chosen since Hack became the default (an old "menlo" was only the default)
   places: Record<number, { cwd: string; label: string; run?: string }>;
 }
 
@@ -194,7 +196,7 @@ function save() {
     const tabs = unwrap(st.tabs);
     const places: Saved["places"] = {};
     for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label, run: meta[id]!.run };
-    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, face: st.face, places } satisfies Saved));
+    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, face: st.face, face2: st.face, places } satisfies Saved));
   } catch {
     /* no storage: the layout lives for this window */
   }
@@ -464,8 +466,8 @@ function make(info: TermInfo, run?: string): Live {
     fontFamily: faceCss(st.face),
     fontSize: st.font,
     fontWeight: "normal",
-    fontWeightBold: "600",
-    lineHeight: 1.35, // Warp-like air between lines
+    fontWeightBold: "bold",
+    lineHeight: 1.3, // Warp-like air between lines (Hack is already tall)
     cursorStyle: "bar",
     cursorWidth: 2,
     cursorInactiveStyle: "outline",
@@ -549,10 +551,11 @@ export async function startTerminals() {
     },
   );
   const saved = loadSaved();
-  if (saved?.face && TERMINAL_FACES.some((f) => f.v === saved.face)) setSt("face", saved.face);
+  const face = saved?.face2 ?? (saved?.face === "menlo" ? undefined : saved?.face);
+  if (face && TERMINAL_FACES.some((f) => f.v === face)) setSt("face", face);
   // Measure cells with the real face, never a fallback: a late font leaves gaps between letters.
-  await document.fonts.load(`13px ${faceCss(st.face)}`).catch(() => {});
-  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || saved.font === 12 ? 13 : saved.font)) }); // 12 was the old default: it moves to 13 with the Warp-like pass
+  await Promise.all(["normal", "bold"].map((w) => document.fonts.load(`${w} 14px ${faceCss(st.face)}`))).catch(() => {});
+  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || saved.font <= 13 ? 14 : saved.font)) }); // 12 and 13 were old defaults: they move to 14 with Hack
   let existing: TermInfo[] = [];
   try {
     existing = await terms.list();
@@ -1332,7 +1335,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
       fontSize(st.font - 1);
     } else if (k === "0") {
       take();
-      fontSize(13);
+      fontSize(14);
     }
   }
 

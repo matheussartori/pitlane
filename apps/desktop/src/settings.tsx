@@ -416,7 +416,7 @@ function Terminal() {
             onChange={side}
           />
         </Row>
-        <Row label="Font" help="Menlo reads as Warp does; SF Mono as Apple's Terminal.">
+        <Row label="Font" help="Hack is Warp's face; SF Mono reads as Apple's Terminal.">
           <Seg label="Font" value={p().face} options={TERMINAL_FACES.map((f) => ({ v: f.v, label: f.label }))} onChange={(v) => (setTerminalFace(v), setP(terminalPrefs()))} />
         </Row>
         <Row label="Font size" help="⌘= and ⌘- change it in the terminal too.">
