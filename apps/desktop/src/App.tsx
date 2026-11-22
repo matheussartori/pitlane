@@ -311,6 +311,9 @@ export default function App() {
     if (ok) setTab("terminal");
   }
 
+  /** Lanes that finished while you were away, told together once the last one ends. */
+  const doneAway: RunMeta[] = [];
+
   async function say(title: string, body: string) {
     try {
       let ok = await isPermissionGranted();
@@ -729,17 +732,24 @@ export default function App() {
         // Not looking at Pitlane: say so where the person is.
         if (e.kind === "approval" && !document.hasFocus()) void notify(run, e.approval.detail || e.approval.tool);
       },
-      (_run, m) => {
-        void loadRuns();
+      async (_run, m) => {
+        const fresh = loadRuns();
         void loadCards();
         void load(false);
-        // A lane's agent finished or stopped while you were elsewhere: say which, and what now.
-        if (m && prefs().notify_runs && !document.hasFocus() && (m.state === "done" || m.state === "failed")) {
-          void say(
-            m.state === "done" ? t("#{card} {title} is ready for review", { card: m.card, title: m.card_title }) : t("#{card} {title} stopped", { card: m.card, title: m.card_title }),
-            m.state === "done" ? t("The agent finished. Its checks and the review are waiting in Pitlane.") : t("The run failed. Open it in Pitlane to see why."),
-          );
+        if (!m || !prefs().notify_runs || document.hasFocus()) return;
+        // A failure needs you now. A finished lane waits until every running lane is done:
+        // one notification when the whole batch is ready, not one per card.
+        if (m.state === "failed") {
+          void say(t("#{card} {title} stopped", { card: m.card, title: m.card_title }), t("The run failed. Open it in Pitlane to see why."));
+          return;
         }
+        if (m.state !== "done") return;
+        doneAway.push(m);
+        await fresh;
+        if ((runs() ?? []).some((r) => r.id !== m.id && isLive(r.state))) return;
+        const done = doneAway.splice(0);
+        if (done.length === 1) void say(t("#{card} {title} is ready for review", { card: m.card, title: m.card_title }), t("The agent finished. Its checks and the review are waiting in Pitlane."));
+        else void say(t("All {n} lanes finished", { n: done.length }), done.map((d) => `#${d.card} ${d.card_title}`).join(" · "));
       },
     ).then((off) => (offRun = off));
     const onHash = () => {
@@ -764,6 +774,7 @@ export default function App() {
     window.addEventListener("pitlane-theme", onTheme);
     // Coming back to the window: recheck local state (cheap, no network).
     const onFocus = () => {
+      doneAway.length = 0; // you are back: the board shows what finished
       void loadCards();
       void loadRuns();
       void loadQueue();

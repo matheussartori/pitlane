@@ -64,6 +64,7 @@ export default {
   "Resume": "Retomar",
   "Could not resume the queue": "Não foi possível retomar a fila",
   "#{card} {title} is ready for review": "#{card} {title} está pronto para revisão",
+  "All {n} lanes finished": "As {n} lanes terminaram",
   "#{card} {title} stopped": "#{card} {title} parou",
   "The agent finished. Its checks and the review are waiting in Pitlane.": "O agente terminou. As verificações e a revisão estão esperando no Pitlane.",
   "The run failed. Open it in Pitlane to see why.": "A execução falhou. Abra no Pitlane para ver o motivo.",

@@ -163,6 +163,8 @@ interface Live {
   first: number;
   last: number;
   typed: number;
+  /** An agent here reports its own turns (the warp://cli-agent protocol): no guessing from quiet. */
+  agent?: boolean;
 }
 
 const live = new Map<number, Live>();
@@ -280,6 +282,28 @@ const findColours = () => ({
   activeMatchColorOverviewRuler: tok("--color-accent"),
 });
 
+// ---------------------------------------------------------------- keys
+
+/** What Warp sends for the editing keys of a Mac: ⌘ moves or deletes to the line's ends,
+ *  ⌥ by words, ⇧↵ a new line (Claude Code reads ESC-CR as one). Anything else stays xterm's. */
+function editKey(e: KeyboardEvent): string | null {
+  const only = (m: boolean) => m && !(e.metaKey && e.altKey);
+  if (only(e.metaKey) && !e.shiftKey) {
+    if (e.key === "ArrowLeft") return "\x01"; // start of line
+    if (e.key === "ArrowRight") return "\x05"; // end of line
+    if (e.key === "Backspace") return "\x15"; // delete to start
+    if (e.key === "Delete") return "\x0b"; // delete to end
+  }
+  if (only(e.altKey) && !e.shiftKey) {
+    if (e.key === "ArrowLeft" || e.code === "ArrowLeft") return "\x1bb"; // word back
+    if (e.key === "ArrowRight" || e.code === "ArrowRight") return "\x1bf"; // word forward
+    if (e.code === "Backspace") return "\x17"; // delete word back
+    if (e.code === "Delete") return "\x1bd"; // delete word forward
+  }
+  if (e.shiftKey && !e.metaKey && !e.altKey && e.key === "Enter") return "\x1b\r";
+  return null;
+}
+
 // ---------------------------------------------------------------- attention
 
 /** The last line worth reading on screen: what a waiting program last said. */
@@ -344,15 +368,62 @@ export function retheme() {
   for (const l of live.values()) l.term.options.theme = t;
 }
 
-/** One event, one signal: a mark on the tab, and a notification only when you cannot see it. */
-function attend(term: number, status: "bell" | "waiting", note: string) {
+/** One event, one signal: a mark on the tab, and a notification only when you cannot see it.
+ *  A guess (output that went quiet) only marks the tab: macOS hears only what a program said. */
+function attend(term: number, status: "bell" | "waiting", note: string, o: { title?: string; guess?: boolean } = {}) {
   const m = meta[term];
   if (!m) return;
   if (inView(term) && document.hasFocus()) return;
   if ((m.status === "bell" || m.status === "waiting") && Date.now() - m.at < 3000) return;
   setMeta(term, { status, note, at: Date.now() });
-  if (!document.hasFocus() && notifyOn) {
-    void systemNotify(status === "bell" ? t("{name} needs you", { name: placeName(term) }) : t("{name} is waiting", { name: placeName(term) }), note || t("The program stopped and may be waiting for you."));
+  if (!document.hasFocus() && notifyOn && !o.guess) {
+    void systemNotify(o.title ?? (status === "bell" ? t("{name} needs you", { name: placeName(term) }) : t("{name} is waiting", { name: placeName(term) })), note || t("The program stopped and may be waiting for you."));
+  }
+}
+
+/** One line worth reading from an agent's text: its first sentence, no markdown. */
+function gist(s: unknown): string {
+  if (typeof s !== "string") return "";
+  const line = s.split("\n").map((x) => x.replace(/^[#>*\-\s`]+|[*`]+/g, "").trim()).find((x) => x.length > 2) ?? "";
+  return line.length > 160 ? line.slice(0, 157) + "…" : line;
+}
+
+/** Claude Code's Warp plugin reports every turn (OSC 777, title warp://cli-agent, a JSON body).
+ *  Most are progress: they set the tab's state. Only a decision, an error or the end of a turn
+ *  is worth a notification. */
+function agentEvent(id: number, body: string) {
+  let e: Record<string, unknown>;
+  try {
+    e = JSON.parse(body);
+  } catch {
+    return;
+  }
+  const l = live.get(id);
+  if (l) l.agent = true;
+  const who = typeof e.project === "string" && e.project ? e.project : placeName(id);
+  switch (e.event) {
+    case "prompt_submit":
+    case "tool_complete":
+      if (meta[id]?.status !== "busy") setMeta(id, { status: "busy" });
+      return;
+    case "permission_request":
+      attend(id, "bell", gist(e.summary) || t("Claude asks to use {tool}", { tool: String(e.tool_name ?? "a tool") }), { title: t("{name}: Claude needs your approval", { name: who }) });
+      return;
+    case "agent_needs_input":
+    case "question":
+      attend(id, "bell", gist(e.summary) || t("Claude is asking you something."), { title: t("{name}: Claude has a question", { name: who }) });
+      return;
+    case "stop":
+      setMeta(id, { status: "idle" });
+      attend(id, "waiting", gist(e.response) || t("Claude finished its turn."), { title: t("{name}: Claude finished", { name: who }) });
+      return;
+    case "stop_failure":
+      setMeta(id, { status: "idle" });
+      attend(id, "bell", gist(e.response) || String(e.error_type ?? t("Claude stopped with an error.")), { title: t("{name}: Claude stopped with an error", { name: who }) });
+      return;
+    default:
+      // session_start, idle_prompt (a reminder of a stop already told), anything newer: quiet.
+      return;
   }
 }
 
@@ -373,8 +444,8 @@ function tick() {
   const now = performance.now();
   setClock(now);
   for (const [id, l] of live) {
-    if (meta[id]?.status !== "busy" || now - l.last < 3500) continue;
-    if (l.last - l.first > 8000 && !inView(id)) attend(id, "waiting", lastLine(l.term));
+    if (l.agent || meta[id]?.status !== "busy" || now - l.last < 3500) continue;
+    if (l.last - l.first > 8000 && !inView(id)) attend(id, "waiting", lastLine(l.term), { guess: true });
     else setMeta(id, { status: "idle" });
   }
 }
@@ -383,7 +454,7 @@ function output(id: number) {
   const l = live.get(id);
   if (!l) return;
   const now = performance.now();
-  if (now - l.typed < 1500) return; // the echo of your own typing
+  if (l.agent || now - l.typed < 1500) return; // an agent says when it works; your own typing echoes
   if (now - l.last > 2000) l.first = now;
   l.last = now;
   const s = meta[id]?.status;
@@ -475,6 +546,9 @@ function make(info: TermInfo, run?: string): Live {
     drawBoldTextInBrightColors: false,
     rescaleOverlappingGlyphs: true,
     scrollback: 10000,
+    // Warp scrolls by the trackpad's own pixels; xterm's wheel feels short of that.
+    scrollSensitivity: 1.6,
+    fastScrollSensitivity: 6, // ⌥ while scrolling
     macOptionIsMeta: true,
     allowProposedApi: true, // search decorations
     minimumContrastRatio: 4.5, // any program's colours stay readable on our ground
@@ -492,6 +566,16 @@ function make(info: TermInfo, run?: string): Live {
   linkFiles(term, info.id);
   const l: Live = { term, fit, search, blocks: new Blocks(term), el: document.createElement("div"), opened: false, first: 0, last: 0, typed: 0 };
   l.el.className = "term-surface";
+  // Warp's (and macOS's) text keys, sent as the readline keys every shell and TUI knows.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown" || e.ctrlKey) return true;
+    const seq = editKey(e);
+    if (seq == null) return true;
+    e.preventDefault();
+    l.typed = performance.now();
+    void terms.write(info.id, seq).catch(() => {});
+    return false;
+  });
   term.onData((d) => {
     l.typed = performance.now();
     void terms.write(info.id, d).catch(() => {});
@@ -503,7 +587,8 @@ function make(info: TermInfo, run?: string): Live {
   term.parser.registerOscHandler(9, (d) => (d.startsWith("4;") ? true : (attend(info.id, "bell", d), true)));
   term.parser.registerOscHandler(777, (d) => {
     const [kind, title, ...body] = d.split(";");
-    if (kind === "notify") attend(info.id, "bell", body.join(";") || title || "");
+    if (kind === "notify" && title === "warp://cli-agent") agentEvent(info.id, body.join(";"));
+    else if (kind === "notify") attend(info.id, "bell", body.join(";") || title || "", title ? { title } : {});
     return true;
   });
   term.parser.registerOscHandler(99, (d) => (attend(info.id, "bell", d.slice(d.indexOf(";") + 1)), true));
@@ -640,9 +725,9 @@ function guessSize(split?: Dir, part?: [number, number]): [number, number] {
   // Off screen: the window less the rail, the tab list and the frame.
   let w = r?.width || window.innerWidth - 330;
   let h = r?.height || window.innerHeight - 70;
-  if (!focused) (w -= 28), (h -= 24); // the pane body's padding
-  if (split === "row") w = w / 2 - 28;
-  if (split === "col") h = h / 2 - 24 - 28;
+  if (!focused) (w -= 14), (h -= 10); // the pane body's padding
+  if (split === "row") w = w / 2 - 14;
+  if (split === "col") h = h / 2 - 10 - 28;
   if (split && t && panesOf(t.root).length === 1) h -= 28; // bars appear once a tab splits
   if (part && (part[0] < 1 || part[1] < 1)) (w *= part[0]), (h = h * part[1] - 28);
   return [Math.max(20, Math.floor(w / cw) - 1), Math.max(4, Math.floor(h / ch))];
