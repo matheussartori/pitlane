@@ -544,6 +544,7 @@ export function RunAllSheet(props: {
       <p class="field-help">
         {t("Cards start in board order. One that builds on another waits for it to land; two that change the same engine or schema never run together.")}
       </p>
+      <p class="field-help">{t("Nothing waits on you once it starts: agents run without asking for permissions, fix what the checks find and land on their own.")}</p>
     </Sheet>
   );
 }

@@ -69,23 +69,42 @@ struct Fx {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-    assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
+    let ok = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
 }
 
 fn fx() -> Fx {
     let tmp = TempDir::new().unwrap();
     let home = tmp.path().join("pitlane");
     let repo = tmp.path().join("repo");
-    git(tmp.path(), &["init", "-q", "-b", "main", repo.to_str().unwrap()]);
-    for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
+    git(
+        tmp.path(),
+        &["init", "-q", "-b", "main", repo.to_str().unwrap()],
+    );
+    for (k, v) in [
+        ("user.name", "T"),
+        ("user.email", "t@example.com"),
+        ("commit.gpgsign", "false"),
+    ] {
         git(&repo, &["config", k, v]);
     }
     fs::create_dir_all(repo.join(".pitlane")).unwrap();
     let wt_root = tmp.path().join("wt/{repo}/{branch}");
     fs::write(
         repo.join(".pitlane/flow.toml"),
-        format!("[worktree]\nroot = \"{}\"\n\n[verify]\njudge = false\n", wt_root.display()),
+        format!(
+            "[worktree]\nroot = \"{}\"\n\n[verify]\njudge = false\n",
+            wt_root.display()
+        ),
     )
     .unwrap();
     fs::write(repo.join("README.md"), "demo\n").unwrap();
@@ -95,13 +114,34 @@ fn fx() -> Fx {
     let fake = tmp.path().join("fake-claude");
     fs::write(&fake, FAKE).unwrap();
     Command::new("chmod").arg("+x").arg(&fake).status().unwrap();
-    Fx { _tmp: tmp, home, repo, fake }
+    Fx {
+        _tmp: tmp,
+        home,
+        repo,
+        fake,
+    }
 }
 
 fn card(fx: &Fx, title: &str) -> u32 {
     let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
-    let c = cards::add(&r, NewCard { title: title.into(), body: "Do the thing.".into(), ..Default::default() }).unwrap();
-    cards::update(&r, c.id, CardPatch { lane: Some(Some("feat/x".into())), ..Default::default() }).unwrap();
+    let c = cards::add(
+        &r,
+        NewCard {
+            title: title.into(),
+            body: "Do the thing.".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    cards::update(
+        &r,
+        c.id,
+        CardPatch {
+            lane: Some(Some("feat/x".into())),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     c.id
 }
 
@@ -112,7 +152,11 @@ fn card_state(fx: &Fx, id: u32) -> (CardState, usize) {
 }
 
 fn sup(fx: &Fx) -> Arc<Supervisor> {
-    Supervisor::new(Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned(), pit_bin: None })
+    Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: fx.fake.to_string_lossy().into_owned(),
+        pit_bin: None,
+    })
 }
 
 async fn wait_end(s: &Arc<Supervisor>, id: &str) -> pit_core::runs::RunMeta {
@@ -131,12 +175,19 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
     let fx = fx();
     let id = card(&fx, "Add a line");
     let s = sup(&fx);
-    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
     assert_eq!(meta.state, RunState::Starting);
 
     // Wait for the agent to be at work, then talk to it.
     for _ in 0..200 {
-        if s.subscribe(&meta.id, 0).unwrap().replay.iter().any(|(_, e)| matches!(e, RunEvent::Quota { .. })) {
+        if s.subscribe(&meta.id, 0)
+            .unwrap()
+            .replay
+            .iter()
+            .any(|(_, e)| matches!(e, RunEvent::Quota { .. }))
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -151,9 +202,19 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
     assert_eq!(end.turns, Some(4));
     assert!((end.cost_usd.unwrap() - 0.06).abs() < 1e-9);
     assert_eq!(end.tokens.cache_read, 3);
-    assert_eq!(end.handoff.as_ref().unwrap()["summary"], "Did it, with the note.");
-    assert!(end.worktree.join(".briefing-seen").exists(), "ran in the lane's worktree");
-    assert!(fs::read_to_string(end.worktree.join(".briefing-seen")).unwrap().contains("Do the thing."));
+    assert_eq!(
+        end.handoff.as_ref().unwrap()["summary"],
+        "Did it, with the note."
+    );
+    assert!(
+        end.worktree.join(".briefing-seen").exists(),
+        "ran in the lane's worktree"
+    );
+    assert!(
+        fs::read_to_string(end.worktree.join(".briefing-seen"))
+            .unwrap()
+            .contains("Do the thing.")
+    );
     assert_eq!(card_state(&fx, id).0, CardState::Review);
 
     let tl = s.subscribe(&meta.id, 0).unwrap();
@@ -179,7 +240,21 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
         })
         .filter(|k| *k != "note")
         .collect();
-    assert_eq!(kinds, ["started", "text", "tool", "tool-done", "quota", "said", "finished", "text", "finished", "exited"]);
+    assert_eq!(
+        kinds,
+        [
+            "started",
+            "text",
+            "tool",
+            "tool-done",
+            "quota",
+            "said",
+            "finished",
+            "text",
+            "finished",
+            "exited"
+        ]
+    );
     assert_eq!(s.quota().len(), 1);
     assert!(s.say(&meta.id, "too late").await.is_err());
 }
@@ -189,14 +264,37 @@ async fn a_turn_the_agent_starts_by_itself_still_hears_you() {
     let fx = fx();
     let id = card(&fx, "Add a line");
     let wrapper = fx.home.join("self-turn.sh");
-    fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=self-turn exec {} \"$@\"\n", fx.fake.display())).unwrap();
-    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
-    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
-    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/bash\nFAKE_MODE=self-turn exec {} \"$@\"\n",
+            fx.fake.display()
+        ),
+    )
+    .unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(&wrapper)
+        .status()
+        .unwrap();
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: None,
+    });
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
 
     // Wait for the second turn, the one nobody sent, then talk to it.
     for _ in 0..300 {
-        let started = s.subscribe(&meta.id, 0).unwrap().replay.iter().filter(|(_, e)| matches!(e, RunEvent::Started { .. })).count();
+        let started = s
+            .subscribe(&meta.id, 0)
+            .unwrap()
+            .replay
+            .iter()
+            .filter(|(_, e)| matches!(e, RunEvent::Started { .. }))
+            .count();
         if started == 2 {
             break;
         }
@@ -206,7 +304,10 @@ async fn a_turn_the_agent_starts_by_itself_still_hears_you() {
 
     let end = wait_end(&s, &meta.id).await;
     assert_eq!(end.state, RunState::Done, "{:?}", end.error);
-    assert_eq!(end.handoff.as_ref().unwrap()["summary"], "Did it, with the note.");
+    assert_eq!(
+        end.handoff.as_ref().unwrap()["summary"],
+        "Did it, with the note."
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -218,20 +319,38 @@ async fn a_blocked_handoff_asks_in_the_inbox() {
         home: fx.home.clone(),
         claude_bin: {
             let wrapper = fx.fake.with_file_name("fake-ask");
-            fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=ask exec {} \"$@\"\n", fx.fake.display())).unwrap();
-            Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+            fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/bash\nFAKE_MODE=ask exec {} \"$@\"\n",
+                    fx.fake.display()
+                ),
+            )
+            .unwrap();
+            Command::new("chmod")
+                .arg("+x")
+                .arg(&wrapper)
+                .status()
+                .unwrap();
             wrapper.to_string_lossy().into_owned()
         },
         pit_bin: None,
     });
-    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
     let end = wait_end(&s, &meta.id).await;
     assert_eq!(end.state, RunState::Done);
     let (state, open) = card_state(&fx, id);
     assert_eq!(state, CardState::Blocked);
     assert_eq!(open, 1, "the agent's question is in the Inbox");
     // And a card with open questions does not start.
-    assert!(s.start(fx.repo.clone(), id, None, Default::default()).unwrap_err().to_string().contains("open question"));
+    assert!(
+        s.start(fx.repo.clone(), id, None, Default::default())
+            .unwrap_err()
+            .to_string()
+            .contains("open question")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -242,13 +361,26 @@ async fn a_finished_run_does_not_ask() {
         home: fx.home.clone(),
         claude_bin: {
             let wrapper = fx.fake.with_file_name("fake-ask-done");
-            fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=ask-done exec {} \"$@\"\n", fx.fake.display())).unwrap();
-            Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+            fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/bash\nFAKE_MODE=ask-done exec {} \"$@\"\n",
+                    fx.fake.display()
+                ),
+            )
+            .unwrap();
+            Command::new("chmod")
+                .arg("+x")
+                .arg(&wrapper)
+                .status()
+                .unwrap();
             wrapper.to_string_lossy().into_owned()
         },
         pit_bin: None,
     });
-    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
     let end = wait_end(&s, &meta.id).await;
     assert_eq!(end.state, RunState::Done);
     let (state, open) = card_state(&fx, id);
@@ -256,7 +388,10 @@ async fn a_finished_run_does_not_ask() {
     assert_eq!(open, 0, "nothing lands in the Inbox after Run");
     let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
     let c = cards::get(&r, id).unwrap();
-    assert!(c.notes.iter().any(|n| n.text.contains("Decided without asking: Also the studio? Went with: No")));
+    assert!(c.notes.iter().any(|n| {
+        n.text
+            .contains("Decided without asking: Also the studio? Went with: No")
+    }));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -264,17 +399,39 @@ async fn stop_ends_the_turn_and_frees_the_card() {
     let fx = fx();
     let id = card(&fx, "Slow one");
     let wrapper = fx.fake.with_file_name("fake-slow");
-    fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
-    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
-    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
-    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n",
+            fx.fake.display()
+        ),
+    )
+    .unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(&wrapper)
+        .status()
+        .unwrap();
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: None,
+    });
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
     for _ in 0..100 {
         if s.get(&meta.id).unwrap().pid.is_some() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(s.start(fx.repo.clone(), id, None, Default::default()).unwrap_err().to_string().contains("already running"));
+    assert!(
+        s.start(fx.repo.clone(), id, None, Default::default())
+            .unwrap_err()
+            .to_string()
+            .contains("already running")
+    );
     tokio::time::sleep(Duration::from_millis(300)).await;
     s.stop(&meta.id).unwrap();
     let end = wait_end(&s, &meta.id).await;
@@ -286,7 +443,11 @@ async fn stop_ends_the_turn_and_frees_the_card() {
 async fn over_the_socket_with_follow_and_recovery() {
     let fx = fx();
     let id = card(&fx, "Socket");
-    let cfg = Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned(), pit_bin: None };
+    let cfg = Config {
+        home: fx.home.clone(),
+        claude_bin: fx.fake.to_string_lossy().into_owned(),
+        pit_bin: None,
+    };
     let server = tokio::spawn(pitd::serve(cfg));
     let home = fx.home.clone();
     let repo = fx.repo.clone();
@@ -297,8 +458,13 @@ async fn over_the_socket_with_follow_and_recovery() {
             }
             std::thread::sleep(Duration::from_millis(20));
         };
-        assert_eq!(c.call(serde_json::json!({"op":"ping"})).unwrap()["ok"], true);
-        let run = c.call(serde_json::json!({"op":"start","repo": repo, "card": id})).unwrap();
+        assert_eq!(
+            c.call(serde_json::json!({"op":"ping"})).unwrap()["ok"],
+            true
+        );
+        let run = c
+            .call(serde_json::json!({"op":"start","repo": repo, "card": id}))
+            .unwrap();
         let run_id = run["run"]["id"].as_str().unwrap().to_owned();
         let mut f = Client::connect(&home, None).unwrap();
         let mut seen = Vec::new();
@@ -322,7 +488,11 @@ async fn over_the_socket_with_follow_and_recovery() {
     let s = sup(&fx);
     let mut m = s.get(&end.id).unwrap();
     m.state = RunState::Running;
-    fs::write(fx.home.join("runs").join(&m.id).join("meta.json"), serde_json::to_string(&m).unwrap()).unwrap();
+    fs::write(
+        fx.home.join("runs").join(&m.id).join("meta.json"),
+        serde_json::to_string(&m).unwrap(),
+    )
+    .unwrap();
     assert_eq!(s.recover().unwrap(), 1);
     assert_eq!(s.get(&end.id).unwrap().state, RunState::Interrupted);
 }
@@ -334,10 +504,28 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     let fx = fx();
     let id = card(&fx, "Needs commands");
     let wrapper = fx.fake.with_file_name("fake-slow-2");
-    fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
-    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
-    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
-    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap().id;
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n",
+            fx.fake.display()
+        ),
+    )
+    .unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(&wrapper)
+        .status()
+        .unwrap();
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: None,
+    });
+    let run = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap()
+        .id;
     for _ in 0..100 {
         if s.get(&run).unwrap().pid.is_some() {
             break;
@@ -347,8 +535,16 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
 
     // Asked: it waits, everyone sees it, a person answers "for this run".
     let ask = |cmd: &str, use_id: &str| {
-        let (s, run, cmd, use_id) = (Arc::clone(&s), run.clone(), cmd.to_owned(), use_id.to_owned());
-        tokio::spawn(async move { s.ask(&run, "Bash", json!({ "command": cmd }), Some(use_id)).await })
+        let (s, run, cmd, use_id) = (
+            Arc::clone(&s),
+            run.clone(),
+            cmd.to_owned(),
+            use_id.to_owned(),
+        );
+        tokio::spawn(async move {
+            s.ask(&run, "Bash", json!({ "command": cmd }), Some(use_id))
+                .await
+        })
     };
     let first = ask("npm test -- drift", "t1");
     for _ in 0..100 {
@@ -366,7 +562,14 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     assert!(s.get(&run).unwrap().waiting.is_empty());
 
     // The same command again: allowed by the run's rule, nobody asked.
-    let again = s.ask(&run, "Bash", json!({ "command": "npm test -- kart" }), Some("t2".into())).await;
+    let again = s
+        .ask(
+            &run,
+            "Bash",
+            json!({ "command": "npm test -- kart" }),
+            Some("t2".into()),
+        )
+        .await;
     assert_eq!(again["behavior"], "allow");
     assert!(s.approvals().is_empty());
 
@@ -386,9 +589,18 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     while s.approvals().is_empty() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    s.decide(&run, None, Decision::Deny, Some("Use npm run clean.".into())).unwrap();
+    s.decide(
+        &run,
+        None,
+        Decision::Deny,
+        Some("Use npm run clean.".into()),
+    )
+    .unwrap();
     let a = rm.await.unwrap();
-    assert_eq!((a["behavior"].as_str(), a["message"].as_str()), (Some("deny"), Some("Use npm run clean.")));
+    assert_eq!(
+        (a["behavior"].as_str(), a["message"].as_str()),
+        (Some("deny"), Some("Use npm run clean."))
+    );
 
     // Still waiting when the run ends: the agent hears no.
     let late = ask("curl example.com", "t5");
@@ -398,11 +610,24 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     s.stop(&run).unwrap();
     assert_eq!(late.await.unwrap()["behavior"], "deny");
     wait_end(&s, &run).await;
-    assert_eq!(s.ask(&run, "Bash", json!({ "command": "ls" }), None).await["behavior"], "deny");
+    assert_eq!(
+        s.ask(&run, "Bash", json!({ "command": "ls" }), None).await["behavior"],
+        "deny"
+    );
 
     let tl = s.subscribe(&run, 0).unwrap().replay;
-    assert_eq!(tl.iter().filter(|(_, e)| matches!(e, RunEvent::Approval { .. })).count(), 4);
-    assert_eq!(tl.iter().filter(|(_, e)| matches!(e, RunEvent::Decided { .. })).count(), 3);
+    assert_eq!(
+        tl.iter()
+            .filter(|(_, e)| matches!(e, RunEvent::Approval { .. }))
+            .count(),
+        4
+    );
+    assert_eq!(
+        tl.iter()
+            .filter(|(_, e)| matches!(e, RunEvent::Decided { .. }))
+            .count(),
+        3
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -439,18 +664,34 @@ exec {fake} "$@"
         ),
     )
     .unwrap();
-    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(&wrapper)
+        .status()
+        .unwrap();
     fs::create_dir_all(&fx.home).unwrap();
     fs::write(
         fx.home.join("routing.toml"),
         "[[account]]\nid = \"api\"\nkind = \"api-key\"\napi_key_helper = \"echo not-a-real-key\"\n\n[route.run]\nprefer = [\"@repo\", \"haiku@api\"]\n",
     )
     .unwrap();
-    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: None,
+    });
 
-    let first = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let first = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
     assert_eq!(first.account, "default");
-    assert!(first.reason.as_deref().unwrap().contains("first in the route"));
+    assert!(
+        first
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("first in the route")
+    );
     let end = wait_end(&s, &first.id).await;
     for _ in 0..100 {
         if s.get(&first.id).unwrap().next.is_some() {
@@ -460,13 +701,36 @@ exec {fake} "$@"
     }
     let end = s.get(&end.id).unwrap();
     assert_eq!(end.state, RunState::Failed);
-    assert!(end.error.as_deref().unwrap().contains("Hit the usage limit on default"), "{:?}", end.error);
+    assert!(
+        end.error
+            .as_deref()
+            .unwrap()
+            .contains("Hit the usage limit on default"),
+        "{:?}",
+        end.error
+    );
     assert_eq!(end.next.as_deref(), Some("haiku on api"));
     assert_eq!(end.resets_at, Some(99));
-    assert_eq!(card_state(&fx, id).0, CardState::Blocked, "waits for your yes to the API key");
-    let log = Command::new("git").arg("-C").arg(&end.worktree).args(["log", "-1", "--format=%s"]).output().unwrap();
-    assert!(String::from_utf8_lossy(&log.stdout).contains("checkpoint of card"), "the partial work was committed");
-    assert!(s.start(fx.repo.clone(), id, None, Default::default()).is_err(), "a plain start still needs the yes");
+    assert_eq!(
+        card_state(&fx, id).0,
+        CardState::Blocked,
+        "waits for your yes to the API key"
+    );
+    let log = Command::new("git")
+        .arg("-C")
+        .arg(&end.worktree)
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&log.stdout).contains("checkpoint of card"),
+        "the partial work was committed"
+    );
+    assert!(
+        s.start(fx.repo.clone(), id, None, Default::default())
+            .is_err(),
+        "a plain start still needs the yes"
+    );
 
     // Your yes: the continuation runs on the API key account, in its own profile, with the helper.
     let next = s.continue_run(&first.id, true).unwrap();
@@ -478,12 +742,21 @@ exec {fake} "$@"
     assert_eq!(done.state, RunState::Done, "{:?}", done.error);
     let seen = fs::read_to_string(done.worktree.join(".briefing-seen")).unwrap();
     assert!(seen.contains("You are continuing run"), "{seen}");
-    assert!(seen.contains("checkpoint of card"), "commits so far are in the briefing");
+    assert!(
+        seen.contains("checkpoint of card"),
+        "commits so far are in the briefing"
+    );
     let args = fs::read_to_string(&args_log).unwrap();
     assert!(args.contains("--model haiku"), "{args}");
     assert!(args.contains("apiKeyHelper"), "{args}");
-    assert!(args.contains(&format!("CCD={}", fx.home.join("profiles/api").display())), "{args}");
-    assert!(args.lines().any(|l| l == "CCD="), "the first run used your normal login");
+    assert!(
+        args.contains(&format!("CCD={}", fx.home.join("profiles/api").display())),
+        "{args}"
+    );
+    assert!(
+        args.lines().any(|l| l == "CCD="),
+        "the first run used your normal login"
+    );
     assert!(s.get(&first.id).unwrap().next.is_none());
 }
 
@@ -493,8 +766,21 @@ async fn proofs_and_a_judge_then_your_review() {
     let fx = fx();
     // A real origin with main and dev, so approving can ship the lane into dev.
     let origin = fx.home.parent().unwrap().join("origin.git");
-    git(fx.home.parent().unwrap(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
-    git(&fx.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(
+        fx.home.parent().unwrap(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(
+        &fx.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
     git(&fx.repo, &["push", "-q", "origin", "main"]);
     git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
     git(&fx.repo, &["fetch", "-q", "origin"]);
@@ -506,77 +792,182 @@ async fn proofs_and_a_judge_then_your_review() {
     let id = card(&fx, "Refuse SVG avatars");
     // The lane has work of its own, so there is a diff to judge and something to ship.
     git(&fx.repo, &["switch", "-q", "feat/x"]);
-    fs::write(fx.repo.join("validate.ts"), "export const refuseSvg = true;\n").unwrap();
+    fs::write(
+        fx.repo.join("validate.ts"),
+        "export const refuseSvg = true;\n",
+    )
+    .unwrap();
     git(&fx.repo, &["add", "validate.ts"]);
     git(&fx.repo, &["commit", "-qm", "refuse svg"]);
     git(&fx.repo, &["switch", "-q", "main"]);
     let s = sup(&fx);
 
-    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap().id;
+    let run = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap()
+        .id;
     let end = wait_end(&s, &run).await;
     assert_eq!(end.state, RunState::Done, "{:?}", end.error);
     assert_eq!(end.proofs_ok, Some(false));
     assert_eq!(end.verdict, Some(pit_core::verify::Verdict::Changes));
     assert_eq!(card_state(&fx, id).0, CardState::Review);
-    let v: pit_core::verify::Verification = serde_json::from_str(&fs::read_to_string(fx.home.join("runs").join(&run).join("verify.json")).unwrap()).unwrap();
+    let v: pit_core::verify::Verification = serde_json::from_str(
+        &fs::read_to_string(fx.home.join("runs").join(&run).join("verify.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(v.proofs.len(), 2);
     assert!(v.proofs[0].ok && !v.proofs[1].ok);
-    assert!(v.proofs[1].tail.contains("two failing"), "{}", v.proofs[1].tail);
-    assert_eq!(v.judge.as_ref().unwrap().judgement.as_ref().unwrap().findings.len(), 1);
+    assert!(
+        v.proofs[1].tail.contains("two failing"),
+        "{}",
+        v.proofs[1].tail
+    );
+    assert_eq!(
+        v.judge
+            .as_ref()
+            .unwrap()
+            .judgement
+            .as_ref()
+            .unwrap()
+            .findings
+            .len(),
+        1
+    );
     // The judge saw the spec and the diff, never what the working agent said.
     let prompt = fs::read_to_string(end.worktree.join(".judge-prompt")).unwrap();
-    assert!(prompt.contains("Do the thing.") && prompt.contains("## The diff"), "{prompt}");
-    assert!(prompt.contains("validate.ts") && prompt.contains("refuseSvg"), "the diff is in the prompt");
-    assert!(!prompt.contains("Reading the card."), "the agent's words stay out of the judge's context");
-    let kinds: Vec<bool> = s.subscribe(&run, 0).unwrap().replay.iter().map(|(_, e)| matches!(e, RunEvent::Proof { .. } | RunEvent::Judged { .. })).collect();
+    assert!(
+        prompt.contains("Do the thing.") && prompt.contains("## The diff"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("validate.ts") && prompt.contains("refuseSvg"),
+        "the diff is in the prompt"
+    );
+    assert!(
+        !prompt.contains("Reading the card."),
+        "the agent's words stay out of the judge's context"
+    );
+    let kinds: Vec<bool> = s
+        .subscribe(&run, 0)
+        .unwrap()
+        .replay
+        .iter()
+        .map(|(_, e)| matches!(e, RunEvent::Proof { .. } | RunEvent::Judged { .. }))
+        .collect();
     assert_eq!(kinds.iter().filter(|k| **k).count(), 3);
     // The judge ran as a session of its own, watchable beside the run, never listed as a run.
-    let judge = s.sessions(None).unwrap().into_iter().find(|m| m.kind == pit_core::runs::SessionKind::Judge).expect("a judge session");
+    let judge = s
+        .sessions(None)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.kind == pit_core::runs::SessionKind::Judge)
+        .expect("a judge session");
     assert_eq!(judge.parent.as_deref(), Some(run.as_str()));
     assert_eq!(judge.state, RunState::Done);
-    assert!(s.list(None).unwrap().iter().all(|m| m.kind == pit_core::runs::SessionKind::Run));
+    assert!(
+        s.list(None)
+            .unwrap()
+            .iter()
+            .all(|m| m.kind == pit_core::runs::SessionKind::Run)
+    );
 
     // Ask for changes: the same session continues with the comments, one round allowed.
-    let again = s.review(fx.repo.clone(), id, ReviewAction::Changes, Some("Also refuse SVG.".into())).await.unwrap();
+    let again = s
+        .review(
+            fx.repo.clone(),
+            id,
+            ReviewAction::Changes,
+            Some("Also refuse SVG.".into()),
+        )
+        .await
+        .unwrap();
     let next = again["run"]["id"].as_str().unwrap().to_owned();
     let next_end = wait_end(&s, &next).await;
     assert_eq!(next_end.round, 1);
     assert_eq!(next_end.resumed_from.as_deref(), Some(run.as_str()));
-    assert!(fs::read_to_string(next_end.worktree.join(".briefing-seen")).unwrap().contains("Also refuse SVG."));
+    assert!(
+        fs::read_to_string(next_end.worktree.join(".briefing-seen"))
+            .unwrap()
+            .contains("Also refuse SVG.")
+    );
     assert_eq!(card_state(&fx, id).0, CardState::Review);
-    let over = s.review(fx.repo.clone(), id, ReviewAction::Changes, Some("More.".into())).await.unwrap_err();
-    assert!(format!("{over:#}").contains("rounds of changes"), "{over:#}");
+    let over = s
+        .review(
+            fx.repo.clone(),
+            id,
+            ReviewAction::Changes,
+            Some("More.".into()),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{over:#}").contains("rounds of changes"),
+        "{over:#}"
+    );
 
     // Approve: the lane joins the merge queue, ships into dev, and the card follows.
     git(&fx.repo, &["fetch", "-q", "origin"]);
     s.start_queue();
-    let ok = s.review(fx.repo.clone(), id, ReviewAction::Approve, None).await.unwrap();
+    let ok = s
+        .review(fx.repo.clone(), id, ReviewAction::Approve, None)
+        .await
+        .unwrap();
     assert_eq!(ok["shipped_to"], "dev");
     let job = ok["job"]["id"].as_str().unwrap().to_owned();
     wait_job(&s, &job).await;
     assert_eq!(card_state(&fx, id).0, CardState::InDev);
     git(&fx.repo, &["fetch", "-q", "origin"]);
-    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
+    let merged = Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"])
+        .status()
+        .unwrap();
     assert!(merged.success(), "feat/x is in origin/dev");
-    assert!(s.review(fx.repo.clone(), id, ReviewAction::Discard, None).await.is_err(), "no longer in review");
+    assert!(
+        s.review(fx.repo.clone(), id, ReviewAction::Discard, None)
+            .await
+            .is_err(),
+        "no longer in review"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn run_all_fixes_and_lands_on_its_own() {
     let fx = fx();
     let origin = fx.home.parent().unwrap().join("origin.git");
-    git(fx.home.parent().unwrap(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
-    git(&fx.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(
+        fx.home.parent().unwrap(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(
+        &fx.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
     git(&fx.repo, &["push", "-q", "origin", "main"]);
     git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
     git(&fx.repo, &["fetch", "-q", "origin"]);
     let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml"))
         .unwrap()
-        .replace("[verify]\njudge = false\n", "[verify]\ncommands = [\"test -f README.md\"]\njudge = true\nmax_rounds = 1\n");
+        .replace(
+            "[verify]\njudge = false\n",
+            "[verify]\ncommands = [\"test -f README.md\"]\njudge = true\nmax_rounds = 1\n",
+        );
     fs::write(fx.repo.join(".pitlane/flow.toml"), flow).unwrap();
     let id = card(&fx, "Refuse SVG avatars");
     git(&fx.repo, &["switch", "-q", "feat/x"]);
-    fs::write(fx.repo.join("validate.ts"), "export const refuseSvg = true;\n").unwrap();
+    fs::write(
+        fx.repo.join("validate.ts"),
+        "export const refuseSvg = true;\n",
+    )
+    .unwrap();
     git(&fx.repo, &["add", "validate.ts"]);
     git(&fx.repo, &["commit", "-qm", "refuse svg"]);
     git(&fx.repo, &["switch", "-q", "main"]);
@@ -584,7 +975,10 @@ async fn run_all_fixes_and_lands_on_its_own() {
     s.start_queue();
 
     // The judge asks for changes every time: one round runs on its own, then the card lands anyway.
-    let opts = pitd::supervisor::StartOpts { autopilot: true, ..Default::default() };
+    let opts = pitd::supervisor::StartOpts {
+        autopilot: true,
+        ..Default::default()
+    };
     s.start(fx.repo.clone(), id, None, opts).unwrap();
     let mut state = CardState::Running;
     for _ in 0..600 {
@@ -596,15 +990,38 @@ async fn run_all_fixes_and_lands_on_its_own() {
     }
     assert_eq!(state, CardState::InDev, "landed without anyone approving");
     let runs = s.list(None).unwrap();
-    let rounds: Vec<u32> = runs.iter().filter(|m| m.card == id).map(|m| m.round).collect();
-    assert!(rounds.contains(&0) && rounds.contains(&1), "a fix round ran by itself: {rounds:?}");
+    let rounds: Vec<u32> = runs
+        .iter()
+        .filter(|m| m.card == id)
+        .map(|m| m.round)
+        .collect();
+    assert!(
+        rounds.contains(&0) && rounds.contains(&1),
+        "a fix round ran by itself: {rounds:?}"
+    );
     let fix = runs.iter().find(|m| m.card == id && m.round == 1).unwrap();
     assert!(fix.autopilot);
-    assert!(fs::read_to_string(fix.worktree.join(".briefing-seen")).unwrap().contains("SVG is not refused."), "the findings went to the fix round");
+    assert!(
+        fs::read_to_string(fix.worktree.join(".briefing-seen"))
+            .unwrap()
+            .contains("SVG is not refused."),
+        "the findings went to the fix round"
+    );
     let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
-    assert!(cards::get(&r, id).unwrap().notes.iter().any(|n| n.text.contains("Landed after 2 rounds")));
+    assert!(
+        cards::get(&r, id)
+            .unwrap()
+            .notes
+            .iter()
+            .any(|n| n.text.contains("Landed after 2 rounds"))
+    );
     git(&fx.repo, &["fetch", "-q", "origin"]);
-    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
+    let merged = Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"])
+        .status()
+        .unwrap();
     assert!(merged.success(), "feat/x is in origin/dev");
 }
 
@@ -615,50 +1032,124 @@ async fn a_related_repository_gets_the_branch_and_lands_too() {
     // A sibling repository with a remote, where the card's code really lives.
     let games = top.join("games");
     let origin = top.join("games-origin.git");
-    git(&top, &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    git(
+        &top,
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
     git(&top, &["init", "-q", "-b", "main", games.to_str().unwrap()]);
-    for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
+    for (k, v) in [
+        ("user.name", "T"),
+        ("user.email", "t@example.com"),
+        ("commit.gpgsign", "false"),
+    ] {
         git(&games, &["config", k, v]);
     }
     fs::write(games.join("engine.ts"), "export {};\n").unwrap();
     // Its worktrees stay in the test's folder, never in the real ~/.pitlane.
     fs::create_dir_all(games.join(".pitlane")).unwrap();
-    fs::write(games.join(".pitlane/flow.toml"), format!("[worktree]\nroot = \"{}\"\n", top.join("wt/{repo}/{branch}").display())).unwrap();
+    fs::write(
+        games.join(".pitlane/flow.toml"),
+        format!(
+            "[worktree]\nroot = \"{}\"\n",
+            top.join("wt/{repo}/{branch}").display()
+        ),
+    )
+    .unwrap();
     git(&games, &["add", "-A"]);
     git(&games, &["commit", "-qm", "init"]);
-    git(&games, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(
+        &games,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
     git(&games, &["push", "-q", "origin", "main"]);
-    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap() + "\n[project]\nrepos = [\"../games\"]\n";
+    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap()
+        + "\n[project]\nrepos = [\"../games\"]\n";
     fs::write(fx.repo.join(".pitlane/flow.toml"), flow).unwrap();
     git(&fx.repo, &["branch", "feat/day"]);
     let id = card(&fx, "Fix the engine");
     let r = Repo::open(&fx.repo, &top, &fx.home).unwrap();
-    cards::update(&r, id, CardPatch { target: Some(Some("feat/day".into())), ..Default::default() }).unwrap();
+    cards::update(
+        &r,
+        id,
+        CardPatch {
+            target: Some(Some("feat/day".into())),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let s = Supervisor::new(Config {
         home: fx.home.clone(),
         claude_bin: {
             let wrapper = fx.fake.with_file_name("fake-related");
-            fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=related exec {} \"$@\"\n", fx.fake.display())).unwrap();
-            Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+            fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/bash\nFAKE_MODE=related exec {} \"$@\"\n",
+                    fx.fake.display()
+                ),
+            )
+            .unwrap();
+            Command::new("chmod")
+                .arg("+x")
+                .arg(&wrapper)
+                .status()
+                .unwrap();
             wrapper.to_string_lossy().into_owned()
         },
         pit_bin: None,
     });
     s.start_queue();
-    let meta = s.start(fx.repo.clone(), id, None, pitd::supervisor::StartOpts { autopilot: true, ..Default::default() }).unwrap();
+    let meta = s
+        .start(
+            fx.repo.clone(),
+            id,
+            None,
+            pitd::supervisor::StartOpts {
+                autopilot: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let end = wait_end(&s, &meta.id).await;
     assert_eq!(end.state, RunState::Done, "{:?}", end.error);
-    let notes: Vec<String> = s.subscribe(&meta.id, 0).unwrap().replay.into_iter().filter_map(|(_, e)| match e {
-        RunEvent::Note { text } => Some(text),
-        _ => None,
-    }).collect();
+    let notes: Vec<String> = s
+        .subscribe(&meta.id, 0)
+        .unwrap()
+        .replay
+        .into_iter()
+        .filter_map(|(_, e)| match e {
+            RunEvent::Note { text } => Some(text),
+            _ => None,
+        })
+        .collect();
     assert_eq!(end.related.len(), 1, "{notes:#?}");
     let lane = &end.related[0];
-    assert_eq!((lane.name.as_str(), lane.branch.as_str()), ("games", "feat/x"));
+    assert_eq!(
+        (lane.name.as_str(), lane.branch.as_str()),
+        ("games", "feat/x")
+    );
     let args = fs::read_to_string(end.worktree.join(".args")).unwrap();
-    assert!(args.contains("--add-dir") && args.contains(&lane.worktree.to_string_lossy().into_owned()), "{args}");
-    assert!(fs::read_to_string(end.worktree.join(".briefing-seen")).unwrap().contains("Related repositories"));
+    assert!(
+        args.contains("--add-dir") && args.contains(&lane.worktree.to_string_lossy().into_owned()),
+        "{args}"
+    );
+    assert!(
+        args.contains("--permission-mode bypassPermissions"),
+        "Run all never stops for a permission: {args}"
+    );
+    assert!(
+        fs::read_to_string(end.worktree.join(".briefing-seen"))
+            .unwrap()
+            .contains("Related repositories")
+    );
 
     // It lands in feat/day in both repositories, made in games from a fresh origin/main.
     let mut state = CardState::Running;
@@ -669,9 +1160,21 @@ async fn a_related_repository_gets_the_branch_and_lands_too() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(matches!(state, CardState::Done | CardState::InDev), "{state:?} {:?}", s.queue_list(None));
-    let has = Command::new("git").arg("-C").arg(&games).args(["cat-file", "-e", "feat/day:fix.txt"]).status().unwrap();
-    assert!(has.success(), "the fix made in games landed in games' feat/day");
+    assert!(
+        matches!(state, CardState::Done | CardState::InDev),
+        "{state:?} {:?}",
+        s.queue_list(None)
+    );
+    let has = Command::new("git")
+        .arg("-C")
+        .arg(&games)
+        .args(["cat-file", "-e", "feat/day:fix.txt"])
+        .status()
+        .unwrap();
+    assert!(
+        has.success(),
+        "the fix made in games landed in games' feat/day"
+    );
 }
 
 async fn wait_job(s: &Arc<Supervisor>, id: &str) -> pit_core::queue::ShipJob {
@@ -691,11 +1194,28 @@ async fn the_merge_queue_ships_one_lane_at_a_time() {
     use pit_core::queue::JobState;
     let fx = fx();
     let origin = fx.home.parent().unwrap().join("origin.git");
-    git(fx.home.parent().unwrap(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
-    git(&fx.repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(
+        fx.home.parent().unwrap(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(
+        &fx.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
     git(&fx.repo, &["push", "-q", "origin", "main", "main:dev"]);
     // Three lanes off main: two touch different files, the third clashes with the first.
-    for (branch, file, text) in [("feat/a", "a.txt", "a\n"), ("feat/b", "b.txt", "b\n"), ("feat/clash", "a.txt", "other\n")] {
+    for (branch, file, text) in [
+        ("feat/a", "a.txt", "a\n"),
+        ("feat/b", "b.txt", "b\n"),
+        ("feat/clash", "a.txt", "other\n"),
+    ] {
         git(&fx.repo, &["switch", "-q", "-c", branch, "main"]);
         fs::write(fx.repo.join(file), text).unwrap();
         git(&fx.repo, &["add", "-A"]);
@@ -704,35 +1224,76 @@ async fn the_merge_queue_ships_one_lane_at_a_time() {
     git(&fx.repo, &["switch", "-q", "main"]);
     git(&fx.repo, &["fetch", "-q", "origin"]);
     let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
-    let c = cards::add(&r, NewCard { title: "B".into(), ..Default::default() }).unwrap();
-    cards::update(&r, c.id, CardPatch { lane: Some(Some("feat/b".into())), state: Some(CardState::Review), ..Default::default() }).unwrap();
+    let c = cards::add(
+        &r,
+        NewCard {
+            title: "B".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    cards::update(
+        &r,
+        c.id,
+        CardPatch {
+            lane: Some(Some("feat/b".into())),
+            state: Some(CardState::Review),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let s = sup(&fx);
     let a = s.enqueue(&fx.repo, "feat/a", None).unwrap();
     let b = s.enqueue(&fx.repo, "feat/b", None).unwrap();
     let x = s.enqueue(&fx.repo, "feat/clash", None).unwrap();
-    assert_eq!(a.target, "dev", "the next stage of a fresh lane is integration");
-    assert!(s.enqueue(&fx.repo, "feat/a", None).is_err(), "one open job per lane");
+    assert_eq!(
+        a.target, "dev",
+        "the next stage of a fresh lane is integration"
+    );
+    assert!(
+        s.enqueue(&fx.repo, "feat/a", None).is_err(),
+        "one open job per lane"
+    );
     assert!(s.enqueue(&fx.repo, "main", None).is_err());
     assert_eq!(s.queue_list(Some(&r.root)).len(), 3);
 
     // The queue survives a restart before it ships anything.
     let s2 = sup(&fx);
-    assert_eq!(s2.queue_list(None).iter().filter(|j| j.state == JobState::Queued).count(), 3);
+    assert_eq!(
+        s2.queue_list(None)
+            .iter()
+            .filter(|j| j.state == JobState::Queued)
+            .count(),
+        3
+    );
     drop(s2);
 
     s.start_queue();
-    let (ja, jb, jx) = (wait_job(&s, &a.id).await, wait_job(&s, &b.id).await, wait_job(&s, &x.id).await);
+    let (ja, jb, jx) = (
+        wait_job(&s, &a.id).await,
+        wait_job(&s, &b.id).await,
+        wait_job(&s, &x.id).await,
+    );
     assert_eq!((ja.state, jb.state), (JobState::Done, JobState::Done));
     assert_eq!(jx.state, JobState::Conflict, "{:?}", jx.error);
     assert_eq!(jx.conflicts, vec!["a.txt".to_owned()]);
     assert!(ja.finished_at <= jb.finished_at, "in order");
     git(&fx.repo, &["fetch", "-q", "origin"]);
     for b in ["feat/a", "feat/b"] {
-        let ok = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", b, "origin/dev"]).status().unwrap();
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(&fx.repo)
+            .args(["merge-base", "--is-ancestor", b, "origin/dev"])
+            .status()
+            .unwrap();
         assert!(ok.success(), "{b} is in origin/dev");
     }
-    assert_eq!(card_state(&fx, c.id).0, CardState::InDev, "the card followed its lane");
+    assert_eq!(
+        card_state(&fx, c.id).0,
+        CardState::InDev,
+        "the card followed its lane"
+    );
 
     // The clash can leave the line; a lane already in dev goes on to main next.
     s.dequeue(&jx.id).unwrap();
@@ -746,13 +1307,19 @@ async fn the_merge_queue_ships_one_lane_at_a_time() {
 async fn the_first_message_carries_a_map_of_where_to_look() {
     let fx = fx();
     fs::create_dir_all(fx.repo.join("src")).unwrap();
-    fs::write(fx.repo.join("src/kart.ts"), "export function driftAngle(tier: number): number {\n  return tier * 3;\n}\n").unwrap();
+    fs::write(
+        fx.repo.join("src/kart.ts"),
+        "export function driftAngle(tier: number): number {\n  return tier * 3;\n}\n",
+    )
+    .unwrap();
     git(&fx.repo, &["add", "-A"]);
     git(&fx.repo, &["commit", "-qm", "kart"]);
     let s = sup(&fx);
 
     let id = card(&fx, "Raise the drift angle for tier 3");
-    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let run = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
     let end = wait_end(&s, &run.id).await;
     let b = end.brief.expect("briefed");
     assert_eq!(b.files, 1);
@@ -764,7 +1331,12 @@ async fn the_first_message_carries_a_map_of_where_to_look() {
             _ => None,
         })
         .collect();
-    assert!(notes.iter().any(|n| n.starts_with("Briefed with 1 file from")), "{notes:?}");
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.starts_with("Briefed with 1 file from")),
+        "{notes:?}"
+    );
 
     let other = card(&fx, "Drift angle again, without the map");
     let opts = pit_supervisor_opts_no_brief();
@@ -773,5 +1345,8 @@ async fn the_first_message_carries_a_map_of_where_to_look() {
 }
 
 fn pit_supervisor_opts_no_brief() -> pitd::supervisor::StartOpts {
-    pitd::supervisor::StartOpts { no_brief: true, ..Default::default() }
+    pitd::supervisor::StartOpts {
+        no_brief: true,
+        ..Default::default()
+    }
 }

@@ -12,12 +12,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use pit_core::Repo;
+use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
 use pit_core::actions::{self, NewOptions};
 use pit_core::cards::{self, CardPatch, CardState, NewQuestion};
+use pit_core::flow;
 use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::lanes::now_secs;
-use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
-use pit_core::flow;
 use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -183,7 +183,8 @@ impl Supervisor {
                 m.pid = None;
                 m.state = RunState::Interrupted;
                 m.ended_at.get_or_insert(now_secs());
-                m.error.get_or_insert_with(|| "the daemon stopped while this run was open".into());
+                m.error
+                    .get_or_insert_with(|| "the daemon stopped while this run was open".into());
                 self.write_meta(&m)?;
                 n += 1;
             }
@@ -194,7 +195,9 @@ impl Supervisor {
     fn list_disk(&self) -> Result<Vec<RunMeta>> {
         let dir = runs::runs_dir(&self.cfg.home);
         let mut out = Vec::new();
-        let Ok(rd) = fs::read_dir(&dir) else { return Ok(out) };
+        let Ok(rd) = fs::read_dir(&dir) else {
+            return Ok(out);
+        };
         for e in rd.flatten() {
             if let Ok(t) = fs::read_to_string(e.path().join("meta.json"))
                 && let Ok(m) = serde_json::from_str::<RunMeta>(&t)
@@ -207,7 +210,11 @@ impl Supervisor {
 
     /// A repository's runs, newest first. Side sessions (analysis, judge) are left out.
     pub fn list(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
-        Ok(self.sessions(repo)?.into_iter().filter(|m| m.kind == SessionKind::Run).collect())
+        Ok(self
+            .sessions(repo)?
+            .into_iter()
+            .filter(|m| m.kind == SessionKind::Run)
+            .collect())
     }
 
     /// Every session, runs and side sessions, newest first.
@@ -219,7 +226,11 @@ impl Supervisor {
             .map(|m| live.get(&m.id).map(|l| l.meta.clone()).unwrap_or(m))
             .filter(|m| repo.is_none_or(|r| m.repo == r))
             .collect();
-        all.sort_by(|a, b| b.started_at.cmp(&a.started_at).then_with(|| b.id.cmp(&a.id)));
+        all.sort_by(|a, b| {
+            b.started_at
+                .cmp(&a.started_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
         Ok(all)
     }
 
@@ -227,7 +238,8 @@ impl Supervisor {
         if let Some(l) = self.live.lock().unwrap().get(id) {
             return Ok(l.meta.clone());
         }
-        let t = fs::read_to_string(self.dir(id).join("meta.json")).with_context(|| format!("no run {id}"))?;
+        let t = fs::read_to_string(self.dir(id).join("meta.json"))
+            .with_context(|| format!("no run {id}"))?;
         Ok(serde_json::from_str(&t)?)
     }
 
@@ -260,7 +272,10 @@ impl Supervisor {
         let mut live = self.live.lock().unwrap();
         let Some(l) = live.get_mut(id) else { return };
         let i = l.events;
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(self.dir(id).join("timeline.jsonl"))
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir(id).join("timeline.jsonl"))
             && let Ok(line) = serde_json::to_string(&ev)
         {
             let _ = writeln!(f, "{line}");
@@ -284,11 +299,17 @@ impl Supervisor {
         let live = self.live.lock().unwrap();
         if let Some(l) = live.get(id) {
             let rx = l.tx.subscribe();
-            return Ok(Subscription { replay: self.read_timeline(id, from), rx: Some(rx) });
+            return Ok(Subscription {
+                replay: self.read_timeline(id, from),
+                rx: Some(rx),
+            });
         }
         drop(live);
         self.get(id)?;
-        Ok(Subscription { replay: self.read_timeline(id, from), rx: None })
+        Ok(Subscription {
+            replay: self.read_timeline(id, from),
+            rx: None,
+        })
     }
 
     /// Usage per account, in percent, from the last events seen.
@@ -315,10 +336,17 @@ impl Supervisor {
 
     /// The route's choice for a new run of this repository. A resumed run keeps its account and
     /// model (the session lives there); a continuation skips the accounts that hit their limit.
-    fn choose(&self, r: &Repo, resume: Option<&RunMeta>, opts: &StartOpts) -> Result<(Choice, String, Vec<String>)> {
+    fn choose(
+        &self,
+        r: &Repo,
+        resume: Option<&RunMeta>,
+        opts: &StartOpts,
+    ) -> Result<(Choice, String, Vec<String>)> {
         let routing = Routing::load(&self.cfg.home)?;
         if let Some(prev) = resume {
-            let a = routing.account(&prev.account).with_context(|| format!("account {} is gone from routing.toml", prev.account))?;
+            let a = routing
+                .account(&prev.account)
+                .with_context(|| format!("account {} is gone from routing.toml", prev.account))?;
             let choice = Choice {
                 account: a.id.clone(),
                 kind: a.kind,
@@ -326,7 +354,11 @@ impl Supervisor {
                 config_dir: accounts::profile_dir(&a.id, &self.cfg.home),
                 api_key_helper: a.api_key_helper.clone(),
             };
-            return Ok((choice, format!("resumes {} in the same session", prev.id), prev.exhausted.clone()));
+            return Ok((
+                choice,
+                format!("resumes {} in the same session", prev.id),
+                prev.exhausted.clone(),
+            ));
         }
         let exhausted = match &opts.handoff_from {
             Some(prev) => {
@@ -338,12 +370,20 @@ impl Supervisor {
             None => Vec::new(),
         };
         let choices = routing.choices(&r.root, &home_dir(), &self.cfg.home)?;
-        let running: HashMap<String, usize> = self.live.lock().unwrap().values().fold(HashMap::new(), |mut m, l| {
-            *m.entry(l.meta.account.clone()).or_default() += 1;
-            m
-        });
-        let max_parallel: HashMap<String, u32> =
-            routing.accounts.iter().filter_map(|a| a.max_parallel.map(|n| (a.id.clone(), n))).collect();
+        let running: HashMap<String, usize> =
+            self.live
+                .lock()
+                .unwrap()
+                .values()
+                .fold(HashMap::new(), |mut m, l| {
+                    *m.entry(l.meta.account.clone()).or_default() += 1;
+                    m
+                });
+        let max_parallel: HashMap<String, u32> = routing
+            .accounts
+            .iter()
+            .filter_map(|a| a.max_parallel.map(|n| (a.id.clone(), n)))
+            .collect();
         let usage = self.usage();
         let claude = self.cfg.claude_bin.clone();
         let home = self.cfg.home.clone();
@@ -376,15 +416,26 @@ impl Supervisor {
 
     /// Starts a run of `card` in `repo`. Returns at once; preparing the worktree and the agent's
     /// work show up as events.
-    pub fn start(self: &Arc<Self>, repo: PathBuf, card: u32, resume: Option<String>, opts: StartOpts) -> Result<RunMeta> {
+    pub fn start(
+        self: &Arc<Self>,
+        repo: PathBuf,
+        card: u32,
+        resume: Option<String>,
+        opts: StartOpts,
+    ) -> Result<RunMeta> {
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
         let c = cards::get(&r, card)?;
         if c.open_questions() > 0 {
-            bail!("card #{card} has {} open question(s); answer them in the Inbox first", c.open_questions());
+            bail!(
+                "card #{card} has {} open question(s); answer them in the Inbox first",
+                c.open_questions()
+            );
         }
         {
             let live = self.live.lock().unwrap();
-            if let Some(l) = live.values().find(|l| l.meta.kind == SessionKind::Run && l.meta.repo == r.root && l.meta.card == card) {
+            if let Some(l) = live.values().find(|l| {
+                l.meta.kind == SessionKind::Run && l.meta.repo == r.root && l.meta.card == card
+            }) {
                 bail!("card #{card} is already running ({})", l.meta.id);
             }
             // Claimed under the same lock as the check, released once the run is in `live`.
@@ -401,7 +452,10 @@ impl Supervisor {
             None => (uuid::Uuid::new_v4().to_string(), None),
         };
         let now = now_secs();
-        let id = format!("{card}-{now}-{}", &uuid::Uuid::new_v4().simple().to_string()[..4]);
+        let id = format!(
+            "{card}-{now}-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..4]
+        );
         let meta = RunMeta {
             id: id.clone(),
             repo: r.root.clone(),
@@ -464,7 +518,11 @@ impl Supervisor {
         let me = Arc::clone(self);
         let run = id.clone();
         tokio::spawn(async move {
-            if let Err(e) = me.clone().drive(run.clone(), repo, card, resume.is_some(), choice, opts).await {
+            if let Err(e) = me
+                .clone()
+                .drive(run.clone(), repo, card, resume.is_some(), choice, opts)
+                .await
+            {
                 me.fail(&run, &format!("{e:#}"));
             }
         });
@@ -472,13 +530,24 @@ impl Supervisor {
     }
 
     fn fail(&self, id: &str, why: &str) {
-        self.emit(id, RunEvent::Note { text: why.to_owned() });
+        self.emit(
+            id,
+            RunEvent::Note {
+                text: why.to_owned(),
+            },
+        );
         self.update(id, |m| {
             m.state = RunState::Failed;
             m.error = Some(why.to_owned());
             m.ended_at = Some(now_secs());
         });
-        self.emit(id, RunEvent::Exited { code: None, state: RunState::Failed });
+        self.emit(
+            id,
+            RunEvent::Exited {
+                code: None,
+                state: RunState::Failed,
+            },
+        );
         if let Some(m) = self.live.lock().unwrap().remove(id).map(|l| l.meta) {
             let _ = set_card_state(&m, CardState::Blocked, &self.cfg.home);
         }
@@ -493,29 +562,61 @@ impl Supervisor {
         choice: Choice,
         opts: StartOpts,
     ) -> Result<()> {
-        let StartOpts { handoff_from, message, no_brief, into, direct, instructions, .. } = opts;
+        let StartOpts {
+            handoff_from,
+            message,
+            no_brief,
+            into,
+            direct,
+            instructions,
+            ..
+        } = opts;
         // Worktree and branch: blocking git work, off the async threads.
         let home = self.cfg.home.clone();
         let me = Arc::clone(&self);
         let rid = id.clone();
         let prev = handoff_from.as_deref().map(|p| self.get(p)).transpose()?;
-        let prev_texts = handoff_from.as_deref().map(|p| last_words(&self.read_timeline(p, 0))).unwrap_or_default();
+        let prev_texts = handoff_from
+            .as_deref()
+            .map(|p| last_words(&self.read_timeline(p, 0)))
+            .unwrap_or_default();
         let repo_for_prep = repo.clone();
         let prep = tokio::task::spawn_blocking(move || {
-            prepare(&repo_for_prep, card, &home, prev.as_ref().map(|p| (p, prev_texts.as_str())), !no_brief, into.as_deref(), direct, |t| me.emit(&rid, RunEvent::Note { text: t }))
+            prepare(
+                &repo_for_prep,
+                card,
+                &home,
+                prev.as_ref().map(|p| (p, prev_texts.as_str())),
+                !no_brief,
+                into.as_deref(),
+                direct,
+                |t| me.emit(&rid, RunEvent::Note { text: t }),
+            )
         })
         .await??;
         // One agent per worktree: two in the same checkout would edit over each other.
-        if let Some(other) = self.live.lock().unwrap().values().find(|l| l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.worktree == prep.worktree) {
-            bail!("#{} is already working in {}; this card starts when it ends", other.meta.card, prep.worktree.display());
+        if let Some(other) = self.live.lock().unwrap().values().find(|l| {
+            l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.worktree == prep.worktree
+        }) {
+            bail!(
+                "#{} is already working in {}; this card starts when it ends",
+                other.meta.card,
+                prep.worktree.display()
+            );
         }
         let mut prep = prep;
-        if let Some(i) = instructions.as_deref().map(str::trim).filter(|i| !i.is_empty()) {
+        if let Some(i) = instructions
+            .as_deref()
+            .map(str::trim)
+            .filter(|i| !i.is_empty())
+        {
             let end = "\nWhen you finish, end with the handoff.\n";
             let at = prep.briefing.rfind(end).unwrap_or(prep.briefing.len());
             prep.briefing.insert_str(at, &format!("\n## What the person asked for this whole batch\n\nFollow what applies while you work this card (what is for the very end is done later, not by you):\n\n{i}\n"));
         }
-        let base_sha = pit_core::git::Git::new(&prep.worktree).run(&["rev-parse", "HEAD"]).ok();
+        let base_sha = pit_core::git::Git::new(&prep.worktree)
+            .run(&["rev-parse", "HEAD"])
+            .ok();
         self.update(&id, |m| {
             m.branch = prep.branch.clone();
             m.worktree = prep.worktree.clone();
@@ -524,8 +625,19 @@ impl Supervisor {
             m.related = prep.related.clone();
         });
 
-        if self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested) {
-            self.emit(&id, RunEvent::Note { text: "Stopped before the agent started".into() });
+        if self
+            .live
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|l| l.stop_requested)
+        {
+            self.emit(
+                &id,
+                RunEvent::Note {
+                    text: "Stopped before the agent started".into(),
+                },
+            );
             let mut settled = self.get(&id)?;
             settled.state = RunState::Stopped;
             let home = self.cfg.home.clone();
@@ -534,33 +646,68 @@ impl Supervisor {
                 m.state = RunState::Stopped;
                 m.ended_at = Some(now_secs());
             });
-            self.emit(&id, RunEvent::Exited { code: None, state: RunState::Stopped });
+            self.emit(
+                &id,
+                RunEvent::Exited {
+                    code: None,
+                    state: RunState::Stopped,
+                },
+            );
             self.live.lock().unwrap().remove(&id);
             return Ok(());
         }
         self.wait_room(&id).await;
         let session = self.get(&id)?.session_id;
         let mut cmd = Command::new(&self.cfg.claude_bin);
-        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]);
+        cmd.args([
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+        ]);
         if resuming {
             cmd.args(["--resume", &session]);
         } else {
             cmd.args(["--session-id", &session]);
         }
-        cmd.args(["--setting-sources", "project,local", "--permission-mode", &mode_for(&repo)])
-            .arg("--allowedTools")
-            .arg(prep.tools.join(","))
-            // Nobody is watching a run: it decides, notes the choice, or ends blocked.
-            .args(["--disallowedTools", "AskUserQuestion"])
-            .args(prep.related.iter().flat_map(|l| ["--add-dir".to_owned(), l.worktree.to_string_lossy().into_owned()]))
-            .args(["--max-turns", &prep.max_turns.to_string()])
-            .arg("--append-system-prompt")
-            .arg(format!("{}{}", runs::RULES, pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))))
-            .arg("--json-schema")
-            .arg(runs::handoff_schema().to_string());
+        // Run all asks nothing: its runs never stop for a permission (the person chose so).
+        let autopilot = self.get(&id).is_ok_and(|m| m.autopilot);
+        let mode = if autopilot {
+            "bypassPermissions".to_owned()
+        } else {
+            mode_for(&repo)
+        };
+        cmd.args([
+            "--setting-sources",
+            "project,local",
+            "--permission-mode",
+            &mode,
+        ])
+        .arg("--allowedTools")
+        .arg(prep.tools.join(","))
+        // Nobody is watching a run: it decides, notes the choice, or ends blocked.
+        .args(["--disallowedTools", "AskUserQuestion"])
+        .args(prep.related.iter().flat_map(|l| {
+            [
+                "--add-dir".to_owned(),
+                l.worktree.to_string_lossy().into_owned(),
+            ]
+        }))
+        .args(["--max-turns", &prep.max_turns.to_string()])
+        .arg("--append-system-prompt")
+        .arg(format!(
+            "{}{}",
+            runs::RULES,
+            pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))
+        ))
+        .arg("--json-schema")
+        .arg(runs::handoff_schema().to_string());
         // The model: the route's, the repository's, or else the one you use in Claude Code.
         let picked = choice.model.clone().or(prep.model.clone());
-        let (your_model, your_effort) = your_claude(choice.config_dir.as_deref(), picked.as_deref());
+        let (your_model, your_effort) =
+            your_claude(choice.config_dir.as_deref(), picked.as_deref());
         if let Some(m) = picked.as_ref().or(your_model.as_ref()) {
             cmd.args(["--model", m]);
         }
@@ -574,15 +721,26 @@ impl Supervisor {
         }
         // An API key account: Claude Code runs your helper command; the key never passes here.
         if let Some(helper) = &choice.api_key_helper {
-            cmd.arg("--settings").arg(serde_json::json!({ "apiKeyHelper": helper }).to_string());
+            cmd.arg("--settings")
+                .arg(serde_json::json!({ "apiKeyHelper": helper }).to_string());
         }
-        self.emit(&id, RunEvent::Note { text: format!("Route: {}", self.get(&id)?.reason.unwrap_or_default()) });
+        self.emit(
+            &id,
+            RunEvent::Note {
+                text: format!("Route: {}", self.get(&id)?.reason.unwrap_or_default()),
+            },
+        );
         if let Some(pit) = &self.cfg.pit_bin {
             // Anything no rule allows is asked to a person, through Pitlane, and waits for them.
             let mcp = serde_json::json!({ "mcpServers": { "pitlane_run": {
                 "command": pit, "args": ["mcp", "--approve", &id] } } });
             cmd.args(["--mcp-config", &mcp.to_string()])
-                .args(["--permission-prompts", "host", "--permission-prompt-tool", "mcp__pitlane_run__approve"])
+                .args([
+                    "--permission-prompts",
+                    "host",
+                    "--permission-prompt-tool",
+                    "mcp__pitlane_run__approve",
+                ])
                 .env("MCP_TOOL_TIMEOUT", "86400000");
         }
         cmd.current_dir(&prep.worktree)
@@ -596,16 +754,24 @@ impl Supervisor {
             .stderr(Stdio::piped())
             .process_group(0)
             .kill_on_drop(false);
-        let mut child = cmd.spawn().with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
         let pid = child.id();
         let mut stdin = child.stdin.take().context("no stdin")?;
         let first = if resuming {
-            message.clone().unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned())
+            message
+                .clone()
+                .unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned())
         } else {
             fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
             prep.briefing.clone()
         };
-        let line = if resuming { runs::claude_user_line(&first) } else { runs::claude_user_line_with(&first, &prep.images) };
+        let line = if resuming {
+            runs::claude_user_line(&first)
+        } else {
+            runs::claude_user_line_with(&first, &prep.images)
+        };
         stdin.write_all(format!("{line}\n").as_bytes()).await?;
         stdin.flush().await?;
         {
@@ -626,7 +792,11 @@ impl Supervisor {
         let err_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             let mut tail: Vec<String> = Vec::new();
-            let mut f = OpenOptions::new().create(true).append(true).open(err_path).ok();
+            let mut f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(err_path)
+                .ok();
             while let Ok(Some(l)) = lines.next_line().await {
                 if let Some(f) = f.as_mut() {
                     let _ = writeln!(f, "{l}");
@@ -640,7 +810,10 @@ impl Supervisor {
         });
 
         let raw_path = self.dir(&id).join("events.jsonl");
-        let mut raw = OpenOptions::new().create(true).append(true).open(raw_path)?;
+        let mut raw = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(raw_path)?;
         let finished = Arc::new(Mutex::new(None::<bool>));
         let reader = {
             let me = Arc::clone(&self);
@@ -650,7 +823,9 @@ impl Supervisor {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let _ = writeln!(raw, "{line}");
-                    let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                    let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
                     me.note_background(&id, &v);
                     for ev in runs::read_claude_line(&v) {
                         let mut ok = None;
@@ -676,7 +851,10 @@ impl Supervisor {
         // A tool's child process can keep stdout open after the agent is gone: read what is
         // left for a moment, then let go.
         let mut reader = reader;
-        if tokio::time::timeout(Duration::from_secs(3), &mut reader).await.is_err() {
+        if tokio::time::timeout(Duration::from_secs(3), &mut reader)
+            .await
+            .is_err()
+        {
             reader.abort();
         }
         let tail = match tokio::time::timeout(Duration::from_secs(1), err_task).await {
@@ -685,7 +863,13 @@ impl Supervisor {
         };
         let finished_ok = *finished.lock().unwrap();
         let stopped = self.stop_requested(&id);
-        let limited = !stopped && self.live.lock().unwrap().get(&id).is_some_and(|l| l.limited);
+        let limited = !stopped
+            && self
+                .live
+                .lock()
+                .unwrap()
+                .get(&id)
+                .is_some_and(|l| l.limited);
         if limited {
             return self.hand_off(id, repo, card, status.code()).await;
         }
@@ -697,15 +881,29 @@ impl Supervisor {
             RunState::Failed
         };
         let error = (state == RunState::Failed).then(|| {
-            if tail.is_empty() { format!("the agent exited with {status}") } else { tail.join("\n") }
+            if tail.is_empty() {
+                format!("the agent exited with {status}")
+            } else {
+                tail.join("\n")
+            }
         });
         // Finished work is checked before anyone reviews it: the repository's proofs, then the judge.
-        let blocked = self.get(&id)?.handoff.as_ref().and_then(|h| h.get("status")).and_then(|s| s.as_str()) == Some("blocked");
+        let blocked = self
+            .get(&id)?
+            .handoff
+            .as_ref()
+            .and_then(|h| h.get("status"))
+            .and_then(|s| s.as_str())
+            == Some("blocked");
         if state == RunState::Done && !blocked {
             self.verify(&id, card).await;
         }
         // Stopped while it was being checked: back to ready, not to review.
-        let state = if self.stop_requested(&id) { RunState::Stopped } else { state };
+        let state = if self.stop_requested(&id) {
+            RunState::Stopped
+        } else {
+            state
+        };
         // The card follows the run first (a handoff moves it to review, its questions go to the
         // Inbox), so anyone who sees the run ended also sees where the card went.
         let mut settled = self.get(&id)?;
@@ -721,7 +919,13 @@ impl Supervisor {
                 m.error = error;
             }
         });
-        self.emit(&id, RunEvent::Exited { code: status.code(), state });
+        self.emit(
+            &id,
+            RunEvent::Exited {
+                code: status.code(),
+                state,
+            },
+        );
         self.live.lock().unwrap().remove(&id);
         card_result?;
         if self.get(&id).is_ok_and(|m| m.autopilot) {
@@ -737,26 +941,62 @@ impl Supervisor {
     async fn autopilot(self: &Arc<Self>, id: &str) {
         let Ok(m) = self.get(id) else { return };
         let home = self.cfg.home.clone();
-        let Ok(r) = Repo::open(&m.repo, &home_dir(), &home) else { return };
-        let next = StartOpts { autopilot: true, round: m.round, extensions: m.extensions, ..Default::default() };
+        let Ok(r) = Repo::open(&m.repo, &home_dir(), &home) else {
+            return;
+        };
+        let next = StartOpts {
+            autopilot: true,
+            round: m.round,
+            extensions: m.extensions,
+            ..Default::default()
+        };
         let say = |text: String| {
             let _ = cards::note(&r, m.card, "pitlane", &text);
         };
         match m.state {
             // Out of turns: the same session goes on, twice at most.
-            RunState::Failed if m.handoff.is_none() && m.turns.is_some_and(|t| t + 1 >= r.flow.run.max_turns) => {
+            RunState::Failed
+                if m.handoff.is_none()
+                    && m.turns.is_some_and(|t| t + 1 >= r.flow.run.max_turns) =>
+            {
                 if m.extensions >= 2 {
-                    say(format!("Run {} ran out of turns a third time; the card waits for you.", m.id));
+                    say(format!(
+                        "Run {} ran out of turns a third time; the card waits for you.",
+                        m.id
+                    ));
                     return;
                 }
                 let msg = "You ran out of turns before finishing. Carry on from where you stopped: commit what works, \
                            finish the card, and end with the handoff. Skip anything you already did.";
-                match self.start(m.repo.clone(), m.card, Some(m.id.clone()), StartOpts { message: Some(msg.into()), extensions: m.extensions + 1, ..next }) {
-                    Ok(n) => self.emit(id, RunEvent::Note { text: format!("Out of turns: continues as run {}.", n.id) }),
-                    Err(e) => say(format!("Run {} ran out of turns and could not continue: {e:#}", m.id)),
+                match self.start(
+                    m.repo.clone(),
+                    m.card,
+                    Some(m.id.clone()),
+                    StartOpts {
+                        message: Some(msg.into()),
+                        extensions: m.extensions + 1,
+                        ..next
+                    },
+                ) {
+                    Ok(n) => self.emit(
+                        id,
+                        RunEvent::Note {
+                            text: format!("Out of turns: continues as run {}.", n.id),
+                        },
+                    ),
+                    Err(e) => say(format!(
+                        "Run {} ran out of turns and could not continue: {e:#}",
+                        m.id
+                    )),
                 }
             }
-            RunState::Done if m.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str) != Some("blocked") => {
+            RunState::Done
+                if m.handoff
+                    .as_ref()
+                    .and_then(|h| h.get("status"))
+                    .and_then(Value::as_str)
+                    != Some("blocked") =>
+            {
                 let c = match cards::get(&r, m.card) {
                     Ok(c) if c.state == CardState::Review => c,
                     _ => return,
@@ -765,27 +1005,73 @@ impl Supervisor {
                 let changes = m.verdict == Some(pit_core::verify::Verdict::Changes);
                 if (proofs_failed || changes) && m.round < r.flow.verify.max_rounds {
                     let what = fix_request(&self.dir(id));
-                    let first = format!("Pitlane checked your work and it needs another pass:\n\n{what}\n\nFix it, commit, and end with the handoff.");
-                    match self.start(m.repo.clone(), m.card, Some(m.id.clone()), StartOpts { message: Some(first), round: m.round + 1, extensions: 0, ..next }) {
-                        Ok(n) => self.emit(id, RunEvent::Note { text: format!("Round {} starts on its own: run {}.", m.round + 1, n.id) }),
-                        Err(e) => say(format!("The fix round for run {} did not start: {e:#}", m.id)),
+                    let first = format!(
+                        "Pitlane checked your work and it needs another pass:\n\n{what}\n\nFix it, commit, and end with the handoff."
+                    );
+                    match self.start(
+                        m.repo.clone(),
+                        m.card,
+                        Some(m.id.clone()),
+                        StartOpts {
+                            message: Some(first),
+                            round: m.round + 1,
+                            extensions: 0,
+                            ..next
+                        },
+                    ) {
+                        Ok(n) => self.emit(
+                            id,
+                            RunEvent::Note {
+                                text: format!(
+                                    "Round {} starts on its own: run {}.",
+                                    m.round + 1,
+                                    n.id
+                                ),
+                            },
+                        ),
+                        Err(e) => say(format!(
+                            "The fix round for run {} did not start: {e:#}",
+                            m.id
+                        )),
                     }
                     return;
                 }
                 if proofs_failed {
-                    let _ = cards::update(&r, m.card, CardPatch { state: Some(CardState::Blocked), ..Default::default() });
-                    say(format!("The checks still fail after {} rounds, so this card did not land. The rest of the batch went on.", m.round + 1));
+                    let _ = cards::update(
+                        &r,
+                        m.card,
+                        CardPatch {
+                            state: Some(CardState::Blocked),
+                            ..Default::default()
+                        },
+                    );
+                    say(format!(
+                        "The checks still fail after {} rounds, so this card did not land. The rest of the batch went on.",
+                        m.round + 1
+                    ));
                     return;
                 }
                 if changes {
-                    say(format!("Landed after {} rounds; the judge still asked for changes. See its findings in the run.", m.round + 1));
+                    say(format!(
+                        "Landed after {} rounds; the judge still asked for changes. See its findings in the run.",
+                        m.round + 1
+                    ));
                 }
                 if c.direct() {
-                    let _ = cards::update(&r, m.card, CardPatch { state: Some(CardState::Done), ..Default::default() });
+                    let _ = cards::update(
+                        &r,
+                        m.card,
+                        CardPatch {
+                            state: Some(CardState::Done),
+                            ..Default::default()
+                        },
+                    );
                     return;
                 }
                 if let Err(e) = self.land_card(&m.repo, &c, &m.related) {
-                    say(format!("Could not put this card's work in line to land: {e:#}"));
+                    say(format!(
+                        "Could not put this card's work in line to land: {e:#}"
+                    ));
                 }
             }
             _ => {}
@@ -813,7 +1099,13 @@ impl Supervisor {
                 });
             }
             RunEvent::Quota { window, .. } => {
-                let account = self.live.lock().unwrap().get(id).map(|l| l.meta.account.clone()).unwrap_or_default();
+                let account = self
+                    .live
+                    .lock()
+                    .unwrap()
+                    .get(id)
+                    .map(|l| l.meta.account.clone())
+                    .unwrap_or_default();
                 let mut all = self.quota.lock().unwrap();
                 let q = all.entry(account).or_default();
                 q.retain(|e| !matches!(e, RunEvent::Quota { window: w, .. } if w == window));
@@ -826,13 +1118,29 @@ impl Supervisor {
                 let at = (*resets_at > 0).then_some(*resets_at);
                 self.update(id, move |m| m.resets_at = at);
             }
-            RunEvent::Finished { ok, cost_usd, duration_ms, turns, tokens, handoff, denied, limited } => {
+            RunEvent::Finished {
+                ok,
+                cost_usd,
+                duration_ms,
+                turns,
+                tokens,
+                handoff,
+                denied,
+                limited,
+            } => {
                 *finished_ok = Some(*ok);
                 if *limited && let Some(l) = self.live.lock().unwrap().get_mut(id) {
                     l.limited = true;
                 }
-                let (ok, cost, dur, turns, tokens, handoff, denied) =
-                    (*ok, *cost_usd, *duration_ms, *turns, tokens.clone(), handoff.clone(), denied.clone());
+                let (ok, cost, dur, turns, tokens, handoff, denied) = (
+                    *ok,
+                    *cost_usd,
+                    *duration_ms,
+                    *turns,
+                    tokens.clone(),
+                    handoff.clone(),
+                    denied.clone(),
+                );
                 self.update(id, move |m| {
                     m.cost_usd = Some(m.cost_usd.unwrap_or(0.0) + cost);
                     m.duration_ms = Some(m.duration_ms.unwrap_or(0) + dur);
@@ -846,11 +1154,15 @@ impl Supervisor {
                     }
                     m.denied.extend(denied);
                     if !ok {
-                        m.error.get_or_insert_with(|| "the agent stopped with an error".into());
+                        m.error
+                            .get_or_insert_with(|| "the agent stopped with an error".into());
                     }
                 });
                 if let Some(h) = self.get(id).ok().and_then(|m| m.handoff) {
-                    let _ = fs::write(self.dir(id).join("handoff.json"), serde_json::to_string_pretty(&h).unwrap_or_default());
+                    let _ = fs::write(
+                        self.dir(id).join("handoff.json"),
+                        serde_json::to_string_pretty(&h).unwrap_or_default(),
+                    );
                 }
                 if let Some(l) = self.live.lock().unwrap().get_mut(id) {
                     l.results += 1;
@@ -913,16 +1225,41 @@ impl Supervisor {
     /// The agent asks to use a tool no rule allows. Answers at once when a rule of this run or of
     /// the repository allows it; otherwise waits for a person. Returns Claude Code's answer:
     /// `{"behavior":"allow","updatedInput":…}` or `{"behavior":"deny","message":…}`.
-    pub async fn ask(&self, run: &str, tool: &str, input: Value, tool_use_id: Option<String>) -> Value {
-        let allow = |input: &Value| serde_json::json!({ "behavior": "allow", "updatedInput": input });
+    pub async fn ask(
+        &self,
+        run: &str,
+        tool: &str,
+        input: Value,
+        tool_use_id: Option<String>,
+    ) -> Value {
+        let allow =
+            |input: &Value| serde_json::json!({ "behavior": "allow", "updatedInput": input });
         let deny = |msg: &str| serde_json::json!({ "behavior": "deny", "message": msg });
-        let (repo, run_rules) = {
+        let (repo, run_rules, autopilot) = {
             let live = self.live.lock().unwrap();
-            let Some(l) = live.get(run) else { return deny("This run is not live any more.") };
-            (l.meta.repo.clone(), l.rules.clone())
+            let Some(l) = live.get(run) else {
+                return deny("This run is not live any more.");
+            };
+            (l.meta.repo.clone(), l.rules.clone(), l.meta.autopilot)
         };
-        let repo_rules = Repo::open(&repo, &home_dir(), &self.cfg.home).map(|r| r.flow.run.allow).unwrap_or_default();
-        if run_rules.iter().chain(repo_rules.iter()).any(|r| runs::rule_allows(r, tool, &input)) {
+        // Run all: allowed at once, and written down so the review can see what ran.
+        if autopilot {
+            self.emit(
+                run,
+                RunEvent::Note {
+                    text: format!("Allowed {tool} without asking (Run all)"),
+                },
+            );
+            return allow(&input);
+        }
+        let repo_rules = Repo::open(&repo, &home_dir(), &self.cfg.home)
+            .map(|r| r.flow.run.allow)
+            .unwrap_or_default();
+        if run_rules
+            .iter()
+            .chain(repo_rules.iter())
+            .any(|r| runs::rule_allows(r, tool, &input))
+        {
             return allow(&input);
         }
         let approval = Approval {
@@ -943,16 +1280,25 @@ impl Supervisor {
         let (tx, rx) = oneshot::channel();
         {
             let mut live = self.live.lock().unwrap();
-            let Some(l) = live.get_mut(run) else { return deny("This run is not live any more.") };
+            let Some(l) = live.get_mut(run) else {
+                return deny("This run is not live any more.");
+            };
             l.pending.insert(approval.id.clone(), tx);
             l.meta.waiting.push(approval.clone());
         }
         self.update(run, |_| {});
-        self.emit(run, RunEvent::Approval { approval: approval.clone() });
+        self.emit(
+            run,
+            RunEvent::Approval {
+                approval: approval.clone(),
+            },
+        );
 
         let answer = rx.await;
         self.update(run, |m| m.waiting.retain(|a| a.id != approval.id));
-        let Ok((decision, message)) = answer else { return deny("The run ended before anyone answered.") };
+        let Ok((decision, message)) = answer else {
+            return deny("The run ended before anyone answered.");
+        };
         match decision {
             Decision::Run => {
                 if let Some(l) = self.live.lock().unwrap().get_mut(run) {
@@ -961,7 +1307,12 @@ impl Supervisor {
             }
             Decision::Always => {
                 if let Err(e) = flow::add_run_allow(&repo, &approval.rule) {
-                    self.emit(run, RunEvent::Note { text: format!("Could not save {} to flow.toml: {e:#}", approval.rule) });
+                    self.emit(
+                        run,
+                        RunEvent::Note {
+                            text: format!("Could not save {} to flow.toml: {e:#}", approval.rule),
+                        },
+                    );
                 }
                 if let Some(l) = self.live.lock().unwrap().get_mut(run) {
                     l.rules.push(approval.rule.clone());
@@ -969,24 +1320,55 @@ impl Supervisor {
             }
             Decision::Once | Decision::Deny => {}
         }
-        self.emit(run, RunEvent::Decided { id: approval.id.clone(), decision, message: message.clone() });
+        self.emit(
+            run,
+            RunEvent::Decided {
+                id: approval.id.clone(),
+                decision,
+                message: message.clone(),
+            },
+        );
         if decision == Decision::Deny {
-            deny(message.as_deref().filter(|m| !m.trim().is_empty()).unwrap_or("The person declined this. Find another way or report it in the handoff."))
+            deny(
+                message
+                    .as_deref()
+                    .filter(|m| !m.trim().is_empty())
+                    .unwrap_or(
+                        "The person declined this. Find another way or report it in the handoff.",
+                    ),
+            )
         } else {
             allow(&input)
         }
     }
 
     /// Answers a waiting approval: the one named, or the oldest of the run.
-    pub fn decide(&self, run: &str, approval: Option<&str>, decision: Decision, message: Option<String>) -> Result<String> {
+    pub fn decide(
+        &self,
+        run: &str,
+        approval: Option<&str>,
+        decision: Decision,
+        message: Option<String>,
+    ) -> Result<String> {
         let mut live = self.live.lock().unwrap();
-        let l = live.get_mut(run).with_context(|| format!("run {run} is not live"))?;
+        let l = live
+            .get_mut(run)
+            .with_context(|| format!("run {run} is not live"))?;
         let id = match approval {
             Some(a) => a.to_owned(),
-            None => l.meta.waiting.first().map(|a| a.id.clone()).context("nothing is waiting in this run")?,
+            None => l
+                .meta
+                .waiting
+                .first()
+                .map(|a| a.id.clone())
+                .context("nothing is waiting in this run")?,
         };
-        let tx = l.pending.remove(&id).with_context(|| format!("no approval {id} waiting in run {run}"))?;
-        tx.send((decision, message)).map_err(|_| anyhow::anyhow!("the agent stopped waiting"))?;
+        let tx = l
+            .pending
+            .remove(&id)
+            .with_context(|| format!("no approval {id} waiting in run {run}"))?;
+        tx.send((decision, message))
+            .map_err(|_| anyhow::anyhow!("the agent stopped waiting"))?;
         Ok(id)
     }
 
@@ -1002,7 +1384,13 @@ impl Supervisor {
 
     /// The run hit a usage limit: commit what it did, close it, and continue the card with the
     /// route's next option. When that option is an API key, it waits for the person's yes.
-    async fn hand_off(self: Arc<Self>, id: String, repo: PathBuf, card: u32, code: Option<i32>) -> Result<()> {
+    async fn hand_off(
+        self: Arc<Self>,
+        id: String,
+        repo: PathBuf,
+        card: u32,
+        code: Option<i32>,
+    ) -> Result<()> {
         let meta = self.get(&id)?;
         let worktree = meta.worktree.clone();
         let label = meta.card;
@@ -1015,7 +1403,12 @@ impl Supervisor {
         })
         .await?;
         if let Ok(Some(sha)) = &checkpoint {
-            self.emit(&id, RunEvent::Note { text: format!("Committed the work so far as {sha} before handing off.") });
+            self.emit(
+                &id,
+                RunEvent::Note {
+                    text: format!("Committed the work so far as {sha} before handing off."),
+                },
+            );
         }
         let why = format!("Hit the usage limit on {}.", meta.account);
         self.update(&id, |m| {
@@ -1025,12 +1418,34 @@ impl Supervisor {
             m.waiting.clear();
             m.error = Some(why.clone());
         });
-        self.emit(&id, RunEvent::Exited { code, state: RunState::Failed });
+        self.emit(
+            &id,
+            RunEvent::Exited {
+                code,
+                state: RunState::Failed,
+            },
+        );
         self.live.lock().unwrap().remove(&id);
 
-        match self.start(repo, card, None, StartOpts { allow_api_key: false, handoff_from: Some(id.clone()), round: meta.round, autopilot: meta.autopilot, extensions: meta.extensions, ..Default::default() }) {
+        match self.start(
+            repo,
+            card,
+            None,
+            StartOpts {
+                allow_api_key: false,
+                handoff_from: Some(id.clone()),
+                round: meta.round,
+                autopilot: meta.autopilot,
+                extensions: meta.extensions,
+                ..Default::default()
+            },
+        ) {
             Ok(next) => {
-                let text = format!("{why} Continues as run {} with {}.", next.id, next.reason.clone().unwrap_or_default());
+                let text = format!(
+                    "{why} Continues as run {} with {}.",
+                    next.id,
+                    next.reason.clone().unwrap_or_default()
+                );
                 self.update_disk(&id, |m| m.error = Some(text.clone()));
                 Ok(())
             }
@@ -1039,14 +1454,29 @@ impl Supervisor {
                 let (next, text) = match e.strip_prefix(NEEDS_API_KEY) {
                     // The reason reads "<option>: <why the others were passed over>".
                     Some(reason) => {
-                        let option = reason.split_once(':').map_or(reason, |(o, _)| o).trim().to_owned();
-                        (Some(option.clone()), format!("{why} The next option, {option}, is paid per token and waits for your yes."))
+                        let option = reason
+                            .split_once(':')
+                            .map_or(reason, |(o, _)| o)
+                            .trim()
+                            .to_owned();
+                        (
+                            Some(option.clone()),
+                            format!(
+                                "{why} The next option, {option}, is paid per token and waits for your yes."
+                            ),
+                        )
                     }
-                    None => (None, format!("{why} Nothing else in the route can take it now: {e}")),
+                    None => (
+                        None,
+                        format!("{why} Nothing else in the route can take it now: {e}"),
+                    ),
                 };
                 // The card first: whoever sees the run's next option finds the card already waiting.
                 let home = self.cfg.home.clone();
-                tokio::task::spawn_blocking(move || set_card_state(&meta, CardState::Blocked, &home)).await??;
+                tokio::task::spawn_blocking(move || {
+                    set_card_state(&meta, CardState::Blocked, &home)
+                })
+                .await??;
                 self.update_disk(&id, |m| {
                     m.error = Some(text.clone());
                     m.next = next.clone();
@@ -1064,7 +1494,9 @@ impl Supervisor {
             Err(_) => return,
         };
         let home = self.cfg.home.clone();
-        let Ok(r) = Repo::open(&meta.repo, &home_dir(), &home) else { return };
+        let Ok(r) = Repo::open(&meta.repo, &home_dir(), &home) else {
+            return;
+        };
         let cfg = r.flow.verify.clone();
         if cfg.commands.is_empty() && !cfg.judge {
             return;
@@ -1080,19 +1512,40 @@ impl Supervisor {
         };
 
         for cmd in &cfg.commands {
-            self.emit(id, RunEvent::Note { text: format!("Checking: {cmd}") });
+            self.emit(
+                id,
+                RunEvent::Note {
+                    text: format!("Checking: {cmd}"),
+                },
+            );
             if self.stop_requested(id) {
                 break;
             }
-            let (wt, c, me, rid) = (meta.worktree.clone(), cmd.clone(), Arc::clone(self), id.to_owned());
-            let proof = tokio::task::spawn_blocking(move || pit_core::verify::run_proof(&wt, &c, &|| me.stop_requested(&rid))).await.unwrap_or_else(|e| pit_core::verify::Proof {
+            let (wt, c, me, rid) = (
+                meta.worktree.clone(),
+                cmd.clone(),
+                Arc::clone(self),
+                id.to_owned(),
+            );
+            let proof = tokio::task::spawn_blocking(move || {
+                pit_core::verify::run_proof(&wt, &c, &|| me.stop_requested(&rid))
+            })
+            .await
+            .unwrap_or_else(|e| pit_core::verify::Proof {
                 command: cmd.clone(),
                 ok: false,
                 code: None,
                 duration_ms: 0,
                 tail: e.to_string(),
             });
-            self.emit(id, RunEvent::Proof { command: proof.command.clone(), ok: proof.ok, duration_ms: proof.duration_ms });
+            self.emit(
+                id,
+                RunEvent::Proof {
+                    command: proof.command.clone(),
+                    ok: proof.ok,
+                    duration_ms: proof.duration_ms,
+                },
+            );
             v.proofs.push(proof);
         }
         if !v.proofs.is_empty() {
@@ -1102,30 +1555,65 @@ impl Supervisor {
 
         if cfg.judge && !self.stop_requested(id) {
             let model = cfg.judge_model.clone();
-            self.emit(id, RunEvent::Note { text: format!("The judge reads the diff ({}), in a session of its own.", model.as_deref().unwrap_or("default model")) });
+            self.emit(
+                id,
+                RunEvent::Note {
+                    text: format!(
+                        "The judge reads the diff ({}), in a session of its own.",
+                        model.as_deref().unwrap_or("default model")
+                    ),
+                },
+            );
             let judge = self.judge(&meta, &r, card, &v.proofs, model.clone()).await;
             if let Some(j) = &judge.judgement {
                 let (verdict, summary, n) = (j.verdict, j.summary.clone(), j.findings.len());
                 self.update(id, move |m| m.verdict = Some(verdict));
-                self.emit(id, RunEvent::Judged { verdict, summary, findings: n });
+                self.emit(
+                    id,
+                    RunEvent::Judged {
+                        verdict,
+                        summary,
+                        findings: n,
+                    },
+                );
             } else if let Some(e) = &judge.error {
-                self.emit(id, RunEvent::Note { text: format!("The judge could not finish: {e}") });
+                self.emit(
+                    id,
+                    RunEvent::Note {
+                        text: format!("The judge could not finish: {e}"),
+                    },
+                );
             }
             v.judge = Some(judge);
         }
         v.ended_at = Some(now_secs());
-        let _ = fs::write(self.dir(id).join("verify.json"), serde_json::to_string_pretty(&v).unwrap_or_default());
+        let _ = fs::write(
+            self.dir(id).join("verify.json"),
+            serde_json::to_string_pretty(&v).unwrap_or_default(),
+        );
     }
 
     /// The judge: a fresh Claude Code session, read-only, on the same account as the run. It gets
     /// the spec, the decisions and the diff; nothing the working agent said.
-    async fn judge(&self, meta: &RunMeta, r: &Repo, card: u32, proofs: &[pit_core::verify::Proof], model: Option<String>) -> pit_core::verify::JudgeRun {
-        let mut out = pit_core::verify::JudgeRun { model: model.clone(), ..Default::default() };
+    async fn judge(
+        &self,
+        meta: &RunMeta,
+        r: &Repo,
+        card: u32,
+        proofs: &[pit_core::verify::Proof],
+        model: Option<String>,
+    ) -> pit_core::verify::JudgeRun {
+        let mut out = pit_core::verify::JudgeRun {
+            model: model.clone(),
+            ..Default::default()
+        };
         let prompt = (|| -> Result<String> {
             let c = cards::get(r, card)?;
             let diff = pit_core::verify::project_diff(r, &meta.branch, &meta.related, 200_000)?;
             let decisions = fs::read_to_string(cards::decisions_path(r)).unwrap_or_default();
-            Ok(pit_core::verify::judge_prompt(&c, &decisions, &diff, proofs))
+            Ok(pit_core::verify::judge_prompt(
+                &c, &decisions, &diff, proofs,
+            ))
         })();
         let prompt = match prompt {
             Ok(p) => p,
@@ -1135,18 +1623,36 @@ impl Supervisor {
             }
         };
         let routing = Routing::load(&self.cfg.home).ok();
-        let account = routing.as_ref().and_then(|rt| rt.account(&meta.account).cloned());
+        let account = routing
+            .as_ref()
+            .and_then(|rt| rt.account(&meta.account).cloned());
         let mut args: Vec<String> = read_only_args(&mode_for(&meta.repo));
-        args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)".into(), "--max-turns".into(), "30".into()]);
+        args.extend([
+            "--allowedTools".into(),
+            "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)".into(),
+            "--max-turns".into(),
+            "30".into(),
+        ]);
         for l in &meta.related {
-            args.extend(["--add-dir".into(), l.worktree.to_string_lossy().into_owned()]);
+            args.extend([
+                "--add-dir".into(),
+                l.worktree.to_string_lossy().into_owned(),
+            ]);
         }
-        args.extend(["--append-system-prompt".into(), pit_core::verify::JUDGE_RULES.into(), "--json-schema".into(), pit_core::verify::verdict_schema().to_string()]);
+        args.extend([
+            "--append-system-prompt".into(),
+            pit_core::verify::JUDGE_RULES.into(),
+            "--json-schema".into(),
+            pit_core::verify::verdict_schema().to_string(),
+        ]);
         if let Some(m) = &model {
             args.extend(["--model".into(), m.clone()]);
         }
         if let Some(helper) = account.and_then(|a| a.api_key_helper) {
-            args.extend(["--settings".into(), serde_json::json!({ "apiKeyHelper": helper }).to_string()]);
+            args.extend([
+                "--settings".into(),
+                serde_json::json!({ "apiKeyHelper": helper }).to_string(),
+            ]);
         }
         let side = Side {
             kind: SessionKind::Judge,
@@ -1190,18 +1696,33 @@ impl Supervisor {
             .find(|c| c.kind != accounts::Kind::ApiKey);
         // The repository's model for agents, else yours (the judge's model is for judging).
         let model = r.flow.run.model.clone();
-        let batch: Vec<cards::Card> = ids.into_iter().filter_map(|id| cards::get(&r, id).ok()).collect();
-        let todo: Vec<cards::Card> = batch.iter().filter(|c| c.analyzed.is_none() && c.state != CardState::Done).cloned().collect();
+        let batch: Vec<cards::Card> = ids
+            .into_iter()
+            .filter_map(|id| cards::get(&r, id).ok())
+            .collect();
+        let todo: Vec<cards::Card> = batch
+            .iter()
+            .filter(|c| c.analyzed.is_none() && c.state != CardState::Done)
+            .cloned()
+            .collect();
         let gate = Arc::clone(&self.analysis_gate);
         let epoch = self.epoch.load(Ordering::SeqCst);
         // A card already being analysed (another Run all) is not analysed twice.
         let todo: Vec<cards::Card> = {
             let mut busy = self.analysing.lock().unwrap();
-            todo.into_iter().filter(|c| busy.insert((r.root.clone(), c.id))).collect()
+            todo.into_iter()
+                .filter(|c| busy.insert((r.root.clone(), c.id)))
+                .collect()
         };
         let mut tasks = Vec::new();
         for card in todo {
-            let (gate, me, root, choice, model) = (gate.clone(), self.clone(), r.root.clone(), choice.clone(), model.clone());
+            let (gate, me, root, choice, model) = (
+                gate.clone(),
+                self.clone(),
+                r.root.clone(),
+                choice.clone(),
+                model.clone(),
+            );
             let prompt = pit_core::analyze::prompt(&r, &card, &batch);
             tasks.push(tokio::spawn(async move {
                 let _busy = Release(&me.analysing, (root.clone(), card.id));
@@ -1209,7 +1730,9 @@ impl Supervisor {
                 if me.epoch.load(Ordering::SeqCst) != epoch {
                     return (card.id, Err(anyhow::anyhow!("stopped before it started")));
                 }
-                let out = me.analyst(&root, &card, &prompt, choice.as_ref(), model.as_deref()).await;
+                let out = me
+                    .analyst(&root, &card, &prompt, choice.as_ref(), model.as_deref())
+                    .await;
                 (card.id, out)
             }));
         }
@@ -1235,18 +1758,43 @@ impl Supervisor {
             });
         }
         // Added now, shown on the Run sheet, where the person can take any of them off.
-        let repos_error = if found.is_empty() { None } else { pit_core::related::add(&r, &found).err().map(|e| format!("{e:#}")) };
-        Ok(serde_json::json!({ "analyzed": results, "repos_added": found, "repos_error": repos_error }))
+        let repos_error = if found.is_empty() {
+            None
+        } else {
+            pit_core::related::add(&r, &found)
+                .err()
+                .map(|e| format!("{e:#}"))
+        };
+        Ok(
+            serde_json::json!({ "analyzed": results, "repos_added": found, "repos_error": repos_error }),
+        )
     }
 
-    async fn analyst(&self, repo: &Path, card: &cards::Card, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
+    async fn analyst(
+        &self,
+        repo: &Path,
+        card: &cards::Card,
+        prompt: &str,
+        choice: Option<&Choice>,
+        model: Option<&str>,
+    ) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
         let mut args: Vec<String> = read_only_args(&mode_for(repo));
-        args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)".into(), "--max-turns".into(), "25".into()]);
+        args.extend([
+            "--allowedTools".into(),
+            "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)".into(),
+            "--max-turns".into(),
+            "25".into(),
+        ]);
         // Read-only: it may look at sibling repositories, where a project's code often lives.
         if let Some(parent) = repo.parent() {
             args.extend(["--add-dir".into(), parent.to_string_lossy().into_owned()]);
         }
-        args.extend(["--append-system-prompt".into(), pit_core::analyze::RULES.into(), "--json-schema".into(), pit_core::analyze::schema().to_string()]);
+        args.extend([
+            "--append-system-prompt".into(),
+            pit_core::analyze::RULES.into(),
+            "--json-schema".into(),
+            pit_core::analyze::schema().to_string(),
+        ]);
         if let Some(m) = model {
             args.extend(["--model".into(), m.into()]);
         }
@@ -1257,30 +1805,48 @@ impl Supervisor {
             card: card.id,
             card_title: card.title.clone(),
             parent: None,
-            account: choice.map(|c| c.account.clone()).unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
+            account: choice
+                .map(|c| c.account.clone())
+                .unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
             config_dir: choice.and_then(|c| c.config_dir.clone()),
             model: model.map(str::to_owned),
             args,
             prompt: prompt.to_owned(),
             limit: Duration::from_secs(20 * 60),
             board: false,
-            images: Repo::open(repo, &home_dir(), &self.cfg.home).map(|r| cards::image_bytes(&r, card)).unwrap_or_default(),
+            images: Repo::open(repo, &home_dir(), &self.cfg.home)
+                .map(|r| cards::image_bytes(&r, card))
+                .unwrap_or_default(),
         };
-        let stdout = self.side_session(side).await.map_err(|e| anyhow::anyhow!("the analysis {e:#}"))?;
+        let stdout = self
+            .side_session(side)
+            .await
+            .map_err(|e| anyhow::anyhow!("the analysis {e:#}"))?;
         pit_core::analyze::read(&stdout)
     }
 
     /// Run all's closing step: one Claude Code session in the repository (or the target branch's
     /// worktree) that does what the person asked for when everything is done. It edits files and
     /// asks through Pitlane for anything no rule allows. Waits for it; returns its summary.
-    pub async fn finish(self: &Arc<Self>, repo: PathBuf, ids: Vec<u32>, instructions: String, into: Option<String>) -> Result<Value> {
+    pub async fn finish(
+        self: &Arc<Self>,
+        repo: PathBuf,
+        ids: Vec<u32>,
+        instructions: String,
+        into: Option<String>,
+    ) -> Result<Value> {
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
         let cwd = match into.as_deref() {
-            Some(t) if !r.flow.flow.is_trunk(t) => actions::ensure_worktree(&r, t).unwrap_or_else(|_| r.root.clone()),
+            Some(t) if !r.flow.flow.is_trunk(t) => {
+                actions::ensure_worktree(&r, t).unwrap_or_else(|_| r.root.clone())
+            }
             _ => r.root.clone(),
         };
         let routing = Routing::load(&self.cfg.home)?;
-        let choice = routing.choices(&r.root, &home_dir(), &self.cfg.home)?.into_iter().find(|c| c.kind != accounts::Kind::ApiKey);
+        let choice = routing
+            .choices(&r.root, &home_dir(), &self.cfg.home)?
+            .into_iter()
+            .find(|c| c.kind != accounts::Kind::ApiKey);
         let mut tools: Vec<String> = RUN_BASE_TOOLS.iter().map(|s| s.to_string()).collect();
         tools.extend(r.flow.run.allow.iter().cloned());
         let args: Vec<String> = vec![
@@ -1302,7 +1868,10 @@ impl Supervisor {
             card: 0,
             card_title: "When it is all done".into(),
             parent: None,
-            account: choice.as_ref().map(|c| c.account.clone()).unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
+            account: choice
+                .as_ref()
+                .map(|c| c.account.clone())
+                .unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
             config_dir: choice.as_ref().and_then(|c| c.config_dir.clone()),
             model: None,
             args,
@@ -1314,7 +1883,11 @@ impl Supervisor {
         let id_hint = now_secs();
         let out = self.side_session(side).await;
         // The session's id: the newest finish session of this repository.
-        let run = self.sessions(Some(&r.root))?.into_iter().find(|m| m.kind == SessionKind::Finish && m.started_at >= id_hint).map(|m| m.id);
+        let run = self
+            .sessions(Some(&r.root))?
+            .into_iter()
+            .find(|m| m.kind == SessionKind::Finish && m.started_at >= id_hint)
+            .map(|m| m.id);
         Ok(match out {
             Ok(line) => {
                 let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
@@ -1339,7 +1912,10 @@ impl Supervisor {
             bail!("the board assistant needs the pit executable for its board tools");
         }
         let routing = Routing::load(&self.cfg.home)?;
-        let choice = routing.choices(&r.root, &home_dir(), &self.cfg.home)?.into_iter().find(|c| c.kind != accounts::Kind::ApiKey);
+        let choice = routing
+            .choices(&r.root, &home_dir(), &self.cfg.home)?
+            .into_iter()
+            .find(|c| c.kind != accounts::Kind::ApiKey);
         let tools = "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*),mcp__pitlane__add_card,mcp__pitlane__list_cards,mcp__pitlane__get_card,mcp__pitlane__update_card,mcp__pitlane__delete_card,mcp__pitlane__add_note,mcp__pitlane__brief";
         let args: Vec<String> = vec![
             "--setting-sources".into(),
@@ -1362,7 +1938,10 @@ impl Supervisor {
             card: 0,
             card_title: "Board assistant".into(),
             parent: None,
-            account: choice.as_ref().map(|c| c.account.clone()).unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
+            account: choice
+                .as_ref()
+                .map(|c| c.account.clone())
+                .unwrap_or_else(|| accounts::DEFAULT_ACCOUNT.into()),
             config_dir: choice.as_ref().and_then(|c| c.config_dir.clone()),
             model: None,
             args,
@@ -1390,7 +1969,11 @@ impl Supervisor {
             SessionKind::Finish => "finish",
             SessionKind::Assist => "assist",
         };
-        let id = format!("{}-{tag}-{now}-{}", side.card, &uuid::Uuid::new_v4().simple().to_string()[..4]);
+        let id = format!(
+            "{}-{tag}-{now}-{}",
+            side.card,
+            &uuid::Uuid::new_v4().simple().to_string()[..4]
+        );
         let meta = RunMeta {
             id: id.clone(),
             repo: side.repo.clone(),
@@ -1436,15 +2019,39 @@ impl Supervisor {
         let (tx, _) = broadcast::channel(1024);
         self.live.lock().unwrap().insert(
             id.clone(),
-            Live { meta, stdin: None, sent: 0, results: 0, background: 0, stop_requested: false, events: 0, tx, rules: Vec::new(), limited: false, pending: HashMap::new() },
+            Live {
+                meta,
+                stdin: None,
+                sent: 0,
+                results: 0,
+                background: 0,
+                stop_requested: false,
+                events: 0,
+                tx,
+                rules: Vec::new(),
+                limited: false,
+                pending: HashMap::new(),
+            },
         );
 
         let mut cmd = Command::new(&self.cfg.claude_bin);
-        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
-            .args(["--session-id", &self.get(&id)?.session_id])
-            .args(with_language(&side.args, &self.cfg.home));
+        cmd.args([
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+        ])
+        .args(["--session-id", &self.get(&id)?.session_id])
+        .args(with_language(&side.args, &self.cfg.home));
         // Whatever the session does not set comes from your Claude Code: model and effort.
-        let set = side.args.iter().position(|a| a == "--model").and_then(|i| side.args.get(i + 1)).cloned();
+        let set = side
+            .args
+            .iter()
+            .position(|a| a == "--model")
+            .and_then(|i| side.args.get(i + 1))
+            .cloned();
         let (your_model, your_effort) = your_claude(side.config_dir.as_deref(), set.as_deref());
         if !side.args.iter().any(|a| a == "--model")
             && let Some(m) = your_model
@@ -1461,10 +2068,16 @@ impl Supervisor {
         if let Some(pit) = &self.cfg.pit_bin {
             let mut mcp = serde_json::json!({ "mcpServers": { "pitlane_run": { "command": pit, "args": ["mcp", "--approve", &id] } } });
             if side.board {
-                mcp["mcpServers"]["pitlane"] = serde_json::json!({ "command": pit, "args": ["mcp"] });
+                mcp["mcpServers"]["pitlane"] =
+                    serde_json::json!({ "command": pit, "args": ["mcp"] });
             }
             cmd.args(["--mcp-config", &mcp.to_string()])
-                .args(["--permission-prompts", "host", "--permission-prompt-tool", "mcp__pitlane_run__approve"])
+                .args([
+                    "--permission-prompts",
+                    "host",
+                    "--permission-prompt-tool",
+                    "mcp__pitlane_run__approve",
+                ])
                 .env("MCP_TOOL_TIMEOUT", "86400000");
         } else {
             cmd.args(["--permission-prompts", "none"]);
@@ -1484,9 +2097,19 @@ impl Supervisor {
             .process_group(0)
             .kill_on_drop(true);
         let work = async {
-            let mut child = cmd.spawn().with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
+            let mut child = cmd
+                .spawn()
+                .with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
             let mut stdin = child.stdin.take().context("no stdin")?;
-            stdin.write_all(format!("{}\n", runs::claude_user_line_with(&side.prompt, &side.images)).as_bytes()).await?;
+            stdin
+                .write_all(
+                    format!(
+                        "{}\n",
+                        runs::claude_user_line_with(&side.prompt, &side.images)
+                    )
+                    .as_bytes(),
+                )
+                .await?;
             stdin.flush().await?;
             {
                 let mut live = self.live.lock().unwrap();
@@ -1503,7 +2126,10 @@ impl Supervisor {
                 let _ = tokio::io::AsyncReadExt::read_to_string(&mut err, &mut s).await;
                 s
             });
-            let mut raw = OpenOptions::new().create(true).append(true).open(self.dir(&id).join("events.jsonl"))?;
+            let mut raw = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.dir(&id).join("events.jsonl"))?;
             let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
             let mut last = None::<String>;
             let mut ok = None::<bool>;
@@ -1518,7 +2144,9 @@ impl Supervisor {
                     _ = tokio::time::sleep(Duration::from_secs(3)), if status.is_some() => break,
                 };
                 let _ = writeln!(raw, "{line}");
-                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
                 self.note_background(&id, &v);
                 if v.get("type").and_then(Value::as_str) == Some("result") {
                     last = Some(line.clone());
@@ -1547,9 +2175,16 @@ impl Supervisor {
             anyhow::Ok((last, ok, status, stderr))
         };
         let outcome = tokio::time::timeout(side.limit, work).await;
-        let stopped = self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested);
+        let stopped = self
+            .live
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|l| l.stop_requested);
         let (state, code, result) = match outcome {
-            Ok(Ok((Some(line), Some(true), status, _))) => (RunState::Done, status.code(), Ok(line)),
+            Ok(Ok((Some(line), Some(true), status, _))) => {
+                (RunState::Done, status.code(), Ok(line))
+            }
             Ok(Ok((last, _, status, stderr))) => {
                 let why = if stopped {
                     "was stopped".to_owned()
@@ -1561,14 +2196,29 @@ impl Supervisor {
                         None => tail.into_iter().rev().collect::<Vec<_>>().join("\n"),
                     }
                 };
-                (if stopped { RunState::Stopped } else { RunState::Failed }, status.code(), last.ok_or_else(|| anyhow::anyhow!(why)))
+                (
+                    if stopped {
+                        RunState::Stopped
+                    } else {
+                        RunState::Failed
+                    },
+                    status.code(),
+                    last.ok_or_else(|| anyhow::anyhow!(why)),
+                )
             }
             Ok(Err(e)) => (RunState::Failed, None, Err(e)),
             Err(_) => {
                 if let Some(pid) = self.get(&id).ok().and_then(|m| m.pid) {
                     end_group(pid);
                 }
-                (RunState::Failed, None, Err(anyhow::anyhow!("took longer than {} minutes", side.limit.as_secs() / 60)))
+                (
+                    RunState::Failed,
+                    None,
+                    Err(anyhow::anyhow!(
+                        "took longer than {} minutes",
+                        side.limit.as_secs() / 60
+                    )),
+                )
             }
         };
         let error = result.as_ref().err().map(|e| format!("{e:#}"));
@@ -1588,7 +2238,13 @@ impl Supervisor {
     /// A person's decision on a card in review. Approve ships the lane one stage (into
     /// integration); changes resumes the run's session with the comments; discard returns the
     /// card to ready with its lane intact.
-    pub async fn review(self: &Arc<Self>, repo: PathBuf, card: u32, action: ReviewAction, message: Option<String>) -> Result<serde_json::Value> {
+    pub async fn review(
+        self: &Arc<Self>,
+        repo: PathBuf,
+        card: u32,
+        action: ReviewAction,
+        message: Option<String>,
+    ) -> Result<serde_json::Value> {
         let home = self.cfg.home.clone();
         let r = Repo::open(&repo, &home_dir(), &home)?;
         let c = cards::get(&r, card)?;
@@ -1596,21 +2252,49 @@ impl Supervisor {
             bail!("card #{card} is not in review (it is {})", c.state.as_str());
         }
         // The card's latest run: the highest review round, then the newest (ids can share a second).
-        let last = self.list(Some(&r.root))?.into_iter().filter(|m| m.card == card).max_by_key(|m| (m.round, m.started_at));
+        let last = self
+            .list(Some(&r.root))?
+            .into_iter()
+            .filter(|m| m.card == card)
+            .max_by_key(|m| (m.round, m.started_at));
         match action {
             ReviewAction::Discard => {
-                cards::update(&r, card, CardPatch { state: Some(CardState::Ready), ..Default::default() })?;
+                cards::update(
+                    &r,
+                    card,
+                    CardPatch {
+                        state: Some(CardState::Ready),
+                        ..Default::default()
+                    },
+                )?;
                 Ok(serde_json::json!({ "card": card, "state": "ready" }))
             }
             ReviewAction::Changes => {
-                let text = message.filter(|m| !m.trim().is_empty()).context("say what to change")?;
+                let text = message
+                    .filter(|m| !m.trim().is_empty())
+                    .context("say what to change")?;
                 let prev = last.context("this card has no run to continue")?;
                 let round = prev.round + 1;
                 if round > r.flow.verify.max_rounds {
-                    bail!("card #{card} already went through {} rounds of changes; take it from here yourself or discard it", r.flow.verify.max_rounds);
+                    bail!(
+                        "card #{card} already went through {} rounds of changes; take it from here yourself or discard it",
+                        r.flow.verify.max_rounds
+                    );
                 }
-                let first = format!("A person reviewed your work and asks for changes:\n\n{}\n\nMake them, commit, and end with the handoff.", text.trim());
-                let next = self.start(repo, card, Some(prev.id), StartOpts { message: Some(first), round, ..Default::default() })?;
+                let first = format!(
+                    "A person reviewed your work and asks for changes:\n\n{}\n\nMake them, commit, and end with the handoff.",
+                    text.trim()
+                );
+                let next = self.start(
+                    repo,
+                    card,
+                    Some(prev.id),
+                    StartOpts {
+                        message: Some(first),
+                        round,
+                        ..Default::default()
+                    },
+                )?;
                 Ok(serde_json::json!({ "run": next }))
             }
             ReviewAction::Approve => {
@@ -1619,7 +2303,14 @@ impl Supervisor {
                 // Worked directly in its target: the work is already there.
                 if c.direct() {
                     let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
-                    cards::update(&r, card, CardPatch { state: Some(CardState::Done), ..Default::default() })?;
+                    cards::update(
+                        &r,
+                        card,
+                        CardPatch {
+                            state: Some(CardState::Done),
+                            ..Default::default()
+                        },
+                    )?;
                     return Ok(serde_json::json!({ "card": card, "landed_in": branch }));
                 }
                 // The related repositories' lanes go first; the card moves when this one lands.
@@ -1627,12 +2318,27 @@ impl Supervisor {
                     && !l.related.is_empty()
                 {
                     for rl in &l.related {
-                        let ahead = Repo::open(&rl.root, &home_dir(), &self.cfg.home).ok().and_then(|rr| {
-                            let t = c.target.clone().unwrap_or_else(|| rr.flow.flow.integration.clone());
-                            rr.git.run(&["rev-list", "--count", &format!("{t}..{}", rl.branch)]).ok()?.trim().parse::<u32>().ok()
-                        });
+                        let ahead = Repo::open(&rl.root, &home_dir(), &self.cfg.home)
+                            .ok()
+                            .and_then(|rr| {
+                                let t = c
+                                    .target
+                                    .clone()
+                                    .unwrap_or_else(|| rr.flow.flow.integration.clone());
+                                rr.git
+                                    .run(&["rev-list", "--count", &format!("{t}..{}", rl.branch)])
+                                    .ok()?
+                                    .trim()
+                                    .parse::<u32>()
+                                    .ok()
+                            });
                         if ahead != Some(0) {
-                            self.enqueue_for(&rl.root, &rl.branch, c.target.as_deref(), Some((card, repo.clone())))?;
+                            self.enqueue_for(
+                                &rl.root,
+                                &rl.branch,
+                                c.target.as_deref(),
+                                Some((card, repo.clone())),
+                            )?;
                         }
                     }
                 }
@@ -1645,30 +2351,60 @@ impl Supervisor {
     // ------------------------------------------------------------ merge queue
 
     /// Puts a lane in line to ship into `to` (default: its next stage). One open job per lane.
-    pub fn enqueue(&self, repo: &Path, branch: &str, to: Option<&str>) -> Result<pit_core::queue::ShipJob> {
+    pub fn enqueue(
+        &self,
+        repo: &Path,
+        branch: &str,
+        to: Option<&str>,
+    ) -> Result<pit_core::queue::ShipJob> {
         self.enqueue_for(repo, branch, to, None)
     }
 
     /// A card's work, here and in its related repositories, in line to land in its Into branch:
     /// the related lanes first (those with commits of their own), this repository's last, so the
     /// card moves once all of it is in.
-    fn land_card(&self, repo: &Path, c: &cards::Card, related: &[pit_core::related::RelatedLane]) -> Result<()> {
+    fn land_card(
+        &self,
+        repo: &Path,
+        c: &cards::Card,
+        related: &[pit_core::related::RelatedLane],
+    ) -> Result<()> {
         let lane = c.lane.clone().context("this card has no lane to ship")?;
         for l in related {
-            let Ok(rr) = Repo::open(&l.root, &home_dir(), &self.cfg.home) else { continue };
-            let target = c.target.clone().unwrap_or_else(|| rr.flow.flow.integration.clone());
-            let ahead = rr.git.run(&["rev-list", "--count", &format!("{target}..{}", l.branch)]).ok().and_then(|n| n.trim().parse::<u32>().ok());
+            let Ok(rr) = Repo::open(&l.root, &home_dir(), &self.cfg.home) else {
+                continue;
+            };
+            let target = c
+                .target
+                .clone()
+                .unwrap_or_else(|| rr.flow.flow.integration.clone());
+            let ahead = rr
+                .git
+                .run(&["rev-list", "--count", &format!("{target}..{}", l.branch)])
+                .ok()
+                .and_then(|n| n.trim().parse::<u32>().ok());
             if ahead == Some(0) {
                 continue;
             }
-            self.enqueue_for(&l.root, &l.branch, c.target.as_deref(), Some((c.id, repo.to_path_buf())))?;
+            self.enqueue_for(
+                &l.root,
+                &l.branch,
+                c.target.as_deref(),
+                Some((c.id, repo.to_path_buf())),
+            )?;
         }
         self.enqueue(repo, &lane, c.target.as_deref())?;
         Ok(())
     }
 
     /// `card`: the card and the repository whose board holds it, for a related repository's lane.
-    pub fn enqueue_for(&self, repo: &Path, branch: &str, to: Option<&str>, card: Option<(u32, PathBuf)>) -> Result<pit_core::queue::ShipJob> {
+    pub fn enqueue_for(
+        &self,
+        repo: &Path,
+        branch: &str,
+        to: Option<&str>,
+        card: Option<(u32, PathBuf)>,
+    ) -> Result<pit_core::queue::ShipJob> {
         use pit_core::queue::{JobState, ShipJob};
         let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
         if r.flow.flow.is_trunk(branch) {
@@ -1681,15 +2417,33 @@ impl Supervisor {
         };
         let (card, card_repo) = match card {
             Some((id, board)) => (Some(id), Some(board)),
-            None => (cards::list(&r).ok().and_then(|(all, _)| all.into_iter().find(|c| c.lane.as_deref() == Some(branch)).map(|c| c.id)), None),
+            None => (
+                cards::list(&r).ok().and_then(|(all, _)| {
+                    all.into_iter()
+                        .find(|c| c.lane.as_deref() == Some(branch))
+                        .map(|c| c.id)
+                }),
+                None,
+            ),
         };
         let job = {
             let mut q = self.queue.lock().unwrap();
-            if let Some(open) = q.iter().find(|j| j.repo == r.root && j.branch == branch && j.state.is_open()) {
-                bail!("{branch} is already in line for {} ({})", open.target, open.id);
+            if let Some(open) = q
+                .iter()
+                .find(|j| j.repo == r.root && j.branch == branch && j.state.is_open())
+            {
+                bail!(
+                    "{branch} is already in line for {} ({})",
+                    open.target,
+                    open.id
+                );
             }
             let job = ShipJob {
-                id: format!("q{}-{}", now_secs(), &uuid::Uuid::new_v4().simple().to_string()[..4]),
+                id: format!(
+                    "q{}-{}",
+                    now_secs(),
+                    &uuid::Uuid::new_v4().simple().to_string()[..4]
+                ),
                 repo: r.root.clone(),
                 branch: branch.to_owned(),
                 target,
@@ -1713,7 +2467,11 @@ impl Supervisor {
     /// The queue of a repository (or all): open jobs, then the last 20 finished.
     pub fn queue_list(&self, repo: Option<&Path>) -> Vec<pit_core::queue::ShipJob> {
         let q = self.queue.lock().unwrap();
-        let mine: Vec<_> = q.iter().filter(|j| repo.is_none_or(|r| j.repo == r)).cloned().collect();
+        let mine: Vec<_> = q
+            .iter()
+            .filter(|j| repo.is_none_or(|r| j.repo == r))
+            .cloned()
+            .collect();
         let mut open: Vec<_> = mine.iter().filter(|j| j.state.is_open()).cloned().collect();
         open.sort_by_key(|j| j.queued_at);
         let mut done: Vec<_> = mine.into_iter().filter(|j| !j.state.is_open()).collect();
@@ -1732,7 +2490,10 @@ impl Supervisor {
     pub fn dequeue(&self, id: &str) -> Result<()> {
         use pit_core::queue::JobState;
         let mut q = self.queue.lock().unwrap();
-        let j = q.iter_mut().find(|j| j.id == id).with_context(|| format!("no job {id}"))?;
+        let j = q
+            .iter_mut()
+            .find(|j| j.id == id)
+            .with_context(|| format!("no job {id}"))?;
         if j.state == JobState::Shipping {
             bail!("{} is shipping right now", j.branch);
         }
@@ -1748,10 +2509,19 @@ impl Supervisor {
         let me = Arc::clone(self);
         tokio::spawn(async move {
             loop {
-                let sessions: Vec<crate::perf::LiveSession> =
-                    me.live.lock().unwrap().values().map(|l| crate::perf::LiveSession { meta: l.meta.clone() }).collect();
+                let sessions: Vec<crate::perf::LiveSession> = me
+                    .live
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .map(|l| crate::perf::LiveSession {
+                        meta: l.meta.clone(),
+                    })
+                    .collect();
                 let m = Arc::clone(&me);
-                let notes = tokio::task::spawn_blocking(move || m.perf.tick(&sessions)).await.unwrap_or_default();
+                let notes = tokio::task::spawn_blocking(move || m.perf.tick(&sessions))
+                    .await
+                    .unwrap_or_default();
                 for (id, text) in notes {
                     me.emit(&id, RunEvent::Note { text });
                 }
@@ -1764,7 +2534,10 @@ impl Supervisor {
     pub fn perf_hold(&self, id: &str, hold: bool) -> Result<bool> {
         let (pid, card, title) = {
             let live = self.live.lock().unwrap();
-            let m = &live.get(id).with_context(|| format!("run {id} is not running"))?.meta;
+            let m = &live
+                .get(id)
+                .with_context(|| format!("run {id} is not running"))?
+                .meta;
             (m.pid, m.card, m.card_title.clone())
         };
         if hold {
@@ -1779,7 +2552,12 @@ impl Supervisor {
             let done = self.perf.release(id, pid);
             if done {
                 self.perf.log_manual("resumed_you", card, &title);
-                self.emit(id, RunEvent::Note { text: "Resumed by you from Performance.".into() });
+                self.emit(
+                    id,
+                    RunEvent::Note {
+                        text: "Resumed by you from Performance.".into(),
+                    },
+                );
             }
             Ok(done)
         }
@@ -1798,7 +2576,12 @@ impl Supervisor {
                 .lock()
                 .unwrap()
                 .values()
-                .filter(|l| l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.pid.is_some() && !self.perf.is_held(&l.meta.id))
+                .filter(|l| {
+                    l.meta.id != id
+                        && l.meta.kind == SessionKind::Run
+                        && l.meta.pid.is_some()
+                        && !self.perf.is_held(&l.meta.id)
+                })
                 .count() as u32;
             let allowed = self.perf.allowed();
             if working < allowed || self.stop_requested(id) {
@@ -1829,7 +2612,10 @@ impl Supervisor {
             }
             let next = {
                 let mut q = self.queue.lock().unwrap();
-                let pick = q.iter_mut().filter(|j| j.state == JobState::Queued).min_by_key(|j| j.queued_at);
+                let pick = q
+                    .iter_mut()
+                    .filter(|j| j.state == JobState::Queued)
+                    .min_by_key(|j| j.queued_at);
                 pick.map(|j| {
                     j.state = JobState::Shipping;
                     j.clone()
@@ -1842,14 +2628,18 @@ impl Supervisor {
             let _ = pit_core::queue::save(&self.cfg.home, &self.queue.lock().unwrap());
             let (home, ph) = (home_dir(), self.cfg.home.clone());
             let (repo, branch, target) = (job.repo.clone(), job.branch.clone(), job.target.clone());
-            let result = tokio::task::spawn_blocking(move || -> Result<(pit_core::queue::Outcome, Option<u32>)> {
-                let out = pit_core::queue::ship(&repo, &home, &ph, &branch, &target)?;
-                let card = match &out {
-                    Outcome::Shipped { .. } => pit_core::queue::move_card(&repo, &home, &ph, &branch, &target)?,
-                    Outcome::Conflict { .. } => None,
-                };
-                Ok((out, card))
-            })
+            let result = tokio::task::spawn_blocking(
+                move || -> Result<(pit_core::queue::Outcome, Option<u32>)> {
+                    let out = pit_core::queue::ship(&repo, &home, &ph, &branch, &target)?;
+                    let card = match &out {
+                        Outcome::Shipped { .. } => {
+                            pit_core::queue::move_card(&repo, &home, &ph, &branch, &target)?
+                        }
+                        Outcome::Conflict { .. } => None,
+                    };
+                    Ok((out, card))
+                },
+            )
             .await
             .map_err(anyhow::Error::from)
             .and_then(|r| r);
@@ -1883,14 +2673,39 @@ impl Supervisor {
     fn conflict_round(self: &Arc<Self>, job: &pit_core::queue::ShipJob, files: &[String]) {
         let Some(card) = job.card else { return };
         let board_repo = job.card_repo.clone().unwrap_or_else(|| job.repo.clone());
-        let Ok(r) = Repo::open(&board_repo, &home_dir(), &self.cfg.home) else { return };
-        let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| l.into_iter().filter(|m| m.card == card && m.kind == SessionKind::Run).max_by_key(|m| (m.round, m.started_at))) else { return };
+        let Ok(r) = Repo::open(&board_repo, &home_dir(), &self.cfg.home) else {
+            return;
+        };
+        let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| {
+            l.into_iter()
+                .filter(|m| m.card == card && m.kind == SessionKind::Run)
+                .max_by_key(|m| (m.round, m.started_at))
+        }) else {
+            return;
+        };
         if !last.autopilot {
             return;
         }
         if last.round >= r.flow.verify.max_rounds {
-            let _ = cards::note(&r, card, "pitlane", &format!("{} conflicts with {} in {}; out of rounds, so it waits for you.", job.branch, job.target, files.join(", ")));
-            let _ = cards::update(&r, card, CardPatch { state: Some(CardState::Blocked), ..Default::default() });
+            let _ = cards::note(
+                &r,
+                card,
+                "pitlane",
+                &format!(
+                    "{} conflicts with {} in {}; out of rounds, so it waits for you.",
+                    job.branch,
+                    job.target,
+                    files.join(", ")
+                ),
+            );
+            let _ = cards::update(
+                &r,
+                card,
+                CardPatch {
+                    state: Some(CardState::Blocked),
+                    ..Default::default()
+                },
+            );
             return;
         }
         // In a related repository the merge happens in that repository's worktree.
@@ -1909,9 +2724,19 @@ impl Supervisor {
             files.join(", "),
             job.target
         );
-        let opts = StartOpts { autopilot: true, round: last.round + 1, message: Some(msg), ..Default::default() };
+        let opts = StartOpts {
+            autopilot: true,
+            round: last.round + 1,
+            message: Some(msg),
+            ..Default::default()
+        };
         if let Err(e) = self.start(board_repo.clone(), card, Some(last.id.clone()), opts) {
-            let _ = cards::note(&r, card, "pitlane", &format!("The conflict round did not start: {e:#}"));
+            let _ = cards::note(
+                &r,
+                card,
+                "pitlane",
+                &format!("The conflict round did not start: {e:#}"),
+            );
         }
     }
 
@@ -1929,7 +2754,17 @@ impl Supervisor {
         if prev.state.is_live() {
             bail!("run {id} is still running");
         }
-        let next = self.start(prev.repo.clone(), prev.card, None, StartOpts { allow_api_key, handoff_from: Some(prev.id.clone()), round: prev.round, ..Default::default() })?;
+        let next = self.start(
+            prev.repo.clone(),
+            prev.card,
+            None,
+            StartOpts {
+                allow_api_key,
+                handoff_from: Some(prev.id.clone()),
+                round: prev.round,
+                ..Default::default()
+            },
+        )?;
         self.update_disk(id, |m| m.next = None);
         Ok(next)
     }
@@ -1938,13 +2773,20 @@ impl Supervisor {
     pub async fn say(&self, id: &str, text: &str) -> Result<()> {
         let mut stdin = {
             let mut live = self.live.lock().unwrap();
-            let l = live.get_mut(id).with_context(|| format!("run {id} is not running; resume it to continue"))?;
-            let s = l.stdin.take().context("the agent already finished this session; resume it to continue")?;
+            let l = live
+                .get_mut(id)
+                .with_context(|| format!("run {id} is not running; resume it to continue"))?;
+            let s = l
+                .stdin
+                .take()
+                .context("the agent already finished this session; resume it to continue")?;
             l.sent += 1;
             s
         };
         let res = async {
-            stdin.write_all(format!("{}\n", runs::claude_user_line(text)).as_bytes()).await?;
+            stdin
+                .write_all(format!("{}\n", runs::claude_user_line(text)).as_bytes())
+                .await?;
             stdin.flush().await
         }
         .await;
@@ -1952,12 +2794,21 @@ impl Supervisor {
             l.stdin = Some(stdin);
         }
         res?;
-        self.emit(id, RunEvent::Said { text: text.to_owned() });
+        self.emit(
+            id,
+            RunEvent::Said {
+                text: text.to_owned(),
+            },
+        );
         Ok(())
     }
 
     fn stop_requested(&self, id: &str) -> bool {
-        self.live.lock().unwrap().get(id).is_some_and(|l| l.stop_requested)
+        self.live
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|l| l.stop_requested)
     }
 
     /// Stops every session (runs, analyses, judges) and every analysis still waiting for a slot.
@@ -2028,12 +2879,21 @@ impl Supervisor {
     pub fn stop(self: &Arc<Self>, id: &str) -> Result<()> {
         let pid = {
             let mut live = self.live.lock().unwrap();
-            let l = live.get_mut(id).with_context(|| format!("run {id} is not running"))?;
+            let l = live
+                .get_mut(id)
+                .with_context(|| format!("run {id} is not running"))?;
             l.stop_requested = true;
             l.meta.pid
         };
         // Sessions it opened (its judge) stop with it.
-        let children: Vec<String> = self.live.lock().unwrap().values().filter(|l| l.meta.parent.as_deref() == Some(id)).map(|l| l.meta.id.clone()).collect();
+        let children: Vec<String> = self
+            .live
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|l| l.meta.parent.as_deref() == Some(id))
+            .map(|l| l.meta.id.clone())
+            .collect();
         for c in children {
             let _ = self.stop(&c);
         }
@@ -2045,7 +2905,12 @@ impl Supervisor {
         let run = id.to_owned();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            let same = me.live.lock().unwrap().get(&run).is_some_and(|l| l.meta.pid == Some(pid));
+            let same = me
+                .live
+                .lock()
+                .unwrap()
+                .get(&run)
+                .is_some_and(|l| l.meta.pid == Some(pid));
             if same {
                 end_group(pid);
             }
@@ -2072,22 +2937,34 @@ fn your_claude(config_dir: Option<&Path>, model: Option<&str>) -> (Option<String
         .map(Path::to_path_buf)
         .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from))
         .unwrap_or_else(|| home_dir().join(".claude"));
-    let Ok(v) = fs::read_to_string(dir.join("settings.json")).map_err(anyhow::Error::from).and_then(|t| Ok(serde_json::from_str::<Value>(&t)?)) else {
+    let Ok(v) = fs::read_to_string(dir.join("settings.json"))
+        .map_err(anyhow::Error::from)
+        .and_then(|t| Ok(serde_json::from_str::<Value>(&t)?))
+    else {
         return (None, None);
     };
-    let yours = v.get("model").and_then(Value::as_str).filter(|x| !x.is_empty()).map(str::to_owned);
-    let Some(m) = model.map(str::to_owned).or_else(|| yours.clone()) else { return (None, None) };
-    let effort = v.get("modelSettings").and_then(Value::as_object).and_then(|all| {
-        let level = |k: &String| all.get(k)?.get("effortLevel")?.as_str().map(str::to_owned);
-        // The exact id, else the newest id that contains the alias.
-        let exact = all.keys().find(|k| **k == m).cloned();
-        let by_alias = || {
-            let mut ks: Vec<&String> = all.keys().filter(|k| k.contains(m.as_str())).collect();
-            ks.sort();
-            ks.last().map(|k| (*k).clone())
-        };
-        exact.or_else(by_alias).and_then(|k| level(&k))
-    });
+    let yours = v
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|x| !x.is_empty())
+        .map(str::to_owned);
+    let Some(m) = model.map(str::to_owned).or_else(|| yours.clone()) else {
+        return (None, None);
+    };
+    let effort = v
+        .get("modelSettings")
+        .and_then(Value::as_object)
+        .and_then(|all| {
+            let level = |k: &String| all.get(k)?.get("effortLevel")?.as_str().map(str::to_owned);
+            // The exact id, else the newest id that contains the alias.
+            let exact = all.keys().find(|k| **k == m).cloned();
+            let by_alias = || {
+                let mut ks: Vec<&String> = all.keys().filter(|k| k.contains(m.as_str())).collect();
+                ks.sort();
+                ks.last().map(|k| (*k).clone())
+            };
+            exact.or_else(by_alias).and_then(|k| level(&k))
+        });
     (yours, effort)
 }
 
@@ -2097,24 +2974,41 @@ fn with_language(args: &[String], home: &Path) -> Vec<String> {
     let mut out = args.to_vec();
     match out.iter().position(|a| a == "--append-system-prompt") {
         Some(i) if i + 1 < out.len() => out[i + 1].push_str(&rule),
-        _ => out.extend(["--append-system-prompt".into(), rule.trim_start().to_owned()]),
+        _ => out.extend([
+            "--append-system-prompt".into(),
+            rule.trim_start().to_owned(),
+        ]),
     }
     out
 }
 
 /// The repository's permission mode for Claude Code (`[run] permission_mode`, `auto` by default).
 fn mode_for(repo: &Path) -> String {
-    Repo::open(repo, &home_dir(), &pit_core::default_homes().1).map(|r| r.flow.run.permission_mode).unwrap_or_else(|_| "auto".into())
+    Repo::open(repo, &home_dir(), &pit_core::default_homes().1)
+        .map(|r| r.flow.run.permission_mode)
+        .unwrap_or_else(|_| "auto".into())
 }
 
 /// A session that reads and never writes (analysis, judge): the repository's mode, without the
 /// editing tools, and without asking the person in the middle (its questions go in its answer).
 fn read_only_args(mode: &str) -> Vec<String> {
-    ["--setting-sources", "project,local", "--permission-mode", mode, "--disallowedTools", "Edit,Write,NotebookEdit,AskUserQuestion"].map(str::to_owned).to_vec()
+    [
+        "--setting-sources",
+        "project,local",
+        "--permission-mode",
+        mode,
+        "--disallowedTools",
+        "Edit,Write,NotebookEdit,AskUserQuestion",
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// Removes its key from the set when dropped.
-struct Release<'a>(&'a Mutex<std::collections::HashSet<(PathBuf, u32)>>, (PathBuf, u32));
+struct Release<'a>(
+    &'a Mutex<std::collections::HashSet<(PathBuf, u32)>>,
+    (PathBuf, u32),
+);
 impl Drop for Release<'_> {
     fn drop(&mut self) {
         self.0.lock().unwrap().remove(&self.1);
@@ -2175,14 +3069,21 @@ fn checkpoint(worktree: &Path, card: u32) -> Result<Option<String>> {
         return Ok(None);
     }
     g.run(&["add", "-A"])?;
-    g.run(&["commit", "-q", "-m", &format!("pitlane: checkpoint of card #{card} at a usage limit")])?;
+    g.run(&[
+        "commit",
+        "-q",
+        "-m",
+        &format!("pitlane: checkpoint of card #{card} at a usage limit"),
+    ])?;
     Ok(Some(g.run(&["rev-parse", "--short", "HEAD"])?))
 }
 
 /// The agent's last words in a run: its handoff summary if any, else its last two messages.
 fn last_words(timeline: &[(usize, RunEvent)]) -> String {
     if let Some(s) = timeline.iter().rev().find_map(|(_, e)| match e {
-        RunEvent::Finished { handoff: Some(h), .. } => h.get("summary").and_then(|s| s.as_str()).map(str::to_owned),
+        RunEvent::Finished {
+            handoff: Some(h), ..
+        } => h.get("summary").and_then(|s| s.as_str()).map(str::to_owned),
         _ => None,
     }) {
         return s;
@@ -2194,11 +3095,27 @@ fn last_words(timeline: &[(usize, RunEvent)]) -> String {
             _ => None,
         })
         .collect();
-    texts.iter().rev().take(2).rev().cloned().collect::<Vec<_>>().join("\n\n")
+    texts
+        .iter()
+        .rev()
+        .take(2)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &str)>, brief: bool, into: Option<&str>, direct: bool, note: impl Fn(String)) -> Result<Prepared> {
+fn prepare(
+    repo: &Path,
+    card: u32,
+    home: &Path,
+    continues: Option<(&RunMeta, &str)>,
+    brief: bool,
+    into: Option<&str>,
+    direct: bool,
+    note: impl Fn(String),
+) -> Result<Prepared> {
     let r = Repo::open(repo, &home_dir(), home)?;
     let c = cards::get(&r, card)?;
     let into = into.filter(|b| !b.trim().is_empty());
@@ -2206,18 +3123,50 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
         (Some(b), _) => b.clone(),
         (None, Some(t)) if direct => {
             note(format!("Working directly in {t}"));
-            cards::update(&r, card, CardPatch { lane: Some(Some(t.to_owned())), target: Some(Some(t.to_owned())), ..Default::default() })?;
+            cards::update(
+                &r,
+                card,
+                CardPatch {
+                    lane: Some(Some(t.to_owned())),
+                    target: Some(Some(t.to_owned())),
+                    ..Default::default()
+                },
+            )?;
             t.to_owned()
         }
         (None, _) => {
-            let branch = format!("{}{}-{}", r.flow.run.branch_prefix, c.id, cards::slug(&c.title));
+            let branch = format!(
+                "{}{}-{}",
+                r.flow.run.branch_prefix,
+                c.id,
+                cards::slug(&c.title)
+            );
             let from = into.filter(|t| !r.flow.flow.is_trunk(t));
             match from {
                 Some(f) => note(format!("Creating lane {branch} from {f}")),
-                None => note(format!("Creating lane {branch} from {}/{}", r.flow.flow.remote, r.flow.flow.base)),
+                None => note(format!(
+                    "Creating lane {branch} from {}/{}",
+                    r.flow.flow.remote, r.flow.flow.base
+                )),
             }
-            actions::new_lane_from(&r, &branch, NewOptions { fetch: true, setup: true }, from)?;
-            cards::update(&r, card, CardPatch { lane: Some(Some(branch.clone())), target: Some(into.map(str::to_owned)), ..Default::default() })?;
+            actions::new_lane_from(
+                &r,
+                &branch,
+                NewOptions {
+                    fetch: true,
+                    setup: true,
+                },
+                from,
+            )?;
+            cards::update(
+                &r,
+                card,
+                CardPatch {
+                    lane: Some(Some(branch.clone())),
+                    target: Some(into.map(str::to_owned)),
+                    ..Default::default()
+                },
+            )?;
             if let Some(t) = into {
                 note(format!("It lands in {t} once you approve it"));
             }
@@ -2228,7 +3177,15 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
         actions::ensure_worktree(&r, &branch)?
     } else {
         note(format!("Checking out {branch} from {}", r.flow.flow.remote));
-        actions::new_lane(&r, &branch, NewOptions { fetch: true, setup: true })?.path
+        actions::new_lane(
+            &r,
+            &branch,
+            NewOptions {
+                fetch: true,
+                setup: true,
+            },
+        )?
+        .path
     };
     note(format!("Working in {}", worktree.display()));
     let mut tools: Vec<String> = RUN_BASE_TOOLS.iter().map(|s| s.to_string()).collect();
@@ -2236,12 +3193,22 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
     tools.extend(r.flow.run.allow.iter().cloned());
     let the_card = cards::get(&r, card)?;
     // The same branch in each related repository, made and landed like this one.
-    let related = pit_core::related::prepare(&r, &branch, the_card.target.as_deref(), the_card.direct(), &note);
+    let related = pit_core::related::prepare(
+        &r,
+        &branch,
+        the_card.target.as_deref(),
+        the_card.direct(),
+        &note,
+    );
     // Where to look, from the index. A failure here never stops the run; it runs without the map.
     let map = if brief && r.flow.run.brief {
         match pit_core::brief::compile(&r, home, &the_card, pit_core::brief::DEFAULT_BUDGET) {
             Ok(b) if !b.text.is_empty() => {
-                note(format!("Briefed with {} from the index (~{} tokens)", plural(b.stats.files, "file"), b.stats.chars / 4));
+                note(format!(
+                    "Briefed with {} from the index (~{} tokens)",
+                    plural(b.stats.files, "file"),
+                    b.stats.chars / 4
+                ));
                 Some(b)
             }
             Ok(_) => {
@@ -2249,7 +3216,9 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
                 None
             }
             Err(e) => {
-                note(format!("Could not compile the map ({e:#}); running without it"));
+                note(format!(
+                    "Could not compile the map ({e:#}); running without it"
+                ));
                 None
             }
         }
@@ -2278,9 +3247,14 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
             if let Some((prev, words)) = continues {
                 let g = pit_core::git::Git::new(&worktree);
                 // Production as the yard resolves it: the remote branch, or the local one without a remote.
-                let base = pit_core::lanes::Target::resolve(&r, &r.flow.flow.production).ok().flatten().map(|t| t.sha);
+                let base = pit_core::lanes::Target::resolve(&r, &r.flow.flow.production)
+                    .ok()
+                    .flatten()
+                    .map(|t| t.sha);
                 let log = match base {
-                    Some(b) => g.run(&["log", "--oneline", "-20", &format!("{b}..HEAD")]).unwrap_or_default(),
+                    Some(b) => g
+                        .run(&["log", "--oneline", "-20", &format!("{b}..HEAD")])
+                        .unwrap_or_default(),
                     None => g.run(&["log", "--oneline", "-5"]).unwrap_or_default(),
                 };
                 let status = g.run(&["status", "--short"]).unwrap_or_default();
@@ -2308,20 +3282,43 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
 
 fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Result<()> {
     let r = Repo::open(&m.repo, &home_dir(), home)?;
-    cards::update(&r, m.card, CardPatch { state: Some(state), ..Default::default() })?;
+    cards::update(
+        &r,
+        m.card,
+        CardPatch {
+            state: Some(state),
+            ..Default::default()
+        },
+    )?;
     Ok(())
 }
 
 /// Where the card goes when its run ends.
 fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
     let r = Repo::open(&m.repo, &home_dir(), home)?;
-    let status = m.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str);
+    let status = m
+        .handoff
+        .as_ref()
+        .and_then(|h| h.get("status"))
+        .and_then(Value::as_str);
     // The handoff stays on the card as a note: the next session starts from it.
     if let Some(h) = &m.handoff
-        && let Some(summary) = h.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+        && let Some(summary) = h
+            .get("summary")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
     {
-        let mut text = format!("Run {} ended {}: {}", m.id, status.unwrap_or("done"), summary.trim());
-        let next: Vec<&str> = h.get("next_steps").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        let mut text = format!(
+            "Run {} ended {}: {}",
+            m.id,
+            status.unwrap_or("done"),
+            summary.trim()
+        );
+        let next: Vec<&str> = h
+            .get("next_steps")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
         if !next.is_empty() {
             text.push_str("\n\nLeft to do:\n");
             for n in next {
@@ -2330,8 +3327,16 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
         }
         let _ = cards::note(&r, m.card, "claude", &text);
     }
-    if let Some(qs) = m.handoff.as_ref().and_then(|h| h.get("questions")).and_then(Value::as_array) {
-        let qs: Vec<NewQuestion> = qs.iter().filter_map(|q| serde_json::from_value(q.clone()).ok()).collect();
+    if let Some(qs) = m
+        .handoff
+        .as_ref()
+        .and_then(|h| h.get("questions"))
+        .and_then(Value::as_array)
+    {
+        let qs: Vec<NewQuestion> = qs
+            .iter()
+            .filter_map(|q| serde_json::from_value(q.clone()).ok())
+            .collect();
         if status == Some("blocked") {
             if !qs.is_empty() {
                 cards::ask(&r, m.card, qs)?;
@@ -2349,18 +3354,32 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
         (RunState::Stopped, _) => CardState::Ready,
         _ => CardState::Blocked,
     };
-    cards::update(&r, m.card, CardPatch { state: Some(next), ..Default::default() })?;
+    cards::update(
+        &r,
+        m.card,
+        CardPatch {
+            state: Some(next),
+            ..Default::default()
+        },
+    )?;
     Ok(())
 }
 
 /// What a fix round is asked to fix: the failing proofs' tails and the judge's findings.
 fn fix_request(dir: &Path) -> String {
-    let Ok(v) = fs::read_to_string(dir.join("verify.json")).map_err(anyhow::Error::from).and_then(|t| Ok(serde_json::from_str::<pit_core::verify::Verification>(&t)?)) else {
+    let Ok(v) = fs::read_to_string(dir.join("verify.json"))
+        .map_err(anyhow::Error::from)
+        .and_then(|t| Ok(serde_json::from_str::<pit_core::verify::Verification>(&t)?))
+    else {
         return "The checks or the judge found problems; look at the diff again and fix what is wrong.".into();
     };
     let mut out = String::new();
     for p in v.proofs.iter().filter(|p| !p.ok) {
-        out.push_str(&format!("- `{}` fails:\n```\n{}\n```\n", p.command, p.tail.trim()));
+        out.push_str(&format!(
+            "- `{}` fails:\n```\n{}\n```\n",
+            p.command,
+            p.tail.trim()
+        ));
     }
     if let Some(j) = v.judge.as_ref().and_then(|j| j.judgement.as_ref()) {
         if !j.findings.is_empty() || j.verdict == pit_core::verify::Verdict::Changes {
@@ -2375,7 +3394,12 @@ fn fix_request(dir: &Path) -> String {
             out.push_str(&format!("- [{}]{at} {}\n", f.severity, f.text.trim()));
         }
     }
-    if out.is_empty() { "The checks or the judge found problems; look at the diff again and fix what is wrong.".into() } else { out }
+    if out.is_empty() {
+        "The checks or the judge found problems; look at the diff again and fix what is wrong."
+            .into()
+    } else {
+        out
+    }
 }
 
 /// A question a finished run raised anyway, as a note: what it asked and what it went with.
@@ -2403,10 +3427,19 @@ mod your_claude_tests {
             r#"{"model":"opus","modelSettings":{"claude-opus-5-5":{"effortLevel":"medium"},"claude-fable-5-2":{"effortLevel":"xhigh"}}}"#,
         )
         .unwrap();
-        assert_eq!(your_claude(Some(d.path()), None), (Some("opus".into()), Some("medium".into())));
+        assert_eq!(
+            your_claude(Some(d.path()), None),
+            (Some("opus".into()), Some("medium".into()))
+        );
         // A model Pitlane picked gets your effort for that model.
-        assert_eq!(your_claude(Some(d.path()), Some("fable")).1, Some("xhigh".into()));
+        assert_eq!(
+            your_claude(Some(d.path()), Some("fable")).1,
+            Some("xhigh".into())
+        );
         assert_eq!(your_claude(Some(d.path()), Some("sonnet")).1, None);
-        assert_eq!(your_claude(Some(&d.path().join("none")), None), (None, None));
+        assert_eq!(
+            your_claude(Some(&d.path().join("none")), None),
+            (None, None)
+        );
     }
 }
