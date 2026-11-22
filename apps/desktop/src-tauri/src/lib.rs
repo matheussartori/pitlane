@@ -320,6 +320,17 @@ async fn card_reorder(path: String, ids: Vec<u32>) -> CmdResult<()> {
     blocking(move || cards::reorder(&open(&path)?, &ids)).await
 }
 
+/// Deletes a card (undo with `card_restore`).
+#[tauri::command]
+async fn card_delete(path: String, id: u32) -> CmdResult<()> {
+    blocking(move || cards::delete(&open(&path)?, id).map(drop)).await
+}
+
+#[tauri::command]
+async fn card_restore(path: String, id: u32) -> CmdResult<()> {
+    blocking(move || cards::restore(&open(&path)?, id).map(drop)).await
+}
+
 /// A note you add to a card, for whoever works it next.
 #[tauri::command]
 async fn card_note(path: String, id: u32, text: String) -> CmdResult<CardOut> {
@@ -1240,6 +1251,8 @@ pub fn run() {
             card_update,
             card_answer,
             card_reorder,
+            card_delete,
+            card_restore,
             card_note,
             cards_analyze,
             runs_list,

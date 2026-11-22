@@ -135,6 +135,31 @@ function BoardAsk(props: { repo: string }) {
   );
 }
 
+/** Deletes a card, with an undo in the toast (the file waits in the board's deleted folder). */
+export async function deleteCard(repo: string, card: Card, onChanged: () => void): Promise<boolean> {
+  try {
+    await api.cardDelete(repo, card.id);
+    onChanged();
+    toast(
+      {
+        tone: "done",
+        title: `Deleted #${card.id} ${card.title}`,
+        body: card.lane ? `Its lane ${card.lane} stays; clean it from Lanes if you do not need it.` : undefined,
+        action: {
+          label: "Undo",
+          run: () =>
+            void api.cardRestore(repo, card.id).then(onChanged, (e) => toast({ tone: "fail", title: `Could not restore #${card.id}`, body: e instanceof Error ? e.message : String(e) })),
+        },
+      },
+      12000,
+    );
+    return true;
+  } catch (e) {
+    toast({ tone: "fail", title: `Could not delete #${card.id}`, body: e instanceof Error ? e.message : String(e) });
+    return false;
+  }
+}
+
 /** Landed where it was going: dependencies on it are met. */
 const landedState = (c: Card) => c.state === "done" || c.state === "in-dev";
 
@@ -173,6 +198,8 @@ export function BoardView(props: {
   onNew: () => void;
   /** Starts Run all on these backlog cards, in board order: analyse, ask, then work them. */
   repo: string | null;
+  /** Cards changed here (deleted, restored): read them again. */
+  onChanged: () => void;
   /** Claude reads the backlog cards not analysed yet (questions, notes, order). */
   onAnalyse: (ids: number[]) => void;
   /** Every backlog card analysed: choose where the work lands, then start. */
@@ -395,10 +422,16 @@ export function BoardView(props: {
                           style={drag()?.live && drag()!.id === card.id ? { transform: `translateY(${drag()!.dy}px)` } : undefined}
                           tabindex="0"
                           role="button"
-                          aria-label={`Card ${card.id}: ${card.title}. Alt and the arrow keys move it.`}
+                          aria-label={`Card ${card.id}: ${card.title}. Alt and the arrow keys move it; Command Backspace deletes it.`}
                           onPointerDown={(e) => onPointerDown(e, col, card.id)}
                           onClick={() => !dragged && props.onOpen(card.id)}
                           onKeyDown={(e) => {
+                            // ⌘⌫ deletes the focused card, with an undo.
+                            if (e.metaKey && (e.key === "Backspace" || e.key === "Delete") && props.repo && !liveRun(card.id)) {
+                              e.preventDefault();
+                              void deleteCard(props.repo, card, props.onChanged);
+                              return;
+                            }
                             if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
                               e.preventDefault();
                               moveTo(col, card.id, i() + (e.key === "ArrowUp" ? -1 : 1));
@@ -725,6 +758,15 @@ export function CardSheet(props: {
       }
       foot={
         <>
+          <button
+            type="button"
+            class="btn btn-ghost cs-delete"
+            disabled={busy() || !!live()}
+            title={live() ? "Stop its run first" : "Delete this card (you can undo)"}
+            onClick={() => void deleteCard(props.repo, props.card, props.onChanged).then((ok) => ok && props.onClose())}
+          >
+            <Icon name="trash" small /> Delete
+          </button>
           <span class="sheet-note">{props.card.file}</span>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
             {dirty() ? "Cancel" : "Close"}

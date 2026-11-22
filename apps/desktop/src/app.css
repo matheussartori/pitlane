@@ -755,6 +755,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-dock:hover .ag-dock-grip::after, .ag-dock-grip:focus-visible::after { opacity: 1; }
 .ag-dock-grip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .ag-stop-all { color: var(--color-fail); }
+.cs-delete { color: var(--color-fail); }
 .board-ask { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); }
 .board-ask:focus-within { box-shadow: var(--ring-strong); }
 .board-ask .ag-prompt { line-height: 28px; }

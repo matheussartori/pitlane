@@ -1161,7 +1161,7 @@ impl Supervisor {
         }
         let routing = Routing::load(&self.cfg.home)?;
         let choice = routing.choices(&r.root, &home_dir(), &self.cfg.home)?.into_iter().find(|c| c.kind != accounts::Kind::ApiKey);
-        let tools = "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*),mcp__pitlane__add_card,mcp__pitlane__list_cards,mcp__pitlane__get_card,mcp__pitlane__update_card,mcp__pitlane__add_note,mcp__pitlane__brief";
+        let tools = "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*),mcp__pitlane__add_card,mcp__pitlane__list_cards,mcp__pitlane__get_card,mcp__pitlane__update_card,mcp__pitlane__delete_card,mcp__pitlane__add_note,mcp__pitlane__brief";
         let args: Vec<String> = vec![
             "--setting-sources".into(),
             "project,local".into(),
@@ -1699,7 +1699,7 @@ spoken phrasing and transcription slips), what work they want on this repository
 the pitlane tools: one card per piece of work someone could finish on its own, a short imperative title, and a spec in \
 markdown that says what and why, with acceptance in a line or two. Read the code when it helps you write a precise spec \
 (paths, names), but never change files and never do the work itself. Before adding, list the cards to avoid duplicates; \
-update an existing card instead when it is the same work. When they ask to change or annotate cards, do that. End with a \
+update an existing card instead when it is the same work. When they ask to change, annotate or delete cards, do that. End with a \
 one-line summary per card you added or changed (#id and title).";
 
 /// Removes its key from the set when dropped.

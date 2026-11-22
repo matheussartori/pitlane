@@ -981,6 +981,7 @@ export default function App() {
                   <div class="board-scroll">
                   <BoardView
                     repo={repo()}
+                    onChanged={() => void loadCards()}
                     cards={cards()}
                     problems={problems()}
                     yard={yard()}

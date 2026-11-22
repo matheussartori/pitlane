@@ -347,6 +347,53 @@ pub fn list(repo: &Repo) -> Result<(Vec<Card>, Vec<String>)> {
     Ok((cards, problems))
 }
 
+/// Where deleted cards go, beside the cards: a delete is undone by moving the file back.
+pub fn trash_dir(repo: &Repo) -> PathBuf {
+    repo.board.join("deleted")
+}
+
+fn deleted_ids(repo: &Repo) -> Vec<u32> {
+    fs::read_dir(trash_dir(repo))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_string_lossy().split('-').next()?.parse().ok())
+        .collect()
+}
+
+/// Deletes a card: its file moves to the board's `deleted/` folder (undo with `restore`), and
+/// other cards stop waiting on it. Its lane and worktree are left alone.
+pub fn delete(repo: &Repo, id: u32) -> Result<Card> {
+    let _lock = Lock::take(repo)?;
+    let card = get(repo, id)?;
+    let to = trash_dir(repo);
+    fs::create_dir_all(&to)?;
+    let name = card.path.file_name().context("a card without a file name")?;
+    fs::rename(&card.path, to.join(name)).with_context(|| format!("could not delete #{id}"))?;
+    let (others, _) = list(repo)?;
+    for mut c in others.into_iter().filter(|c| c.after.contains(&id)) {
+        c.after.retain(|a| *a != id);
+        write(&c)?;
+    }
+    Ok(card)
+}
+
+/// Brings a deleted card back.
+pub fn restore(repo: &Repo, id: u32) -> Result<Card> {
+    let _lock = Lock::take(repo)?;
+    let prefix = format!("{id:04}-");
+    let from = fs::read_dir(trash_dir(repo))
+        .ok()
+        .and_then(|rd| rd.flatten().find(|e| e.file_name().to_string_lossy().starts_with(&prefix)))
+        .with_context(|| format!("no deleted card #{id}"))?;
+    if get(repo, id).is_ok() {
+        bail!("there is already a card #{id}");
+    }
+    let to = dir(repo).join(from.file_name());
+    fs::rename(from.path(), &to)?;
+    Card::parse(&fs::read_to_string(&to)?, &to)
+}
+
 pub fn get(repo: &Repo, id: u32) -> Result<Card> {
     let prefix = format!("{id:04}-");
     let dir = dir(repo);
@@ -365,7 +412,8 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
     }
     let _lock = Lock::take(repo)?;
     let (cards, _) = list(repo)?;
-    let id = cards.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+    // Deleted cards keep their numbers, so an undo never collides with a newer card.
+    let id = cards.iter().map(|c| c.id).chain(deleted_ids(repo)).max().unwrap_or(0) + 1;
     // New cards go to the bottom of the board.
     let rank = cards.iter().map(|c| c.order().0).max().map_or(id as i64, |r| (r + 1).max(id as i64));
     let now = timestamp(now_secs());

@@ -206,6 +206,11 @@ fn tools() -> Value {
             }, "required": ["id"] }
         },
         {
+            "name": "delete_card",
+            "description": "Delete a card (duplicate, obsolete, or the person asked). It can be restored from the app.",
+            "inputSchema": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] }
+        },
+        {
             "name": "ask",
             "description": "Ask every question you have about a card in one call, each with options and the one you recommend. The user answers them in Pitlane's Inbox; each answer becomes a decision.",
             "inputSchema": { "type": "object", "properties": {
@@ -302,6 +307,10 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
             json!({ "cards": list, "problems": problems })
         }
         "get_card" => card_json(&cards::get(&repo, id()?)?),
+        "delete_card" => {
+            let c = cards::delete(&repo, id()?)?;
+            json!({ "deleted": c.id, "title": c.title })
+        }
         "update_card" => {
             let patch = CardPatch {
                 title: str_arg("title"),
@@ -360,7 +369,7 @@ mod tests {
 
         let list = rpc(&dir, 2, "tools/list", json!({}));
         let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "ask", "answer", "add_note", "brief"]);
+        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "delete_card", "ask", "answer", "add_note", "brief"]);
 
         let added = rpc(&dir, 3, "tools/call", json!({ "name": "add_card", "arguments": {
             "title": "Rate limit invites",

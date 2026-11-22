@@ -172,3 +172,24 @@ fn every_worktree_sees_one_board() {
     assert_eq!(in_wt.board, r.board);
     assert_eq!(cards::list(&in_wt).unwrap().0.len(), 1);
 }
+
+#[test]
+fn delete_and_restore() {
+    let (_d, r) = repo();
+    let a = cards::add(&r, NewCard { title: "First".into(), ..Default::default() }).unwrap();
+    let b = cards::add(&r, NewCard { title: "Second".into(), ..Default::default() }).unwrap();
+    cards::mark_analyzed(&r, b.id, vec![a.id], vec!["engine".into()]).unwrap();
+    cards::delete(&r, b.id).unwrap();
+    assert!(cards::get(&r, b.id).is_err());
+    // The number stays taken while the card is in the deleted folder.
+    let c = cards::add(&r, NewCard { title: "Third".into(), ..Default::default() }).unwrap();
+    assert_eq!(c.id, 3);
+    cards::delete(&r, a.id).unwrap();
+    let back = cards::restore(&r, b.id).unwrap();
+    assert_eq!(back.title, "Second");
+    assert!(back.after.is_empty() || back.after == vec![a.id]);
+    assert!(cards::restore(&r, 99).is_err());
+    // Editing the spec makes it a new card to the analyst.
+    let edited = cards::update(&r, b.id, CardPatch { body: Some("changed".into()), ..Default::default() }).unwrap();
+    assert!(edited.analyzed.is_none() && edited.areas.is_empty());
+}
