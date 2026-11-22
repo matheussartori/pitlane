@@ -141,6 +141,9 @@ pub struct RunMeta {
     /// How many times this card's work was continued after running out of turns.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub extensions: u32,
+    /// The same branch in the project's related repositories, where the agent works too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<crate::related::RelatedLane>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -502,8 +505,9 @@ pub fn handoff_schema() -> Value {
 
 /// Fixed rules for every run: the same bytes each time, so the prompt cache holds.
 pub const RULES: &str = "You are running inside Pitlane, on one card, in a git worktree made for it. \
-Work only inside the current directory. Commit your work on the current branch with clear messages; \
-never push, never switch branches, and merge only when Pitlane asks you to bring a branch in. Read the card's spec and decisions before you start. \
+Work only inside the current directory and the related repositories' worktrees the briefing lists, if any. Commit your work on the current branch with clear messages; \
+never push, never switch branches, never create branches or worktrees (in any repository; Pitlane makes \
+them), and merge only when Pitlane asks you to bring a branch in. Read the card's spec and decisions before you start. \
 Nobody is watching this run: the person answered every question during the analysis, pressed Run and walked away, \
 so never stop to ask. Decide how to do the work yourself (worktrees, branches, commits, tests, file layout, naming, \
 what to measure, small calls on scope) from the spec, the decisions and the code: take the option you would have \

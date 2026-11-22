@@ -15,6 +15,57 @@ pub struct FlowFile {
     pub ship: ShipCfg,
     pub run: RunCfg,
     pub verify: VerifyCfg,
+    pub project: ProjectCfg,
+}
+
+/// A project that spans more than this repository.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProjectCfg {
+    /// Other git repositories the cards' code lives in, relative to this one (`../amity-games`).
+    /// Each run gets the same branch in each of them, and may edit and commit there too.
+    pub repos: Vec<String>,
+}
+
+/// Takes a related repository off `[project] repos`.
+pub fn remove_project_repo(root: &Path, rel: &str) -> Result<()> {
+    let path = root.join(FLOW_PATH);
+    let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
+    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
+    if let Some(repos) = doc.get_mut("project").and_then(|p| p.get_mut("repos")).and_then(|r| r.as_array_mut()) {
+        repos.retain(|v| v.as_str() != Some(rel));
+    }
+    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
+    FlowFile::load(root).map(|_| ())
+}
+
+/// Adds a related repository to `[project] repos`, keeping the file's comments.
+pub fn add_project_repo(root: &Path, rel: &str) -> Result<()> {
+    let path = root.join(FLOW_PATH);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => TEMPLATE.to_owned(),
+        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
+    };
+    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
+    let project = doc
+        .entry("project")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .context("[project] in flow.toml is not a table")?;
+    let repos = project
+        .entry("repos")
+        .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .context("[project] repos in flow.toml is not an array")?;
+    if !repos.iter().any(|v| v.as_str() == Some(rel)) {
+        repos.push(rel);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
+    FlowFile::load(root).map(|_| ())
 }
 
 /// Checks after a run, before a person reviews.

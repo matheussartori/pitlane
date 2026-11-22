@@ -129,6 +129,14 @@ async fn capacity() -> CmdResult<Capacity> {
             };
             agents = by_load.min(by_memory).max(1);
         }
+        // The daemon's Performance governor decides when it runs: Full or Light, and the memory.
+        if let Ok(v) = call(serde_json::json!({ "op": "perf" })) {
+            if v.get("governed").and_then(serde_json::Value::as_bool) == Some(true) {
+                if let Some(n) = v.get("allowed").and_then(serde_json::Value::as_u64) {
+                    agents = (n as u32).max(1);
+                }
+            }
+        }
         Ok(Capacity { agents, max, load, cores, free_memory })
     })
     .await
@@ -449,6 +457,21 @@ async fn card_reanswer(path: String, id: u32, question: u32, answer: String) -> 
     .await
 }
 
+/// The repositories this project also works in (`[project] repos`), as flow.toml lists them.
+#[tauri::command]
+async fn project_repos(path: String) -> CmdResult<Vec<String>> {
+    blocking(move || Ok(open(&path)?.flow.project.repos.clone())).await
+}
+
+#[tauri::command]
+async fn project_repo_remove(path: String, rel: String) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        pit_core::related::remove(&open(&path)?, &rel)?;
+        Ok(open(&path)?.flow.project.repos.clone())
+    })
+    .await
+}
+
 /// Attaches an image (base64, as the webview read it) to a card.
 #[tauri::command]
 async fn card_attach(path: String, id: u32, name: String, data: String) -> CmdResult<CardOut> {
@@ -584,6 +607,24 @@ async fn run_decide(run: String, approval: Option<String>, decision: String, mes
 #[tauri::command]
 async fn run_stop(run: String) -> CmdResult<()> {
     blocking(move || call(serde_json::json!({ "op": "stop", "run": run })).map(drop)).await
+}
+
+/// Performance: the Mac, the agents' share of it, the mode and what the governor did.
+#[tauri::command]
+async fn perf() -> CmdResult<serde_json::Value> {
+    blocking(|| call(serde_json::json!({ "op": "perf" }))).await
+}
+
+/// Changes Performance's settings (mode, auto, away_minutes, light_agents, light_background).
+#[tauri::command]
+async fn perf_set(config: serde_json::Value) -> CmdResult<serde_json::Value> {
+    blocking(move || call(serde_json::json!({ "op": "perf_set", "config": config }))).await
+}
+
+/// Pauses or resumes one session by hand.
+#[tauri::command]
+async fn perf_hold(run: String, hold: bool) -> CmdResult<serde_json::Value> {
+    blocking(move || call(serde_json::json!({ "op": "perf_hold", "run": run, "hold": hold }))).await
 }
 
 /// Stop all: every agent session the daemon runs, and the analyses waiting for a slot.
@@ -1344,6 +1385,9 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            perf,
+            perf_set,
+            perf_hold,
             dictate_start,
             dictate_stop,
             dictate_cancel,
@@ -1369,6 +1413,8 @@ pub fn run() {
             card_update,
             card_answer,
             card_reanswer,
+            project_repos,
+            project_repo_remove,
             capacity,
             card_attach,
             card_detach,

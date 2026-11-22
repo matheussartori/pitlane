@@ -174,10 +174,19 @@ pub fn lane_diff(repo: &Repo, branch: &str, limit_bytes: usize, from: Option<&st
     let head = repo.git.rev_parse(&format!("refs/heads/{branch}"))?.with_context(|| format!("no local branch {branch}"))?;
     let base = match from {
         Some(f) => repo.git.rev_parse(f)?.with_context(|| format!("no commit {f}"))?,
-        None => {
-            let prod = Target::resolve(repo, &repo.flow.flow.production)?.context("production branch not found")?;
-            repo.git.run(&["merge-base", &prod.sha, &head])?
-        }
+        // Where the lane parts from the branch it started from (Run all's Into, which holds other
+        // cards' work, merged in or not), else where it parts from production.
+        None => match repo
+            .git
+            .config_get(&format!("branch.{branch}.pitFrom"))?
+            .and_then(|f| repo.git.rev_parse(&format!("refs/heads/{f}")).ok().flatten())
+        {
+            Some(from) => repo.git.run(&["merge-base", &from, &head])?,
+            None => {
+                let prod = Target::resolve(repo, &repo.flow.flow.production)?.context("production branch not found")?;
+                repo.git.run(&["merge-base", &prod.sha, &head])?
+            }
+        },
     };
     let range = format!("{base}..{head}");
     let files = repo
@@ -197,6 +206,50 @@ pub fn lane_diff(repo: &Repo, branch: &str, limit_bytes: usize, from: Option<&st
         patch.truncate(at);
     }
     Ok(LaneDiff { base, head, files, patch, truncated })
+}
+
+/// The lane's diff here and in every related repository, as one patch: the related ones' paths
+/// start with the repository's name (`amity-games/src/x.ts`). A related repo without the branch
+/// or without changes adds nothing.
+pub fn project_diff(repo: &Repo, branch: &str, related: &[crate::related::RelatedLane], limit_bytes: usize) -> Result<LaneDiff> {
+    let mut d = lane_diff(repo, branch, limit_bytes, None)?;
+    for l in related {
+        let Ok(rr) = crate::related::open(repo, &l.root) else { continue };
+        let Ok(o) = lane_diff(&rr, &l.branch, limit_bytes, None) else { continue };
+        if o.files.is_empty() {
+            continue;
+        }
+        let name = &l.name;
+        d.files.extend(o.files.into_iter().map(|f| FileStat { path: format!("{name}/{}", f.path), ..f }));
+        let patch: String = o
+            .patch
+            .lines()
+            .map(|line| {
+                if let Some(rest) = line.strip_prefix("diff --git a/") {
+                    format!("diff --git a/{name}/{}", rest.replacen(" b/", &format!(" b/{name}/"), 1))
+                } else if let Some(rest) = line.strip_prefix("--- a/") {
+                    format!("--- a/{name}/{rest}")
+                } else if let Some(rest) = line.strip_prefix("+++ b/") {
+                    format!("+++ b/{name}/{rest}")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !d.patch.is_empty() && !d.patch.ends_with('\n') {
+            d.patch.push('\n');
+        }
+        d.patch.push_str(&patch);
+        d.patch.push('\n');
+        d.truncated |= o.truncated;
+    }
+    if d.patch.len() > limit_bytes {
+        let at = (0..=limit_bytes).rev().find(|i| d.patch.is_char_boundary(*i)).unwrap_or(0);
+        d.patch.truncate(at);
+        d.truncated = true;
+    }
+    Ok(d)
 }
 
 /// Reverts one hunk of the lane (as `lane_diff` showed it, from `base` to `head`) in the lane's

@@ -13,6 +13,7 @@ pub mod git;
 pub mod lanes;
 pub mod plan;
 pub mod queue;
+pub mod related;
 pub mod report;
 pub mod runs;
 pub mod trash;

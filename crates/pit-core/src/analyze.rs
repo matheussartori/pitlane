@@ -25,7 +25,9 @@ of their own: `after` lists the cards whose work this one needs in place first (
 conflict with them badly enough that it must start from their result); `areas` names the shared parts of the code \
 it changes that other cards may also change (an engine, a shared schema, a core module, a build config), as short \
 lowercase names; cards with an area in common never run at the same time. Leave both empty when the card is \
-independent. Never list a card in `after` without a concrete reason in a note.";
+independent. Never list a card in `after` without a concrete reason in a note. When the code this card changes lives \
+(also) in a sibling repository next to this one, name its folder in `repos`: Pitlane then gives the runs a worktree \
+there on the same branch. Never ask where the changes should be made.";
 
 /// What the analyst returns.
 pub fn schema() -> Value {
@@ -40,7 +42,8 @@ pub fn schema() -> Value {
             }, "required": ["text", "options", "context"] } },
             "notes": { "type": "array", "items": { "type": "string" }, "description": "Findings in markdown, one per item." },
             "after": { "type": "array", "items": { "type": "integer" }, "description": "Ids of cards in this batch that must land first." },
-            "areas": { "type": "array", "items": { "type": "string" }, "description": "Shared parts of the code this card changes, short lowercase names." }
+            "areas": { "type": "array", "items": { "type": "string" }, "description": "Shared parts of the code this card changes, short lowercase names." },
+            "repos": { "type": "array", "items": { "type": "string" }, "description": "Folder names of sibling git repositories (next to this one, e.g. amity-games) that hold code this card changes. Empty when it is all in this repository." }
         },
         "required": ["questions", "notes"]
     })
@@ -56,6 +59,9 @@ pub struct Analysis {
     pub after: Vec<u32>,
     #[serde(default)]
     pub areas: Vec<String>,
+    /// Sibling repositories (folder names next to this one) the card's code also lives in.
+    #[serde(default)]
+    pub repos: Vec<String>,
 }
 
 /// The card as the analyst sees it: spec, decisions so far, notes and the project's decisions.

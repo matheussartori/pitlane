@@ -108,6 +108,7 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
             };
             repo.git.run(&["worktree", "add", "--quiet", "--no-track", "-b", branch, &path_s, &sha])?;
             repo.git.config_set(&format!("branch.{branch}.pitBase"), &sha)?;
+            repo.git.config_set(&format!("branch.{branch}.pitFrom"), from)?;
             (from.to_owned(), sha)
         }
         None => {

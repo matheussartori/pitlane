@@ -419,6 +419,7 @@ export interface RunAllChoice {
  * worktree, one at a time.
  */
 export function RunAllSheet(props: {
+  repo: string;
   count: number;
   yard: Lane[];
   base: string;
@@ -434,6 +435,15 @@ export function RunAllSheet(props: {
   const [into, setInto] = createSignal<string>(first());
   const [direct, setDirect] = createSignal(false);
   const [instructions, setInstructions] = createSignal("");
+  // Sibling repositories the analysis found the code in: kept unless taken off here.
+  const [repos, { mutate: setRepos }] = createResource(() => props.repo, (p) => api.projectRepos(p).catch(() => [] as string[]));
+  async function dropRepo(rel: string) {
+    try {
+      setRepos(await api.projectRepoRemove(props.repo, rel));
+    } catch (e) {
+      toast({ tone: "fail", title: t("{name} is still on the list", { name: rel }), body: String(e) }, 0);
+    }
+  }
   let notesRef: HTMLTextAreaElement | undefined;
   const trunk = () => into() === props.production || into() === props.integration;
   const target = () => into() || null;
@@ -445,8 +455,8 @@ export function RunAllSheet(props: {
         stages: [props.integration, props.production].filter(Boolean).join(t(" and ")),
       });
     if (direct()) return t("Every card is worked in {to}’s own worktree, one at a time, committing there. Nothing is pushed.", { to });
-    if (trunk()) return t("Each card gets a lane from a freshly fetched origin/{base}; approved, it ships straight into {to}.", { base: props.base, to });
-    return t("Each card gets a lane branched from {to}; approved, it is merged into {to} on this machine (nothing pushed). Cards that build on others start once those landed.", { to });
+    if (trunk()) return t("Each card gets a lane from a freshly fetched origin/{base}; once its checks pass (after fix rounds if the judge asks), it ships straight into {to} on its own.", { base: props.base, to });
+    return t("Each card gets a lane branched from {to}; once its checks pass (after fix rounds if the judge asks), it is merged into {to} on this machine by itself (nothing pushed). Cards that build on others start once those landed.", { to });
   };
 
   return (
@@ -490,6 +500,24 @@ export function RunAllSheet(props: {
         </div>
       </Show>
       <p class="field-help">{help()}</p>
+      <Show when={(repos() ?? []).length > 0}>
+        <div class="field">
+          <span class="field-label">{t("Also works in")}</span>
+          <ul class="run-all-repos">
+            <For each={repos()}>
+              {(rel) => (
+                <li>
+                  <span class="input-mono">{rel}</span>
+                  <button type="button" class="btn btn-ghost btn-icon" aria-label={t("Take {name} off the list", { name: rel })} title={t("Take {name} off the list", { name: rel })} onClick={() => void dropRepo(rel)}>
+                    <Icon name="close" small />
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+          <span class="field-help">{t("Each card gets the same branch in these repositories too, and lands there the same way. Found by the analysis; kept in .pitlane/flow.toml.")}</span>
+        </div>
+      </Show>
       <Show when={direct() && trunk()}>
         <ErrorLine>
           {t("Agents will commit straight into {name} in its checkout. Make sure nothing of yours is uncommitted there.", { name: target() ?? "" })}

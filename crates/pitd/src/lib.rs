@@ -2,11 +2,12 @@
 //! Speaks JSON, one message per line, on a Unix socket only this user can open.
 //!
 //! Requests: `ping`, `start {repo, card}`, `resume {run}`, `list {repo?}`, `get {run}`,
-//! `say {run, text}`, `stop {run}`, `stop_all`, `shutdown`, `hold` (the app; its end stops all
+//! `say {run, text}`, `stop {run}`, `stop_all`, `perf`, `perf_set {config}`, `perf_hold {run, hold}`, `shutdown`, `hold` (the app; its end stops all
 //! and ends the daemon), `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
 //! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
 //! `{i, event}` lines and ends with `{end: <run>}`.
 
+pub mod perf;
 pub mod supervisor;
 
 use std::os::unix::fs::PermissionsExt;
@@ -35,6 +36,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
 
     let sup = Supervisor::new(cfg);
     sup.start_queue();
+    sup.start_perf();
     let recovered = sup.recover()?;
     eprintln!("pitd: listening on {} ({recovered} interrupted run(s) recovered)", sock.display());
     loop {
@@ -149,6 +151,12 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             json!({ "ok": true })
         }
         "stop_all" => json!({ "stopped": sup.stop_all() }),
+        "perf" => sup.perf.snapshot(),
+        "perf_set" => json!({ "config": sup.perf.set(req.get("config").context("config is required")?)? }),
+        "perf_hold" => {
+            let hold = req.get("hold").and_then(Value::as_bool).context("hold is required")?;
+            json!({ "changed": sup.perf_hold(run_arg(req)?, hold)? })
+        }
         "stop_analyses" => json!({ "stopped": sup.stop_where(|m| m.kind == pit_core::runs::SessionKind::Analysis) }),
         "shutdown" => {
             let sup = Arc::clone(sup);

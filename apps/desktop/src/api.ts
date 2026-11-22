@@ -563,6 +563,85 @@ export const DEFAULT_PREFS: Prefs = {
   adaptive_agents: true,
 };
 
+/** Performance: Full takes the Mac while you are away, Light leaves room while you use it. */
+export type PerfMode = "full" | "light";
+export interface PerfConfig {
+  mode: PerfMode;
+  /** Light while you use the Mac, Full after `away_minutes` away. */
+  auto: boolean;
+  away_minutes: number;
+  light_agents: number;
+  light_background: boolean;
+}
+export type PerfAgentState = "working" | "background" | "paused" | "waiting" | "starting";
+export interface PerfAgent {
+  id: string;
+  card: number;
+  title: string;
+  kind: string;
+  repo: string;
+  branch: string;
+  model: string | null;
+  started_at: number;
+  pid: number | null;
+  state: PerfAgentState;
+  paused_by: "you" | "mode" | "memory" | null;
+  paused_since: number | null;
+  /** Bytes, as Activity Monitor counts them, for the whole process tree. */
+  mem: number;
+  /** Percent of one core, summed over the tree (Activity Monitor's CPU column). */
+  cpu: number;
+  procs: number;
+  top: { name: string; mem: number; cpu: number }[];
+}
+export interface PerfSample {
+  t: number;
+  cpu: number;
+  mem_used: number;
+  agents_mem: number;
+  agents_cpu: number;
+}
+export interface PerfEvent {
+  t: number;
+  kind: "full" | "light" | "away" | "back" | "paused_mode" | "paused_memory" | "resumed" | "paused_you" | "resumed_you";
+  card?: number;
+  title?: string;
+  n?: number;
+}
+export interface PerfSnapshot {
+  governed: boolean;
+  mode: PerfMode;
+  config: PerfConfig;
+  allowed: number;
+  at?: number;
+  cap?: number;
+  max?: number;
+  adaptive?: boolean;
+  idle_secs?: number;
+  tight?: boolean;
+  critical?: boolean;
+  background?: boolean;
+  awake?: boolean;
+  system?: {
+    mem_total: number;
+    mem_used: number;
+    free_pct: number;
+    pressure: "normal" | "warn" | "critical";
+    swap_used: number;
+    swap_total: number;
+    cpu: number;
+    cores: number;
+    p_cores: number;
+    load: number;
+  };
+  agents?: PerfAgent[];
+  agents_mem?: number;
+  agents_cpu?: number;
+  others?: { name: string; mem: number; cpu: number }[];
+  history: PerfSample[];
+  events: PerfEvent[];
+}
+
 /** How many agents Run all may have working now, and why. */
 export interface Capacity {
   agents: number;
@@ -608,6 +687,12 @@ export const api = {
   runs: (path: string) => invoke<RunMeta[]>("runs_list", { path }),
   sessions: (path: string) => invoke<RunMeta[]>("sessions_list", { path }),
   capacity: () => invoke<Capacity>("capacity"),
+  perf: () => invoke<PerfSnapshot>("perf"),
+  perfSet: (config: Partial<PerfConfig>) => invoke<{ config: PerfConfig }>("perf_set", { config }),
+  perfHold: (run: string, hold: boolean) => invoke<{ changed: boolean }>("perf_hold", { run, hold }),
+  /** Sibling repositories this project also works in (flow.toml's [project] repos). */
+  projectRepos: (path: string) => invoke<string[]>("project_repos", { path }),
+  projectRepoRemove: (path: string, rel: string) => invoke<string[]>("project_repo_remove", { path, rel }),
   /** `autopilot`: Run all's cards, which fix, continue and land on their own. */
   runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null, autopilot = false) =>
     invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions, autopilot }),

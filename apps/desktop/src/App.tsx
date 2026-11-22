@@ -5,6 +5,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { NEEDS_API_KEY, api, isLive, onRun, type Quota, type Card, type Lane, type RepoEntry, type RunEvent, type Plan, type Report, type Finish, type RunMeta, type Settings, type ShipJob, type Yard, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
+import { PerformanceView } from "./performance";
 import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
 import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, holdNote, planNote } from "./board";
@@ -22,7 +23,7 @@ import { CleanSheet, NewLaneSheet, RunAllSheet, ShipSheet, type RunAllChoice } f
 import { Toasts, dismissable, toast } from "./ui";
 import { plural, t } from "./i18n";
 
-type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "code" | "terminal" | "settings";
+type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "terminal" | "settings";
 type SheetState =
   | { kind: "ship"; lane: Lane; to: string }
   | { kind: "clean" }
@@ -35,7 +36,7 @@ type SheetState =
   | null;
 
 const TAB_KEY = "pitlane.tab";
-const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "reports" || t === "code" || t === "terminal" || t === "settings";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "reports" || t === "performance" || t === "code" || t === "terminal" || t === "settings";
 /** The screen lives in the URL hash (#board), falling back to the last one used. */
 function savedTab(): Tab {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -702,10 +703,10 @@ export default function App() {
         } else if ((e.key === "c" || e.key === "C") && (tab() === "board" || tab() === "inbox")) {
           e.preventDefault();
           setSheet({ kind: "new-card" });
-        } else if (/^Digit[1-5]$/.test(e.code) && e.altKey) {
+        } else if (/^Digit[1-6]$/.test(e.code) && e.altKey) {
           // e.code: on macOS Option+1 types ¡, so e.key is no use here.
           e.preventDefault();
-          setTab((["inbox", "board", "lanes", "ledger", "reports"] as const)[Number(e.code.slice(5)) - 1]!);
+          setTab((["inbox", "board", "lanes", "ledger", "reports", "performance"] as const)[Number(e.code.slice(5)) - 1]!);
         }
       }
       if (e.key === "Escape") setMenu(false);
@@ -817,6 +818,7 @@ export default function App() {
           <RailItem icon="lanes" label="Lanes" keys="⌥3" current={here("lanes")} onClick={() => setTab("lanes")} count={needs()} hot />
           <RailItem icon="ledger" label="Ledger" keys="⌥4" current={here("ledger")} onClick={() => setTab("ledger")} />
           <RailItem icon="note" label="Reports" keys="⌥5" current={here("reports")} onClick={() => setTab("reports")} />
+          <RailItem icon="gauge" label="Performance" keys="⌥6" current={here("performance")} onClick={() => setTab("performance")} />
           <div class="navrail-sep" />
           <RailItem icon="code" label="Code" current={here("code")} onClick={() => setTab("code")} />
           <RailItem
@@ -1037,6 +1039,9 @@ export default function App() {
                 <Match when={tab() === "reports"}>
                   <ReportsView reports={reports()} now={now()} />
                 </Match>
+                <Match when={tab() === "performance"}>
+                  <PerformanceView onOpen={openRun} />
+                </Match>
                 <Match when={tab() === "ledger"}>
                   <LedgerView runs={runs()} now={now()} onOpen={openRun} />
                 </Match>
@@ -1071,6 +1076,7 @@ export default function App() {
           <Show when={sheet()?.kind === "run-all" && (sheet() as { ids: number[] })}>
             {(s) => (
               <RunAllSheet
+                repo={repo() ?? ""}
                 count={s().ids.length}
                 yard={yard()?.lanes ?? []}
                 base={yard()?.production ?? "main"}

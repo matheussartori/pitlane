@@ -110,6 +110,8 @@ pub struct Supervisor {
     /// Analyses across every request: three at a time, one per card.
     analysis_gate: Arc<tokio::sync::Semaphore>,
     analysing: Mutex<std::collections::HashSet<(PathBuf, u32)>>,
+    /// Performance: Full or Light, and the governor that keeps the agents to it.
+    pub perf: crate::perf::Perf,
 }
 
 /// What a side session needs: who it is for, where it runs, and Claude Code's arguments
@@ -141,6 +143,7 @@ pub struct Subscription {
 
 impl Supervisor {
     pub fn new(cfg: Config) -> Arc<Self> {
+        let home = cfg.home.clone();
         let queue = pit_core::queue::load(&cfg.home);
         Arc::new(Self {
             cfg,
@@ -152,6 +155,7 @@ impl Supervisor {
             starting: Mutex::new(Default::default()),
             analysis_gate: Arc::new(tokio::sync::Semaphore::new(3)),
             analysing: Mutex::new(Default::default()),
+            perf: crate::perf::Perf::new(&home),
         })
     }
 
@@ -436,6 +440,7 @@ impl Supervisor {
             parent: None,
             autopilot: opts.autopilot,
             extensions: opts.extensions,
+            related: Vec::new(),
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -516,6 +521,7 @@ impl Supervisor {
             m.worktree = prep.worktree.clone();
             m.base_sha = base_sha;
             m.brief = prep.brief.clone();
+            m.related = prep.related.clone();
         });
 
         if self.live.lock().unwrap().get(&id).is_some_and(|l| l.stop_requested) {
@@ -532,6 +538,7 @@ impl Supervisor {
             self.live.lock().unwrap().remove(&id);
             return Ok(());
         }
+        self.wait_room(&id).await;
         let session = self.get(&id)?.session_id;
         let mut cmd = Command::new(&self.cfg.claude_bin);
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]);
@@ -545,6 +552,7 @@ impl Supervisor {
             .arg(prep.tools.join(","))
             // Nobody is watching a run: it decides, notes the choice, or ends blocked.
             .args(["--disallowedTools", "AskUserQuestion"])
+            .args(prep.related.iter().flat_map(|l| ["--add-dir".to_owned(), l.worktree.to_string_lossy().into_owned()]))
             .args(["--max-turns", &prep.max_turns.to_string()])
             .arg("--append-system-prompt")
             .arg(format!("{}{}", runs::RULES, pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))))
@@ -579,6 +587,9 @@ impl Supervisor {
         }
         cmd.current_dir(&prep.worktree)
             .env_remove("CLAUDECODE")
+            // Performance may pause a session for a while: a request that went quiet then is
+            // retried by Claude Code, not dropped.
+            .env("CLAUDE_STREAM_IDLE_TIMEOUT_MS", crate::perf::STREAM_IDLE_MS)
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -769,13 +780,12 @@ impl Supervisor {
                 if changes {
                     say(format!("Landed after {} rounds; the judge still asked for changes. See its findings in the run.", m.round + 1));
                 }
-                let Some(lane) = c.lane.clone() else { return };
                 if c.direct() {
                     let _ = cards::update(&r, m.card, CardPatch { state: Some(CardState::Done), ..Default::default() });
                     return;
                 }
-                if let Err(e) = self.enqueue(&m.repo, &lane, c.target.as_deref()) {
-                    say(format!("Could not put {lane} in line to land: {e:#}"));
+                if let Err(e) = self.land_card(&m.repo, &c, &m.related) {
+                    say(format!("Could not put this card's work in line to land: {e:#}"));
                 }
             }
             _ => {}
@@ -996,7 +1006,14 @@ impl Supervisor {
         let meta = self.get(&id)?;
         let worktree = meta.worktree.clone();
         let label = meta.card;
-        let checkpoint = tokio::task::spawn_blocking(move || checkpoint(&worktree, label)).await?;
+        let also: Vec<PathBuf> = meta.related.iter().map(|l| l.worktree.clone()).collect();
+        let checkpoint = tokio::task::spawn_blocking(move || {
+            for w in &also {
+                let _ = checkpoint(w, label);
+            }
+            checkpoint(&worktree, label)
+        })
+        .await?;
         if let Ok(Some(sha)) = &checkpoint {
             self.emit(&id, RunEvent::Note { text: format!("Committed the work so far as {sha} before handing off.") });
         }
@@ -1106,7 +1123,7 @@ impl Supervisor {
         let mut out = pit_core::verify::JudgeRun { model: model.clone(), ..Default::default() };
         let prompt = (|| -> Result<String> {
             let c = cards::get(r, card)?;
-            let diff = pit_core::verify::lane_diff(r, &meta.branch, 200_000, None)?;
+            let diff = pit_core::verify::project_diff(r, &meta.branch, &meta.related, 200_000)?;
             let decisions = fs::read_to_string(cards::decisions_path(r)).unwrap_or_default();
             Ok(pit_core::verify::judge_prompt(&c, &decisions, &diff, proofs))
         })();
@@ -1121,6 +1138,9 @@ impl Supervisor {
         let account = routing.as_ref().and_then(|rt| rt.account(&meta.account).cloned());
         let mut args: Vec<String> = read_only_args(&mode_for(&meta.repo));
         args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)".into(), "--max-turns".into(), "30".into()]);
+        for l in &meta.related {
+            args.extend(["--add-dir".into(), l.worktree.to_string_lossy().into_owned()]);
+        }
         args.extend(["--append-system-prompt".into(), pit_core::verify::JUDGE_RULES.into(), "--json-schema".into(), pit_core::verify::verdict_schema().to_string()]);
         if let Some(m) = &model {
             args.extend(["--model".into(), m.clone()]);
@@ -1194,10 +1214,19 @@ impl Supervisor {
             }));
         }
         let mut results = Vec::new();
+        // Sibling repositories the cards' code lives in: what the analysts named, and what their
+        // notes mention, that exist next to this one and are not configured yet.
+        let mut found: Vec<String> = Vec::new();
         for t in tasks {
             let Ok((id, out)) = t.await else { continue };
             results.push(match out.and_then(|(a, cost)| {
                 let (q, n) = (a.questions.len(), a.notes.len());
+                let text = format!("{}\n{}", a.repos.join(" "), a.notes.join("\n"));
+                for rel in pit_core::related::mentioned(&r, &text) {
+                    if !found.contains(&rel) {
+                        found.push(rel);
+                    }
+                }
                 pit_core::analyze::record(&r, id, a)?;
                 Ok((q, n, cost))
             }) {
@@ -1205,12 +1234,18 @@ impl Supervisor {
                 Err(e) => serde_json::json!({ "card": id, "error": format!("{e:#}") }),
             });
         }
-        Ok(serde_json::json!({ "analyzed": results }))
+        // Added now, shown on the Run sheet, where the person can take any of them off.
+        let repos_error = if found.is_empty() { None } else { pit_core::related::add(&r, &found).err().map(|e| format!("{e:#}")) };
+        Ok(serde_json::json!({ "analyzed": results, "repos_added": found, "repos_error": repos_error }))
     }
 
     async fn analyst(&self, repo: &Path, card: &cards::Card, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
         let mut args: Vec<String> = read_only_args(&mode_for(repo));
         args.extend(["--allowedTools".into(), "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)".into(), "--max-turns".into(), "25".into()]);
+        // Read-only: it may look at sibling repositories, where a project's code often lives.
+        if let Some(parent) = repo.parent() {
+            args.extend(["--add-dir".into(), parent.to_string_lossy().into_owned()]);
+        }
         args.extend(["--append-system-prompt".into(), pit_core::analyze::RULES.into(), "--json-schema".into(), pit_core::analyze::schema().to_string()]);
         if let Some(m) = model {
             args.extend(["--model".into(), m.into()]);
@@ -1394,6 +1429,7 @@ impl Supervisor {
             parent: side.parent.clone(),
             autopilot: false,
             extensions: 0,
+            related: Vec::new(),
         };
         fs::create_dir_all(self.dir(&id))?;
         self.write_meta(&meta)?;
@@ -1438,6 +1474,9 @@ impl Supervisor {
         }
         cmd.current_dir(&side.cwd)
             .env_remove("CLAUDECODE")
+            // Performance may pause a session for a while: a request that went quiet then is
+            // retried by Claude Code, not dropped.
+            .env("CLAUDE_STREAM_IDLE_TIMEOUT_MS", crate::perf::STREAM_IDLE_MS)
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1583,6 +1622,20 @@ impl Supervisor {
                     cards::update(&r, card, CardPatch { state: Some(CardState::Done), ..Default::default() })?;
                     return Ok(serde_json::json!({ "card": card, "landed_in": branch }));
                 }
+                // The related repositories' lanes go first; the card moves when this one lands.
+                if let Some(l) = &last
+                    && !l.related.is_empty()
+                {
+                    for rl in &l.related {
+                        let ahead = Repo::open(&rl.root, &home_dir(), &self.cfg.home).ok().and_then(|rr| {
+                            let t = c.target.clone().unwrap_or_else(|| rr.flow.flow.integration.clone());
+                            rr.git.run(&["rev-list", "--count", &format!("{t}..{}", rl.branch)]).ok()?.trim().parse::<u32>().ok()
+                        });
+                        if ahead != Some(0) {
+                            self.enqueue_for(&rl.root, &rl.branch, c.target.as_deref(), Some((card, repo.clone())))?;
+                        }
+                    }
+                }
                 let job = self.enqueue(&repo, &branch, c.target.as_deref())?;
                 Ok(serde_json::json!({ "card": card, "job": job, "shipped_to": job.target }))
             }
@@ -1593,6 +1646,29 @@ impl Supervisor {
 
     /// Puts a lane in line to ship into `to` (default: its next stage). One open job per lane.
     pub fn enqueue(&self, repo: &Path, branch: &str, to: Option<&str>) -> Result<pit_core::queue::ShipJob> {
+        self.enqueue_for(repo, branch, to, None)
+    }
+
+    /// A card's work, here and in its related repositories, in line to land in its Into branch:
+    /// the related lanes first (those with commits of their own), this repository's last, so the
+    /// card moves once all of it is in.
+    fn land_card(&self, repo: &Path, c: &cards::Card, related: &[pit_core::related::RelatedLane]) -> Result<()> {
+        let lane = c.lane.clone().context("this card has no lane to ship")?;
+        for l in related {
+            let Ok(rr) = Repo::open(&l.root, &home_dir(), &self.cfg.home) else { continue };
+            let target = c.target.clone().unwrap_or_else(|| rr.flow.flow.integration.clone());
+            let ahead = rr.git.run(&["rev-list", "--count", &format!("{target}..{}", l.branch)]).ok().and_then(|n| n.trim().parse::<u32>().ok());
+            if ahead == Some(0) {
+                continue;
+            }
+            self.enqueue_for(&l.root, &l.branch, c.target.as_deref(), Some((c.id, repo.to_path_buf())))?;
+        }
+        self.enqueue(repo, &lane, c.target.as_deref())?;
+        Ok(())
+    }
+
+    /// `card`: the card and the repository whose board holds it, for a related repository's lane.
+    pub fn enqueue_for(&self, repo: &Path, branch: &str, to: Option<&str>, card: Option<(u32, PathBuf)>) -> Result<pit_core::queue::ShipJob> {
         use pit_core::queue::{JobState, ShipJob};
         let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
         if r.flow.flow.is_trunk(branch) {
@@ -1603,7 +1679,10 @@ impl Supervisor {
             Some(t) => t.to_owned(),
             None => actions::plan_ship(&r, branch, None, false)?.target,
         };
-        let card = cards::list(&r).ok().and_then(|(all, _)| all.into_iter().find(|c| c.lane.as_deref() == Some(branch)).map(|c| c.id));
+        let (card, card_repo) = match card {
+            Some((id, board)) => (Some(id), Some(board)),
+            None => (cards::list(&r).ok().and_then(|(all, _)| all.into_iter().find(|c| c.lane.as_deref() == Some(branch)).map(|c| c.id)), None),
+        };
         let job = {
             let mut q = self.queue.lock().unwrap();
             if let Some(open) = q.iter().find(|j| j.repo == r.root && j.branch == branch && j.state.is_open()) {
@@ -1621,6 +1700,7 @@ impl Supervisor {
                 conflicts: Vec::new(),
                 error: None,
                 card,
+                card_repo,
             };
             q.push(job.clone());
             pit_core::queue::save(&self.cfg.home, &q)?;
@@ -1659,6 +1739,79 @@ impl Supervisor {
         j.state = JobState::Removed;
         j.finished_at = Some(now_secs());
         pit_core::queue::save(&self.cfg.home, &q)
+    }
+
+    /// The Performance governor: samples the Mac every 2 s and pauses, resumes and throttles
+    /// the agents to fit the mode (see `perf`).
+    pub fn start_perf(self: &Arc<Self>) {
+        self.perf.enable();
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                let sessions: Vec<crate::perf::LiveSession> =
+                    me.live.lock().unwrap().values().map(|l| crate::perf::LiveSession { meta: l.meta.clone() }).collect();
+                let m = Arc::clone(&me);
+                let notes = tokio::task::spawn_blocking(move || m.perf.tick(&sessions)).await.unwrap_or_default();
+                for (id, text) in notes {
+                    me.emit(&id, RunEvent::Note { text });
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    }
+
+    /// Pauses (`hold`) or resumes a session by hand, from the Performance screen.
+    pub fn perf_hold(&self, id: &str, hold: bool) -> Result<bool> {
+        let (pid, card, title) = {
+            let live = self.live.lock().unwrap();
+            let m = &live.get(id).with_context(|| format!("run {id} is not running"))?.meta;
+            (m.pid, m.card, m.card_title.clone())
+        };
+        if hold {
+            let pid = pid.context("its agent has not started yet")?;
+            let done = self.perf.hold(id, pid);
+            if done {
+                self.perf.log_manual("paused_you", card, &title);
+                self.emit(id, RunEvent::Note { text: "Paused by you from Performance. Nothing is lost; Resume continues where it was.".into() });
+            }
+            Ok(done)
+        } else {
+            let done = self.perf.release(id, pid);
+            if done {
+                self.perf.log_manual("resumed_you", card, &title);
+                self.emit(id, RunEvent::Note { text: "Resumed by you from Performance.".into() });
+            }
+            Ok(done)
+        }
+    }
+
+    /// A card's run waits here, before its agent starts, while the mode or the memory has no
+    /// room for one more. Stop ends the wait.
+    async fn wait_room(&self, id: &str) {
+        if !self.perf.enabled() {
+            return;
+        }
+        let mut said = false;
+        loop {
+            let working = self
+                .live
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|l| l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.pid.is_some() && !self.perf.is_held(&l.meta.id))
+                .count() as u32;
+            let allowed = self.perf.allowed();
+            if working < allowed || self.stop_requested(id) {
+                break;
+            }
+            if !said {
+                said = true;
+                self.perf.set_waiting(id, true);
+                self.emit(id, RunEvent::Note { text: format!("Waiting for room: Performance lets {allowed} card(s) work at once right now. It starts as soon as one ends or there is room.") });
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        self.perf.set_waiting(id, false);
     }
 
     pub fn start_queue(self: &Arc<Self>) {
@@ -1729,7 +1882,8 @@ impl Supervisor {
     /// resolves the conflicts itself, then the card lands as usual. Past the last round it waits.
     fn conflict_round(self: &Arc<Self>, job: &pit_core::queue::ShipJob, files: &[String]) {
         let Some(card) = job.card else { return };
-        let Ok(r) = Repo::open(&job.repo, &home_dir(), &self.cfg.home) else { return };
+        let board_repo = job.card_repo.clone().unwrap_or_else(|| job.repo.clone());
+        let Ok(r) = Repo::open(&board_repo, &home_dir(), &self.cfg.home) else { return };
         let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| l.into_iter().filter(|m| m.card == card && m.kind == SessionKind::Run).max_by_key(|m| (m.round, m.started_at))) else { return };
         if !last.autopilot {
             return;
@@ -1739,16 +1893,24 @@ impl Supervisor {
             let _ = cards::update(&r, card, CardPatch { state: Some(CardState::Blocked), ..Default::default() });
             return;
         }
+        // In a related repository the merge happens in that repository's worktree.
+        let place = match &job.card_repo {
+            Some(_) => Repo::open(&job.repo, &home_dir(), &self.cfg.home)
+                .and_then(|rr| actions::ensure_worktree(&rr, &job.branch))
+                .map(|w| format!(" (in `{}`, use `git -C` there)", w.display()))
+                .unwrap_or_default(),
+            None => String::new(),
+        };
         let msg = format!(
             "Your work could not land: {} changed meanwhile and conflicts with it in {}. Pitlane asks you to \
-             bring it in now: run `git merge {}`, resolve every conflict keeping both sides' intent, run the narrowest \
+             bring it in now{place}: run `git merge {}`, resolve every conflict keeping both sides' intent, run the narrowest \
              checks for what you touched, commit the merge, and end with the handoff.",
             job.target,
             files.join(", "),
             job.target
         );
         let opts = StartOpts { autopilot: true, round: last.round + 1, message: Some(msg), ..Default::default() };
-        if let Err(e) = self.start(job.repo.clone(), card, Some(last.id.clone()), opts) {
+        if let Err(e) = self.start(board_repo.clone(), card, Some(last.id.clone()), opts) {
             let _ = cards::note(&r, card, "pitlane", &format!("The conflict round did not start: {e:#}"));
         }
     }
@@ -1818,7 +1980,9 @@ impl Supervisor {
                 .collect()
         };
         let n = pids.len();
-        for (_, pid) in &pids {
+        for (id, pid) in &pids {
+            // A paused session hears nothing until it runs again.
+            self.perf.release(id, Some(*pid));
             signal(*pid, libc::SIGINT);
         }
         let me = Arc::clone(self);
@@ -1855,6 +2019,7 @@ impl Supervisor {
                 signal(pid, libc::SIGKILL);
             }
         }
+        self.perf.release_all();
         let _ = fs::remove_file(runs::socket_path(&self.cfg.home));
         std::process::exit(0)
     }
@@ -1874,6 +2039,7 @@ impl Supervisor {
         }
         // Still preparing its worktree, or being checked: `drive` and `verify` see the request.
         let Some(pid) = pid else { return Ok(()) };
+        self.perf.release(id, Some(pid));
         signal(pid, libc::SIGINT);
         let me = Arc::clone(self);
         let run = id.to_owned();
@@ -1997,6 +2163,8 @@ struct Prepared {
     model: Option<String>,
     /// The card's images, sent with the briefing.
     images: Vec<(&'static str, Vec<u8>)>,
+    /// The same branch in the project's related repositories.
+    related: Vec<pit_core::related::RelatedLane>,
 }
 
 /// The card's lane and worktree, made when missing, and what the agent is launched with.
@@ -2067,6 +2235,8 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
     tools.push("mcp__pitlane_run__note".into());
     tools.extend(r.flow.run.allow.iter().cloned());
     let the_card = cards::get(&r, card)?;
+    // The same branch in each related repository, made and landed like this one.
+    let related = pit_core::related::prepare(&r, &branch, the_card.target.as_deref(), the_card.direct(), &note);
     // Where to look, from the index. A failure here never stops the run; it runs without the map.
     let map = if brief && r.flow.run.brief {
         match pit_core::brief::compile(&r, home, &the_card, pit_core::brief::DEFAULT_BUDGET) {
@@ -2088,11 +2258,18 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
     };
     Ok(Prepared {
         images: cards::image_bytes(&r, &the_card),
+        related: related.clone(),
         branch,
         worktree: worktree.clone(),
         brief: map.as_ref().map(|b| b.stats.clone()),
         briefing: {
             let mut b = runs::briefing(&r, &the_card);
+            let also = pit_core::related::briefing(&related);
+            if !also.is_empty() {
+                let end = "\nWhen you finish, end with the handoff.\n";
+                let at = b.rfind(end).unwrap_or(b.len());
+                b.insert_str(at, &also);
+            }
             if let Some(m) = &map {
                 let end = "\nWhen you finish, end with the handoff.\n";
                 let at = b.rfind(end).unwrap_or(b.len());

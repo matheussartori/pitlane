@@ -14,7 +14,7 @@ use tempfile::TempDir;
 
 /// One result per user message, like the real CLI; exits when stdin closes.
 /// FAKE_MODE=slow waits on SIGINT before answering; FAKE_MODE=ask ends blocked with a question;
-/// FAKE_MODE=ask-done finishes and asks anyway.
+/// FAKE_MODE=ask-done finishes and asks anyway; FAKE_MODE=related commits in the related repo.
 const FAKE: &str = r#"#!/bin/bash
 # The judge, a side session: one prompt line on stdin, one result. FAKE_VERDICT picks the verdict.
 if [[ " $* " == *" --permission-prompts none "* ]]; then
@@ -36,6 +36,11 @@ while IFS= read -r line; do
     sleep 0.5
     if [ "$FAKE_MODE" = "ask" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"blocked","summary":"Need a limit.","questions":[{"text":"Which limit?","options":["256 KB","1 MB"],"recommended":0}]}}'
+    elif [ "$FAKE_MODE" = "related" ]; then
+      echo "$*" > "$PWD/.args"
+      p=$(grep -o -- '- games: `[^`]*`' "$PWD/.briefing-seen" | head -1 | sed 's/.*`\(.*\)`/\1/')
+      echo "fixed" > "$p/fix.txt" && git -C "$p" add fix.txt && git -C "$p" -c user.name=T -c user.email=t@example.com commit -qm "fix in games"
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Fixed it in games."}}'
     elif [ "$FAKE_MODE" = "ask-done" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"done","summary":"Did it.","questions":[{"text":"Also the studio?","options":["No","Yes"],"recommended":0}]}}'
     elif [ "$FAKE_MODE" = "self-turn" ]; then
@@ -601,6 +606,72 @@ async fn run_all_fixes_and_lands_on_its_own() {
     git(&fx.repo, &["fetch", "-q", "origin"]);
     let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
     assert!(merged.success(), "feat/x is in origin/dev");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_related_repository_gets_the_branch_and_lands_too() {
+    let fx = fx();
+    let top = fx.home.parent().unwrap().to_path_buf();
+    // A sibling repository with a remote, where the card's code really lives.
+    let games = top.join("games");
+    let origin = top.join("games-origin.git");
+    git(&top, &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+    git(&top, &["init", "-q", "-b", "main", games.to_str().unwrap()]);
+    for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
+        git(&games, &["config", k, v]);
+    }
+    fs::write(games.join("engine.ts"), "export {};\n").unwrap();
+    // Its worktrees stay in the test's folder, never in the real ~/.pitlane.
+    fs::create_dir_all(games.join(".pitlane")).unwrap();
+    fs::write(games.join(".pitlane/flow.toml"), format!("[worktree]\nroot = \"{}\"\n", top.join("wt/{repo}/{branch}").display())).unwrap();
+    git(&games, &["add", "-A"]);
+    git(&games, &["commit", "-qm", "init"]);
+    git(&games, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&games, &["push", "-q", "origin", "main"]);
+    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap() + "\n[project]\nrepos = [\"../games\"]\n";
+    fs::write(fx.repo.join(".pitlane/flow.toml"), flow).unwrap();
+    git(&fx.repo, &["branch", "feat/day"]);
+    let id = card(&fx, "Fix the engine");
+    let r = Repo::open(&fx.repo, &top, &fx.home).unwrap();
+    cards::update(&r, id, CardPatch { target: Some(Some("feat/day".into())), ..Default::default() }).unwrap();
+
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: {
+            let wrapper = fx.fake.with_file_name("fake-related");
+            fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=related exec {} \"$@\"\n", fx.fake.display())).unwrap();
+            Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+            wrapper.to_string_lossy().into_owned()
+        },
+        pit_bin: None,
+    });
+    s.start_queue();
+    let meta = s.start(fx.repo.clone(), id, None, pitd::supervisor::StartOpts { autopilot: true, ..Default::default() }).unwrap();
+    let end = wait_end(&s, &meta.id).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    let notes: Vec<String> = s.subscribe(&meta.id, 0).unwrap().replay.into_iter().filter_map(|(_, e)| match e {
+        RunEvent::Note { text } => Some(text),
+        _ => None,
+    }).collect();
+    assert_eq!(end.related.len(), 1, "{notes:#?}");
+    let lane = &end.related[0];
+    assert_eq!((lane.name.as_str(), lane.branch.as_str()), ("games", "feat/x"));
+    let args = fs::read_to_string(end.worktree.join(".args")).unwrap();
+    assert!(args.contains("--add-dir") && args.contains(&lane.worktree.to_string_lossy().into_owned()), "{args}");
+    assert!(fs::read_to_string(end.worktree.join(".briefing-seen")).unwrap().contains("Related repositories"));
+
+    // It lands in feat/day in both repositories, made in games from a fresh origin/main.
+    let mut state = CardState::Running;
+    for _ in 0..400 {
+        state = card_state(&fx, id).0;
+        if state == CardState::Done || state == CardState::InDev || state == CardState::Blocked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(matches!(state, CardState::Done | CardState::InDev), "{state:?} {:?}", s.queue_list(None));
+    let has = Command::new("git").arg("-C").arg(&games).args(["cat-file", "-e", "feat/day:fix.txt"]).status().unwrap();
+    assert!(has.success(), "the fix made in games landed in games' feat/day");
 }
 
 async fn wait_job(s: &Arc<Supervisor>, id: &str) -> pit_core::queue::ShipJob {

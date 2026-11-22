@@ -48,6 +48,9 @@ pub struct ShipJob {
     /// The card worked on this lane, moved along when the lane lands.
     #[serde(default)]
     pub card: Option<u32>,
+    /// For a related repository's lane: the repository whose board holds `card`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_repo: Option<PathBuf>,
 }
 
 /// What shipping one job came to.

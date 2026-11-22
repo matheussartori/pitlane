@@ -914,3 +914,5 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 .q-card[open] > summary { margin-bottom: var(--space-xs); }
 .q-card-body { display: grid; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); max-height: 50vh; overflow: auto; }
 .q-card-body .prose { font-size: var(--text-md); }
+.run-all-repos { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3xs); }
+.run-all-repos li { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-sm); }
