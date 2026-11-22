@@ -568,7 +568,8 @@ export async function startTerminals() {
       } else if (place && existing.length === 0 && reopened < 16) {
         try {
           // A resumed Claude Code session comes back resumed; a shell comes back a shell.
-          const info = place.run ? await terms.resume(place.run, 100, 30).catch(() => terms.open(place.cwd, place.label, 100, 30)) : await terms.open(place.cwd, place.label, 100, 30);
+          const [cols, rows] = guessSize(undefined, share(t.root, old) ?? undefined);
+          const info = place.run ? await terms.resume(place.run, cols, rows).catch(() => terms.open(place.cwd, place.label, cols, rows)) : await terms.open(place.cwd, place.label, cols, rows);
           make(info, info.session ? place.run : undefined);
           map.set(old, info.id);
           placed.add(info.id);
@@ -599,11 +600,47 @@ export async function startTerminals() {
   window.addEventListener("pitlane-theme", () => requestAnimationFrame(retheme));
 }
 
+/** The size a new shell will have, before its pane exists. A shell born wider than its pane draws
+ *  zsh's partial-line mark (PROMPT_SP: a "%" and a row of spaces) across two rows, and the "%"
+ *  stays on screen; so the guess leans narrow, and the real size follows once the pane is laid out. */
+/** A pane's share of its tab, across and down. */
+function share(n: Node, term: number): [number, number] | null {
+  if (n.kind === "pane") return n.term === term ? [1, 1] : null;
+  for (let i = 0; i < n.children.length; i++) {
+    const f = share(n.children[i]!, term);
+    if (f) return n.dir === "row" ? [f[0] * n.sizes[i]!, f[1]] : [f[0], f[1] * n.sizes[i]!];
+  }
+  return null;
+}
+
+function guessSize(split?: Dir, part?: [number, number]): [number, number] {
+  const c = document.createElement("canvas").getContext("2d");
+  let cw = st.font * 0.6;
+  if (c) {
+    c.font = `${st.font}px ${faceCss(st.face)}`;
+    cw = c.measureText("W".repeat(20)).width / 20 || cw;
+  }
+  const ch = Math.ceil(st.font * 1.2) * 1.35;
+  const t = activeTab();
+  const focused = split && t ? document.querySelector<HTMLElement>(`[data-pane="${t.focus}"] .pane-host`) : null;
+  const box = focused ?? document.querySelector<HTMLElement>(".terms-panes") ?? document.querySelector<HTMLElement>(".terms");
+  const r = box?.getBoundingClientRect();
+  // Off screen: the window less the rail, the tab list and the frame.
+  let w = r?.width || window.innerWidth - 330;
+  let h = r?.height || window.innerHeight - 70;
+  if (!focused) (w -= 28), (h -= 24); // the pane body's padding
+  if (split === "row") w = w / 2 - 28;
+  if (split === "col") h = h / 2 - 24 - 28;
+  if (split && t && panesOf(t.root).length === 1) h -= 28; // bars appear once a tab splits
+  if (part && (part[0] < 1 || part[1] < 1)) (w *= part[0]), (h = h * part[1] - 28);
+  return [Math.max(20, Math.floor(w / cw) - 1), Math.max(4, Math.floor(h / ch))];
+}
+
 /** Opens a terminal in `cwd`, in a new tab, and shows it. */
 export async function openTerminal(cwd: string, label: string): Promise<boolean> {
   selectAgent(null);
   try {
-    const info = await terms.open(cwd, label, 100, 30);
+    const info = await terms.open(cwd, label, ...guessSize());
     make(info);
     const id = nextTab++;
     setSt(produce((s) => (s.tabs.push({ id, name: null, root: pane(info.id), focus: info.id, zoom: false }), (s.active = id))));
@@ -619,7 +656,7 @@ export async function openTerminal(cwd: string, label: string): Promise<boolean>
 export async function resumeInTerminal(run: string): Promise<boolean> {
   selectAgent(null);
   try {
-    const info = await terms.resume(run, 100, 30);
+    const info = await terms.resume(run, ...guessSize());
     make(info, run);
     const id = nextTab++;
     setSt(produce((s) => (s.tabs.push({ id, name: null, root: pane(info.id), focus: info.id, zoom: false }), (s.active = id))));
@@ -636,7 +673,7 @@ async function split(dir: Dir) {
   if (!tb) return;
   const from = meta[tb.focus];
   try {
-    const info = await terms.open(from?.cwd ?? "", from?.label ?? "terminal", 100, 30);
+    const info = await terms.open(from?.cwd ?? "", from?.label ?? "terminal", ...guessSize(dir));
     make(info);
     // As in Warp: the panes along the split share the room equally, however many there are.
     setTab(tb.id, (x) => {
