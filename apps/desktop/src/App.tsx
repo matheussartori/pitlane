@@ -325,6 +325,61 @@ export default function App() {
     }
   }
 
+  // Run all: starts the Backlog's cards one after another, staying on the Board. A paid option
+  // stops the loop and asks once; the cards after it wait for that yes.
+  const [runningAll, setRunningAll] = createSignal(false);
+  async function runAll(ids: number[], held: { id: number; why: string }[], allowApiKey = false) {
+    const path = repo();
+    if (!path || runningAll() || ids.length === 0) return;
+    setRunningAll(true);
+    const started: number[] = [];
+    const failed: { id: number; why: string }[] = [];
+    let paid: { reason: string; rest: number[] } | null = null;
+    try {
+      for (const [i, id] of ids.entries()) {
+        try {
+          const m = await api.runStart(path, id, allowApiKey);
+          void api.runFollow(m.id, 0).catch(() => {});
+          started.push(id);
+        } catch (e) {
+          const text = msg(e);
+          if (text.startsWith(NEEDS_API_KEY)) {
+            paid = { reason: text.slice(NEEDS_API_KEY.length), rest: ids.slice(i) };
+            break;
+          }
+          failed.push({ id, why: text.split("\n")[0]! });
+        }
+      }
+    } finally {
+      setRunningAll(false);
+      await loadRuns();
+      void loadCards();
+    }
+    const list = (xs: number[]) => xs.map((x) => `#${x}`).join(", ");
+    if (started.length > 0) {
+      const wait = held.length > 0 ? ` ${held.map((h) => `#${h.id}`).join(", ")} wait: ${held[0]!.why.charAt(0).toLowerCase()}${held[0]!.why.slice(1)}.` : "";
+      toast({
+        tone: "done",
+        title: `Started ${started.length} ${started.length === 1 ? "card" : "cards"}`,
+        body: `${list(started)} run in their own worktrees.${wait}`,
+      });
+    }
+    if (failed.length > 0)
+      toast({ tone: "fail", title: `${list(failed.map((f) => f.id))} did not start`, body: failed[0]!.why }, 0);
+    if (paid) {
+      const rest = paid.rest;
+      toast(
+        {
+          tone: "info",
+          title: `Only the API key can take ${list(rest)} now`,
+          body: `${paid.reason}. It is paid per token.`,
+          action: { label: "Use the API key", run: () => void runAll(rest, [], true) },
+        },
+        0,
+      );
+    }
+  }
+
   async function switchTo(path: string) {
     setMenu(false);
     if (path === repo()) return;
@@ -746,6 +801,8 @@ export default function App() {
                       else setSheet({ kind: "card", id });
                     }}
                     onNew={() => setSheet({ kind: "new-card" })}
+                    onRunAll={(ids, held) => void runAll(ids, held)}
+                    runningAll={runningAll()}
                   />
                 </Match>
                 <Match when={tab() === "ledger"}>

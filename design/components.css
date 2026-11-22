@@ -138,17 +138,32 @@
 
 /* ---------- Board ---------- */
 .board { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: var(--space-md); min-width: 0; overflow-x: auto; }
-.col { display: grid; align-content: start; gap: var(--space-2xs); min-width: 0; }
-.col-head { display: flex; align-items: center; gap: var(--space-xs); height: 24px; padding-inline: var(--space-3xs); font: var(--weight-strong) var(--text-sm)/1 var(--font-body); color: var(--color-muted); }
+/* Each column is a well: sunk, ringed, so four groups read as four places, not one stream. */
+.col { display: grid; align-content: start; gap: var(--space-xs); min-width: 0; padding: var(--space-2xs) var(--space-xs) var(--space-xs); background: var(--color-paper-sunk); border-radius: var(--radius-lg); box-shadow: var(--ring); }
+.col-head { display: flex; align-items: center; gap: var(--space-xs); height: 30px; padding-inline: var(--space-2xs); font: var(--weight-strong) var(--text-sm)/1 var(--font-body); color: var(--color-ink-2); }
+.col-head > .icon { color: var(--color-muted); }
+.col-head[data-hot] > .icon { color: var(--color-accent-text); }
 .col-head .count { margin-inline-start: auto; }
-.card { display: grid; gap: var(--space-2xs); padding: var(--space-xs) var(--space-sm); background: var(--color-paper-2); border-radius: var(--radius-md); box-shadow: var(--ring); cursor: pointer; min-width: 0;
-  transition: box-shadow var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out); }
-.card:hover, .card.is-hover { box-shadow: var(--ring-strong); }
+.col-head .count + .col-action { margin-inline-start: 0; }
+/* The one action a column offers (Run all on the Backlog): quiet text, never a second primary. */
+.col-action { height: 22px; padding-inline: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink); }
+.col-action .icon { color: var(--color-accent-text); }
+.card { display: grid; gap: var(--space-2xs); padding: var(--space-xs) var(--space-sm) var(--space-sm); background: var(--color-paper-2); border-radius: var(--radius-md); box-shadow: var(--ring); cursor: pointer; min-width: 0;
+  transition: box-shadow var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
+.card:hover, .card.is-hover { box-shadow: var(--ring-strong); background: var(--color-paper-3); }
 .card:focus-visible, .card.is-focus { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .card[aria-selected="true"] { box-shadow: inset 0 0 0 1px var(--color-accent); }
-.card-top { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+/* Your move: a 2px stripe on the left, in accent; in fail when what waits is broken. Never a wash. */
+.card[data-state="needs"] { box-shadow: inset 2px 0 0 var(--color-accent), var(--ring); }
+.card[data-state="needs"]:hover { box-shadow: inset 2px 0 0 var(--color-accent), var(--ring-strong); }
+.card[data-state="needs"][data-tone="failed"] { box-shadow: inset 2px 0 0 var(--color-fail), var(--ring); }
+.card[data-state="needs"][data-tone="failed"]:hover { box-shadow: inset 2px 0 0 var(--color-fail), var(--ring-strong); }
+/* Landed work steps back: it is done, the eye goes elsewhere. */
+.card[data-state="landed"] .card-title { color: var(--color-ink-2); font-weight: var(--weight-regular); }
+.card-top { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; min-height: 18px; }
+.card-top .card-id { margin-inline-start: auto; }
 .card-id { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); }
-.card-title { font-weight: var(--weight-strong); font-size: var(--text-md); line-height: 1.35; color: var(--color-ink); }
+.card-title { font-weight: var(--weight-strong); font-size: var(--text-md); line-height: 1.35; color: var(--color-ink); text-wrap: pretty; }
 .card-why { font-size: var(--text-sm); color: var(--color-muted); line-height: 1.4; }
 .card-foot { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; color: var(--color-muted); font-size: var(--text-xs); }
 .card-foot .figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

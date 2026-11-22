@@ -79,6 +79,10 @@ export function BoardView(props: {
   runs: RunMeta[];
   onOpen: (id: number) => void;
   onNew: () => void;
+  /** Starts every card in `ids`; the board has already left out what the planner holds back. */
+  onRunAll: (ids: number[], held: { id: number; why: string }[]) => void;
+  /** True while Run all is starting its cards. */
+  runningAll: boolean;
   /** The planner's view of open cards: which should wait, and for what. */
   plan?: Plan | null;
 }) {
@@ -99,6 +103,15 @@ export function BoardView(props: {
   );
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);
   const needs = () => byColumn("needs").length;
+  // Run all takes the Backlog minus what the planner would hold back (a clash, a lane to land).
+  const backlog = () => byColumn("backlog").filter(({ card }) => !liveRun(card.id) && card.state !== "done");
+  const runnable = () => backlog().filter(({ card }) => !planNote(props.plan, card.id)).map(({ card }) => card.id);
+  const held = () =>
+    backlog().flatMap(({ card }) => {
+      const why = planNote(props.plan, card.id);
+      return why ? [{ id: card.id, why }] : [];
+    });
+  const colIcon = { needs: "needs", backlog: "queued", progress: "run", landed: "done" } as const;
 
   return (
     <div class="board-screen">
@@ -138,18 +151,41 @@ export function BoardView(props: {
             <For each={columns}>
               {(col) => (
                 <section class="col" aria-label={columnTitle[col]}>
-                  <h2 class="col-head">
+                  <h2 class="col-head" data-hot={col === "needs" && byColumn(col).length > 0 ? "" : undefined}>
+                    <Icon name={colIcon[col]} small />
                     {columnTitle[col]}
                     <span class={col === "needs" && byColumn(col).length > 0 ? "count count-hot" : "count"}>
                       {byColumn(col).length}
                     </span>
+                    <Show when={col === "backlog" && backlog().length > 0}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost col-action"
+                        disabled={props.runningAll || runnable().length === 0}
+                        aria-busy={props.runningAll}
+                        title={
+                          runnable().length === 0
+                            ? "The planner holds every backlog card back until earlier work lands"
+                            : held().length > 0
+                              ? `Starts ${runnable().map((i) => `#${i}`).join(", ")}; ${held().map((h) => `#${h.id}`).join(", ")} wait on the planner`
+                              : "Claude Code works every backlog card, each in its own worktree"
+                        }
+                        onClick={() => props.onRunAll(runnable(), held())}
+                      >
+                        <Show when={props.runningAll} fallback={<Icon name="play" small />}>
+                          <Spinner />
+                        </Show>
+                        {props.runningAll ? "Starting" : held().length > 0 && runnable().length > 0 ? "Run ready" : "Run all"}
+                      </button>
+                    </Show>
                   </h2>
                   <Show when={byColumn(col).length > 0} fallback={<p class="col-empty">{columnEmpty[col]}</p>}>
                     <For each={byColumn(col)}>
                       {({ card, p }) => (
                         <article
                           class="card"
-                          data-state={p.column === "needs" ? "needs" : undefined}
+                          data-state={p.column === "needs" ? "needs" : p.column === "landed" ? "landed" : undefined}
+                          data-tone={p.chip === "failed" ? "failed" : undefined}
                           tabindex="0"
                           role="button"
                           aria-label={`Card ${card.id}: ${card.title}`}
