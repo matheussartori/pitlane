@@ -406,7 +406,7 @@ interface Suggestion {
   on?: boolean;
 }
 
-export function AgentPane(props: { onOpenRun: (id: string) => void }) {
+export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?: (id: string) => Promise<boolean> }) {
   const m = () => sessions().find((x) => x.id === selected()?.id) ?? null;
   const sub = () => selected()?.sub ?? null;
   const subLabel = () => {
@@ -535,6 +535,47 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
       toast({ tone: "fail", title: t("The agent did not get it"), body: msg(e) });
     }
   };
+  // Continue in Claude Code. A live session is stopped first (and asked once): two Claude Codes
+  // must never write the same session.
+  const [taking, setTaking] = createSignal<"ask" | "stopping" | null>(null);
+  let askTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(askTimer));
+  createEffect(on(() => selected()?.id, () => setTaking(null)));
+  const takeOver = async () => {
+    const mm = m();
+    if (!mm || !props.onContinue || taking() === "stopping") return;
+    if (live(mm) && taking() !== "ask") {
+      setTaking("ask");
+      clearTimeout(askTimer);
+      askTimer = setTimeout(() => taking() === "ask" && setTaking(null), 5000);
+      return;
+    }
+    const id = mm.id;
+    if (live(mm)) {
+      setTaking("stopping");
+      try {
+        await api.runStop(id);
+      } catch (e) {
+        setTaking(null);
+        toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) });
+        return;
+      }
+      const until = Date.now() + 20_000;
+      while (Date.now() < until && sessions().some((x) => x.id === id && live(x))) {
+        await new Promise((r) => setTimeout(r, 300));
+        await refreshAgents().catch(() => {});
+      }
+      if (sessions().some((x) => x.id === id && live(x))) {
+        setTaking(null);
+        toast({ tone: "fail", title: t("It is still stopping"), body: t("Try again once the agent has stopped.") });
+        return;
+      }
+    }
+    setTaking(null);
+    keep(id, true);
+    await props.onContinue(id);
+  };
+
   const stop = async () => {
     const mm = m();
     if (!mm || !live(mm)) return;
@@ -574,6 +615,19 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
               {[since(mm()), mm().cost_usd != null ? `$${mm().cost_usd!.toFixed(2)}` : null].filter(Boolean).join("  ·  ")}
             </span>
             <span class="ag-bar-fill" />
+            <Show when={props.onContinue && mm().session_id}>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                data-confirm={taking() === "ask" ? "" : undefined}
+                disabled={taking() === "stopping"}
+                title={live(mm()) ? t("Stop the agent here and go on with this session in Claude Code, in a terminal tab") : t("Resume this session in Claude Code, in a terminal tab")}
+                onClick={() => void takeOver()}
+              >
+                <Icon name="spark" small />{" "}
+                {taking() === "ask" ? t("Stop it and continue?") : taking() === "stopping" ? t("Stopping…") : t("Continue in Claude Code")}
+              </button>
+            </Show>
             <Show when={(mm().kind ?? "run") === "run"}>
               <button type="button" class="btn btn-ghost" onClick={() => props.onOpenRun(mm().id)}>
                 {t("Open run")}

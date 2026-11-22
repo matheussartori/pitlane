@@ -8,6 +8,7 @@ export default {
   "{name} is waiting": "{name} está esperando",
   "The program stopped and may be waiting for you.": "O programa parou e pode estar esperando por você.",
   "No terminal": "Sem terminal",
+  "Could not open it in Claude Code": "Não deu para abrir no Claude Code",
   "terminal": "terminal",
   "Tab name": "Nome da aba",
   "Double-click to rename": "Clique duas vezes para renomear",

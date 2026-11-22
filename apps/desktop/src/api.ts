@@ -432,6 +432,8 @@ export const files = {
 
 export interface TermInfo {
   id: number;
+  /** The Claude Code session this terminal resumed, if it is one. */
+  session?: string;
   cwd: string;
   label: string;
   exited: number | null;
@@ -439,6 +441,8 @@ export interface TermInfo {
 
 export const terms = {
   open: (cwd: string, label: string, cols: number, rows: number) => invoke<TermInfo>("term_open", { cwd, label, cols, rows }),
+  /** Claude Code resumes an agent's ended session, in its folder and on its account. */
+  resume: (run: string, cols: number, rows: number) => invoke<TermInfo>("term_resume", { run, cols, rows }),
   write: (id: number, data: string) => invoke<void>("term_write", { id, data }),
   resize: (id: number, cols: number, rows: number) => invoke<void>("term_resize", { id, cols, rows }),
   close: (id: number) => invoke<void>("term_close", { id }),

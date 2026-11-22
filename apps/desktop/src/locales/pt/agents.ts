@@ -192,4 +192,11 @@ export default {
   "for commands": "para comandos",
   "Model set to {model}": "Modelo trocado para {model}",
   "Effort set to {level}": "Effort definido como {level}",
+  "Continue in Claude Code": "Continuar no Claude Code",
+  "Stop it and continue?": "Parar e continuar?",
+  "Stopping…": "Parando…",
+  "It is still stopping": "Ainda está parando",
+  "Try again once the agent has stopped.": "Tente de novo quando o agente tiver parado.",
+  "Stop the agent here and go on with this session in Claude Code, in a terminal tab": "Para o agente aqui e segue com esta sessão no Claude Code, numa aba de terminal",
+  "Resume this session in Claude Code, in a terminal tab": "Retoma esta sessão no Claude Code, numa aba de terminal",
 } as Record<string, string>;

@@ -12,6 +12,13 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+/// A program a terminal starts instead of a bare shell.
+pub struct Program {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub session: Option<String>,
+}
+
 /// Where a terminal's output and exit go: the app's events, or a test.
 pub enum Out {
     Data(u32, String),
@@ -46,6 +53,9 @@ struct Term {
 #[derive(Debug, Clone, Serialize)]
 pub struct TermInfo {
     pub id: u32,
+    /// The Claude Code session this terminal resumed (`claude --resume`), if it is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     pub cwd: String,
     /// What the tab says: the folder, or the lane's branch.
     pub label: String,
@@ -72,6 +82,12 @@ struct ExitOut {
 
 impl Terms {
     pub fn open(&self, sink: Sink, cwd: &str, label: &str, cols: u16, rows: u16) -> Result<TermInfo> {
+        self.launch(sink, cwd, label, cols, rows, None)
+    }
+
+    /// A terminal that starts a program (Claude Code resuming a session), then leaves you in your
+    /// shell in the same folder when it ends.
+    pub fn launch(&self, sink: Sink, cwd: &str, label: &str, cols: u16, rows: u16, program: Option<Program>) -> Result<TermInfo> {
         if !Path::new(cwd).is_dir() {
             bail!("{cwd} is not a folder");
         }
@@ -79,8 +95,25 @@ impl Terms {
             .openpty(PtySize { rows: rows.max(2), cols: cols.max(10), pixel_width: 0, pixel_height: 0 })
             .context("could not open a terminal")?;
         let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/zsh".into());
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-l");
+        let session = program.as_ref().and_then(|p| p.session.clone());
+        let mut cmd = match &program {
+            None => {
+                let mut c = CommandBuilder::new(&shell);
+                c.arg("-l");
+                c
+            }
+            // The words go as arguments, never through a shell's parsing: "$@" runs them as given.
+            Some(p) => {
+                let mut c = CommandBuilder::new("/bin/sh");
+                c.args(["-c", "\"$@\"; exec \"${SHELL:-/bin/zsh}\" -l", "pitlane"]);
+                c.args(&p.args);
+                for (k, v) in &p.env {
+                    c.env(k, v);
+                }
+                c
+            }
+        };
+        cmd.env("SHELL", &shell);
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -103,7 +136,7 @@ impl Terms {
             *n += 1;
             *n
         };
-        let info = TermInfo { id, cwd: cwd.to_owned(), label: label.to_owned(), exited: None };
+        let info = TermInfo { id, session, cwd: cwd.to_owned(), label: label.to_owned(), exited: None };
         let buffer = Arc::new(Mutex::new(String::new()));
 
         // Output: bytes into text, an incomplete UTF-8 sequence carried to the next read.
@@ -252,5 +285,38 @@ mod tests {
         terms.close(t.id).unwrap();
         assert!(terms.list().is_empty());
         assert!(terms.open(Arc::new(|_| {}), "/no/such/folder", "x", 80, 24).is_err());
+    }
+
+    #[test]
+    fn a_program_gets_its_words_as_given_then_your_shell() {
+        let seen = Arc::new(Mutex::new(String::new()));
+        let s2 = Arc::clone(&seen);
+        let sink: Sink = Arc::new(move |o| {
+            if let Out::Data(_, d) = o {
+                s2.lock().unwrap().push_str(&d)
+            }
+        });
+        let terms = Terms::default();
+        let program = Program {
+            args: vec!["printf".into(), "[%s]".into(), "a b; echo HACKED".into(), "$PIT_X".into()],
+            env: vec![("PIT_X".into(), "set".into())],
+            session: Some("s-1".into()),
+        };
+        let t = terms.launch(sink, std::env::temp_dir().to_str().unwrap(), "p", 80, 24, Some(program)).unwrap();
+        assert_eq!(t.session.as_deref(), Some("s-1"));
+        let until = |f: &dyn Fn() -> bool| {
+            let t0 = Instant::now();
+            while !f() && t0.elapsed() < Duration::from_secs(15) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            f()
+        };
+        // Words reach the program untouched: no splitting, no `;`, no expansion.
+        assert!(until(&|| seen.lock().unwrap().contains("[a b; echo HACKED][$PIT_X]")), "{}", seen.lock().unwrap());
+        // Then the shell takes over, with the environment it was given.
+        terms.write(t.id, "echo pit$PIT_X\n").unwrap();
+        assert!(until(&|| seen.lock().unwrap().contains("pitset")), "{}", seen.lock().unwrap());
+        assert!(!seen.lock().unwrap().contains("\nHACKED"));
+        terms.close(t.id).unwrap();
     }
 }

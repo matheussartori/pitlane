@@ -55,6 +55,8 @@ interface Meta {
   note: string;
   at: number;
   exit: number | null;
+  /** The agent run whose Claude Code session this pane resumed. */
+  run?: string;
 }
 
 const pane = (term: number): Pane => ({ kind: "pane", term });
@@ -160,14 +162,14 @@ interface Saved {
   active: number | null;
   side: "left" | "top";
   font: number;
-  places: Record<number, { cwd: string; label: string }>;
+  places: Record<number, { cwd: string; label: string; run?: string }>;
 }
 
 function save() {
   try {
     const tabs = unwrap(st.tabs);
     const places: Saved["places"] = {};
-    for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label };
+    for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label, run: meta[id]!.run };
     localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, places } satisfies Saved));
   } catch {
     /* no storage: the layout lives for this window */
@@ -415,7 +417,7 @@ function linkFiles(term: Terminal, id: number) {
 
 // ---------------------------------------------------------------- terminals
 
-function make(info: TermInfo): Live {
+function make(info: TermInfo, run?: string): Live {
   const term = new Terminal({
     fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
     fontSize: st.font,
@@ -462,7 +464,7 @@ function make(info: TermInfo): Live {
     return true;
   });
   live.set(info.id, l);
-  setMeta(info.id, { cwd: info.cwd, label: info.label, title: "", status: info.exited != null ? "exited" : "idle", note: "", at: 0, exit: info.exited });
+  setMeta(info.id, { cwd: info.cwd, label: info.label, title: "", status: info.exited != null ? "exited" : "idle", note: "", at: 0, exit: info.exited, run });
   return l;
 }
 
@@ -518,8 +520,9 @@ export async function startTerminals() {
         placed.add(old);
       } else if (place && existing.length === 0 && reopened < 16) {
         try {
-          const info = await terms.open(place.cwd, place.label, 100, 30);
-          make(info);
+          // A resumed Claude Code session comes back resumed; a shell comes back a shell.
+          const info = place.run ? await terms.resume(place.run, 100, 30).catch(() => terms.open(place.cwd, place.label, 100, 30)) : await terms.open(place.cwd, place.label, 100, 30);
+          make(info, info.session ? place.run : undefined);
           map.set(old, info.id);
           placed.add(info.id);
           reopened++;
@@ -561,6 +564,22 @@ export async function openTerminal(cwd: string, label: string): Promise<boolean>
     return true;
   } catch (e) {
     toast({ tone: "fail", title: t("No terminal"), body: msg(e) });
+    return false;
+  }
+}
+
+/** Continue in Claude Code: the agent run's session, resumed by the official CLI in a new tab. */
+export async function resumeInTerminal(run: string): Promise<boolean> {
+  selectAgent(null);
+  try {
+    const info = await terms.resume(run, 100, 30);
+    make(info, run);
+    const id = nextTab++;
+    setSt(produce((s) => (s.tabs.push({ id, name: null, root: pane(info.id), focus: info.id, zoom: false }), (s.active = id))));
+    save();
+    return true;
+  } catch (e) {
+    toast({ tone: "fail", title: t("Could not open it in Claude Code"), body: msg(e) });
     return false;
   }
 }
@@ -863,7 +882,7 @@ function TabRow(props: { tab: Tab; index: number }) {
           onClick={() => selectTab(props.tab.id)}
           onDblClick={() => setEditing(true)}
         >
-          <Icon name={props.tab.name || !focusMeta()?.cwd.includes("/wt/") ? "term" : "branch"} small />
+          <Icon name={focusMeta()?.run ? "spark" : props.tab.name || !focusMeta()?.cwd.includes("/wt/") ? "term" : "branch"} small />
           <span class="tt-text">
             <span class="tt-name">{name()}</span>
             <Show when={st.side === "left" && sub()}>
@@ -1250,7 +1269,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
         </div>
       </Show>
       <div class="terms-stage">
-        <Show when={!agentSelected()} fallback={<AgentPane onOpenRun={props.onOpenRun} />}>
+        <Show when={!agentSelected()} fallback={<AgentPane onOpenRun={props.onOpenRun} onContinue={resumeInTerminal} />}>
         <Show
           when={tab()}
           keyed
