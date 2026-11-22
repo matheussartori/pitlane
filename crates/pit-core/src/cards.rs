@@ -86,6 +86,23 @@ pub struct Question {
     /// The decision the answer was recorded as, e.g. `D-07`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
+    /// Talking it over with Claude: what the person asked or proposed, and what Claude answered
+    /// (with the options as they stand after it). Last, so the TOML tables come after the values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub talk: Vec<Turn>,
+}
+
+/// One turn of a question's conversation. Claude's turns carry the options it now offers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Turn {
+    pub at: String,
+    /// `you` or `claude`.
+    pub by: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended: Option<usize>,
 }
 
 /// One piece of context on a card: what someone learned that the next one to work it needs.
@@ -642,6 +659,41 @@ pub fn ask(repo: &Repo, id: u32, questions: Vec<NewQuestion>) -> Result<Card> {
     Ok(card)
 }
 
+/// Adds a turn to a question's conversation. Claude's turn, when it brings options, becomes the
+/// question's options, recommendation and context: the next answer chooses among them.
+pub fn say(repo: &Repo, id: u32, question: u32, by: &str, text: &str, offer: Option<NewQuestion>) -> Result<Card> {
+    let text = text.trim();
+    if text.is_empty() {
+        bail!("nothing to say");
+    }
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    let q = card
+        .questions
+        .iter_mut()
+        .find(|q| q.id == question)
+        .with_context(|| format!("card #{id} has no question {question}"))?;
+    let now = timestamp(now_secs());
+    let mut turn = Turn { at: now.clone(), by: by.trim().to_owned(), text: text.to_owned(), options: Vec::new(), recommended: None };
+    if let Some(o) = offer {
+        let options: Vec<String> = o.options.into_iter().map(|x| x.trim().to_owned()).filter(|x| !x.is_empty()).collect();
+        if !options.is_empty() {
+            let rec = o.recommended.filter(|r| *r < options.len());
+            q.options = options.clone();
+            q.recommended = rec;
+            turn.options = options;
+            turn.recommended = rec;
+        }
+        if let Some(c) = o.context.map(|c| c.trim().to_owned()).filter(|c| !c.is_empty()) {
+            q.context = Some(c);
+        }
+    }
+    q.talk.push(turn);
+    card.updated = now;
+    write(&card)?;
+    Ok(card)
+}
+
 /// Records an answer on the card and as a numbered decision. `answer` may be an option's
 /// number (1-based), an option's text or free text.
 pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answered> {
@@ -773,6 +825,7 @@ fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
             answer: None,
             answered_at: None,
             decision: None,
+            talk: Vec::new(),
         });
     }
     Ok(())
@@ -940,6 +993,7 @@ mod tests {
                 answer: None,
                 answered_at: None,
                 decision: None,
+                talk: Vec::new(),
             }],
             rank: Some(3),
             analyzed: None,

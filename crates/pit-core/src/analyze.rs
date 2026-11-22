@@ -67,10 +67,7 @@ pub struct Analysis {
 /// The card as the analyst sees it: spec, decisions so far, notes and the project's decisions.
 /// `batch` is every card of this Run all (this one included), so the analyst can order them.
 pub fn prompt(repo: &Repo, card: &Card, batch: &[Card]) -> String {
-    let mut p = crate::runs::briefing(repo, card);
-    if let Some(i) = p.rfind("\nWhen you finish, end with the handoff.") {
-        p.truncate(i);
-    }
+    let mut p = card_context(repo, card);
     let others: Vec<&Card> = batch.iter().filter(|c| c.id != card.id).collect();
     if !others.is_empty() {
         p.push_str("\n\n## The other cards of this batch\n");
@@ -83,19 +80,109 @@ pub fn prompt(repo: &Repo, card: &Card, batch: &[Card]) -> String {
     p
 }
 
+/// The run's briefing without its closing line about the handoff: spec, decisions, notes.
+fn card_context(repo: &Repo, card: &Card) -> String {
+    let mut p = crate::runs::briefing(repo, card);
+    if let Some(i) = p.rfind("\nWhen you finish, end with the handoff.") {
+        p.truncate(i);
+    }
+    p
+}
+
+pub const TALK_RULES: &str = "You are Pitlane's analyst, talking one of this card's questions over with the person \
+before the work starts. You do not change anything; you may read the repository to answer well. Answer what they said \
+directly and briefly, like a colleague at their desk: if they propose another way, weigh it honestly against what you \
+recommended, with what you know of the code (what it changes, what it costs, what it risks), and say plainly whether \
+you would now go their way, yours, or a third one. If they ask something, answer it. If you need something from them \
+to decide, ask it in one sentence. Then give the options as they stand now (two to four, their idea among them when \
+it is a real alternative, worded as a decision someone else could carry out), the one you recommend now, and the \
+context updated to what was said. Keep the options as they were when nothing changed them. Never ask or talk about \
+how the work gets done or lands (worktrees, branches, commits, tests). Write in the person's language.";
+
+/// What the analyst answers in a conversation about one question.
+pub fn talk_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "reply": { "type": "string", "description": "Your answer to what the person just said, in markdown, two to six sentences." },
+            "options": { "type": "array", "items": { "type": "string" }, "description": "The options as they stand now, two to four." },
+            "recommended": { "type": "integer", "description": "0-based index into options of the one you recommend now." },
+            "context": { "type": "string", "description": "One to three sentences: the question's context, updated to what was said." }
+        },
+        "required": ["reply", "options", "recommended", "context"]
+    })
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct TalkReply {
+    pub reply: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub recommended: Option<usize>,
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+/// The card, the question with its options and what was decided, the conversation so far.
+pub fn talk_prompt(repo: &Repo, card: &Card, question: u32) -> Result<String> {
+    let q = card
+        .questions
+        .iter()
+        .find(|q| q.id == question)
+        .with_context(|| format!("card #{} has no question {question}", card.id))?;
+    let mut p = card_context(repo, card);
+    p.push_str(&format!("\n\n## The question under discussion\n\n{}\n", q.text));
+    if let Some(c) = &q.context {
+        p.push_str(&format!("\nContext: {c}\n"));
+    }
+    if !q.options.is_empty() {
+        p.push_str("\nOptions now:\n");
+        for (i, o) in q.options.iter().enumerate() {
+            let mark = if q.recommended == Some(i) { " (recommended)" } else { "" };
+            p.push_str(&format!("{}. {o}{mark}\n", i + 1));
+        }
+    }
+    match &q.answer {
+        Some(a) => p.push_str(&format!(
+            "\nThe person already decided: {a}{}. They came back to it; it stays until they choose again.\n",
+            q.decision.as_deref().map(|d| format!(" ({d})")).unwrap_or_default()
+        )),
+        None => p.push_str("\nNot decided yet.\n"),
+    }
+    if !q.talk.is_empty() {
+        p.push_str("\n## The conversation so far\n\n");
+        for t in &q.talk {
+            let who = if t.by == "claude" { "You" } else { "The person" };
+            p.push_str(&format!("{who}: {}\n\n", t.text.trim()));
+        }
+    }
+    p.push_str("\nAnswer the person's last message. Return reply, options, recommended and context.\n");
+    Ok(p)
+}
+
+/// Reads the analyst's answer in a conversation.
+pub fn read_talk(stdout: &str) -> Result<(TalkReply, Option<f64>)> {
+    structured(stdout, "answer")
+}
+
 /// Reads `claude -p --output-format json`: the structured output and the cost.
 pub fn read(stdout: &str) -> Result<(Analysis, Option<f64>)> {
+    structured(stdout, "analysis")
+}
+
+fn structured<T: serde::de::DeserializeOwned>(stdout: &str, what: &str) -> Result<(T, Option<f64>)> {
     let v: Value = stdout
         .lines()
         .rev()
         .find_map(|l| serde_json::from_str::<Value>(l).ok().filter(|v| v.get("type").and_then(Value::as_str) == Some("result")))
         .or_else(|| serde_json::from_str(stdout).ok())
-        .context("the analysis gave no result")?;
+        .with_context(|| format!("the {what} gave no result"))?;
     if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        anyhow::bail!("the analysis stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
+        anyhow::bail!("the {what} stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
     }
-    let a: Analysis = serde_json::from_value(v.get("structured_output").cloned().context("the analysis returned nothing")?)
-        .context("the analysis does not match the schema")?;
+    let a: T = serde_json::from_value(v.get("structured_output").cloned().with_context(|| format!("the {what} returned nothing"))?)
+        .with_context(|| format!("the {what} does not match the schema"))?;
     Ok((a, v.get("total_cost_usd").and_then(Value::as_f64)))
 }
 

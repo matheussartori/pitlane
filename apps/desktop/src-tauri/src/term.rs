@@ -263,17 +263,32 @@ fn zsh_integration() -> Option<&'static str> {
 /// that session reaches the program in front (a dev server, an agent) and the jobs behind it;
 /// what is left a moment later is killed.
 fn end(mut terms: Vec<Term>) {
-    let sids: Vec<String> = terms.iter().filter_map(|t| t.child.process_id()).map(|p| p.to_string()).collect();
-    let pkill = |sig: &str| {
-        if !sids.is_empty() {
-            let _ = std::process::Command::new("pkill").args([sig, "-s", &sids.join(",")]).status();
-        }
-    };
-    pkill("-HUP");
+    let sids: Vec<i32> = terms.iter().filter_map(|t| t.child.process_id()).map(|p| p as i32).collect();
+    signal_sessions(&sids, libc::SIGHUP);
     std::thread::sleep(std::time::Duration::from_millis(300));
-    pkill("-KILL");
+    signal_sessions(&sids, libc::SIGKILL);
     for t in &mut terms {
         let _ = t.child.kill();
+    }
+}
+
+/// Every process in these sessions (macOS's pkill has no -s): each process's session id, by getsid.
+/// A program that started a session of its own (a daemon) has left on purpose and is not followed.
+fn signal_sessions(sids: &[i32], sig: i32) {
+    if sids.is_empty() {
+        return;
+    }
+    let Ok(out) = std::process::Command::new("ps").args(["-A", "-o", "pid="]).output() else { return };
+    let me = std::process::id() as i32;
+    for pid in String::from_utf8_lossy(&out.stdout).split_whitespace().filter_map(|p| p.parse::<i32>().ok()) {
+        if pid <= 1 || pid == me {
+            continue;
+        }
+        // SAFETY: getsid and kill only read or signal a pid; a pid that is gone answers -1.
+        let sid = unsafe { libc::getsid(pid) };
+        if sid > 0 && sids.contains(&sid) {
+            unsafe { libc::kill(pid, sig) };
+        }
     }
 }
 
@@ -313,6 +328,13 @@ mod tests {
             assert!(until(&|| seen.lock().unwrap().contains("zd=/")));
             assert!(!seen.lock().unwrap().contains("zd=/private"), "ZDOTDIR given back");
         }
+        // A job left running dies with its terminal, even in a process group of its own.
+        let sleeping = || std::process::Command::new("pgrep").args(["-f", "sleep 4242"]).output().is_ok_and(|o| !o.stdout.is_empty());
+        let other = terms.open(Arc::new(|_| {}), dir.to_str().unwrap(), "tmp", 80, 24).unwrap();
+        terms.write(other.id, "sleep 4242 &\n").unwrap();
+        assert!(until(&sleeping), "the job started");
+        terms.close(other.id).unwrap();
+        assert!(until(&|| !sleeping()), "closing a terminal ends what it started");
         terms.write(t.id, "exit 3\n").unwrap();
         assert!(until(&|| exited.lock().unwrap().is_some()));
         assert_eq!(*exited.lock().unwrap(), Some(3));

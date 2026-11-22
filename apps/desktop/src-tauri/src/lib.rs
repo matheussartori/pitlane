@@ -457,6 +457,27 @@ async fn card_reanswer(path: String, id: u32, question: u32, answer: String) -> 
     .await
 }
 
+/// Talks a question over with Claude: your message goes on it, Claude's answer comes back with
+/// the options as they stand now. Without a message, the last one is answered again.
+#[tauri::command]
+async fn card_talk(path: String, id: u32, question: u32, message: Option<String>) -> CmdResult<serde_json::Value> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        call(serde_json::json!({ "op": "talk", "repo": root, "card": id, "question": question, "message": message }))
+    })
+    .await
+}
+
+/// Stops the conversation going on a card's questions.
+#[tauri::command]
+async fn card_talk_stop(path: String, id: u32) -> CmdResult<usize> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        Ok(call(serde_json::json!({ "op": "stop_talk", "repo": root, "card": id }))?["stopped"].as_u64().unwrap_or(0) as usize)
+    })
+    .await
+}
+
 /// The repositories this project also works in (`[project] repos`), as flow.toml lists them.
 #[tauri::command]
 async fn project_repos(path: String) -> CmdResult<Vec<String>> {
@@ -1471,6 +1492,8 @@ pub fn run() {
             card_update,
             card_answer,
             card_reanswer,
+            card_talk,
+            card_talk_stop,
             project_repos,
             project_repo_remove,
             capacity,

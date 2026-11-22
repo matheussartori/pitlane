@@ -1,6 +1,6 @@
 // Inbox: every open question, answered with one key. Each answer becomes a decision.
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { api, type Approval, type Card, type RunMeta } from "./api";
+import { api, type Approval, type Card, type RunMeta, type Turn } from "./api";
 import { ApprovalBlock } from "./approvals";
 import { Dictate } from "./dictate";
 import { Prose, inline } from "./prose";
@@ -114,9 +114,217 @@ export function QuestionAbout(props: { q: OpenQuestion; card?: boolean }) {
   );
 }
 
-/** An answered question, with Change to choose again: the same decision takes the new answer. */
+// Conversations waiting on Claude, by repository, card and question, with what was just sent
+// (shown until the card is read again with it). Module-level: a redraw or another view of the
+// same question sees the same wait.
+const [waiting, setWaiting] = createSignal<ReadonlyMap<string, string | null>>(new Map());
+const stopped = new Set<string>();
+const talkKey = (repo: string, card: number, q: number) => `${repo}|${card}-${q}`;
+
+/** Whether Claude is answering on this question, or on any question of the card. */
+export function talking(repo: string, card: number, q?: number): boolean {
+  const w = waiting();
+  if (q != null) return w.has(talkKey(repo, card, q));
+  const prefix = `${repo}|${card}-`;
+  for (const k of w.keys()) if (k.startsWith(prefix)) return true;
+  return false;
+}
+
+async function talk(repo: string, card: Card, q: number, message: string | null, onChanged: () => void) {
+  const k = talkKey(repo, card.id, q);
+  if (waiting().has(k)) return;
+  setWaiting((w) => new Map(w).set(k, message));
+  stopped.delete(k);
+  // What you said is on the card before Claude answers: read it back so it shows as sent.
+  const early = setTimeout(onChanged, 400);
+  try {
+    await api.cardTalk(repo, card.id, q, message);
+  } catch (e) {
+    if (!stopped.has(k)) toast({ tone: "fail", title: t("Claude did not answer"), body: msg(e) }, 0);
+  } finally {
+    clearTimeout(early);
+    stopped.delete(k);
+    setWaiting((w) => {
+      const n = new Map(w);
+      n.delete(k);
+      return n;
+    });
+    onChanged();
+  }
+}
+
+const turnBy: Record<string, { name: string; icon: "spark" | "person" }> = {
+  claude: { name: "Claude", icon: "spark" },
+  you: { name: "You", icon: "person" },
+};
+
+/**
+ * Talking a question over with Claude: ask why, propose another way ("and if we did it like
+ * this?"), and Claude answers with the code in view and the options as they stand after it.
+ * Decided questions too: Claude's new recommendation can replace the decision with one click.
+ */
+export function QuestionTalk(props: {
+  repo: string;
+  card: Card;
+  q: number;
+  talk: Turn[];
+  /** The decision, when the question is answered: a different recommendation offers to replace it. */
+  answer?: string;
+  onUse?: (option: string) => void;
+  onChanged: () => void;
+  /** Open from the start (the composer shows even before the first message). */
+  open?: boolean;
+}) {
+  const draft = `talk-${props.repo}-${props.card.id}-${props.q}`;
+  const [text, setText] = createSignal(drafts.get(draft) ?? "");
+  const [shown, setShown] = createSignal(!!props.open);
+  const write = (v: string) => {
+    setText(v);
+    if (v) drafts.set(draft, v);
+    else drafts.delete(draft);
+  };
+  let field: HTMLInputElement | undefined;
+  const k = () => talkKey(props.repo, props.card.id, props.q);
+  const busy = () => waiting().has(k());
+  // What was sent and is not on the card yet.
+  const sent = () => {
+    const m = waiting().get(k());
+    if (!m) return null;
+    const last = props.talk[props.talk.length - 1];
+    return last?.by === "you" && last.text === m ? null : m;
+  };
+  const unanswered = () => !busy() && props.talk[props.talk.length - 1]?.by === "you";
+  const lastClaude = () => [...props.talk].reverse().find((x) => x.by === "claude");
+  /** On a decided question: what Claude recommends now, when it is not the decision. */
+  const suggestion = () => {
+    const c = lastClaude();
+    if (props.answer == null || !c?.options?.length || c.recommended == null) return null;
+    const o = c.options[c.recommended];
+    return o && o !== props.answer ? o : null;
+  };
+  const open = () => shown() || props.talk.length > 0 || busy();
+
+  function send(e?: Event) {
+    e?.preventDefault();
+    const m = text().trim();
+    if (!m || busy()) return;
+    write("");
+    void talk(props.repo, props.card, props.q, m, props.onChanged);
+  }
+
+  return (
+    <Show
+      when={open()}
+      fallback={
+        <button
+          type="button"
+          class="btn btn-ghost talk-start"
+          onClick={() => {
+            setShown(true);
+            queueMicrotask(() => field?.focus());
+          }}
+        >
+          <Icon name="spark" small />
+          {t("Talk it over with Claude")}
+        </button>
+      }
+    >
+      <div class="talk">
+        <Show when={props.talk.length > 0 || sent()}>
+          <ol class="talk-turns">
+            <For each={props.talk}>
+              {(x) => (
+                <li class="talk-turn" data-by={x.by}>
+                  <span class="talk-by">
+                    <Icon name={turnBy[x.by]?.icon ?? "person"} small />
+                    {turnBy[x.by] ? t(turnBy[x.by]!.name) : x.by}
+                  </span>
+                  <Prose text={x.text} />
+                </li>
+              )}
+            </For>
+            <Show when={sent()}>
+              {(m) => (
+                <li class="talk-turn" data-by="you">
+                  <span class="talk-by">
+                    <Icon name="person" small />
+                    {t("You")}
+                  </span>
+                  <Prose text={m()} />
+                </li>
+              )}
+            </Show>
+          </ol>
+        </Show>
+        <Show when={busy()}>
+          <div class="talk-wait" role="status">
+            <Spinner />
+            <span>{t("Claude is reading the code to answer")}</span>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              onClick={() => {
+                stopped.add(k());
+                void api.cardTalkStop(props.repo, props.card.id);
+              }}
+            >
+              <Icon name="stop" small />
+              {t("Stop")}
+            </button>
+          </div>
+        </Show>
+        <Show when={unanswered()}>
+          <div class="talk-wait">
+            <span>{t("Claude has not answered this yet.")}</span>
+            <button type="button" class="btn btn-ghost" onClick={() => void talk(props.repo, props.card, props.q, null, props.onChanged)}>
+              <Icon name="refresh" small />
+              {t("Ask again")}
+            </button>
+          </div>
+        </Show>
+        <Show when={suggestion()}>
+          {(o) => (
+            <div class="talk-suggest">
+              <span>
+                {t("Claude now recommends")} <b>{o()}</b>
+              </span>
+              <button type="button" class="btn" disabled={busy()} onClick={() => props.onUse?.(o())}>
+                {t("Decide this instead")}
+              </button>
+            </div>
+          )}
+        </Show>
+        <form class="other talk-compose" onSubmit={send}>
+          <label class="visually-hidden" for={`talk-${props.card.id}-${props.q}`}>
+            {t("Say something to Claude about this question")}
+          </label>
+          <input
+            ref={field}
+            id={`talk-${props.card.id}-${props.q}`}
+            class="input"
+            placeholder={props.talk.length ? t("Reply, or propose another way") : t("And if we did it another way? Ask or propose")}
+            autocomplete="off"
+            value={text()}
+            disabled={busy()}
+            onInput={(e) => write(e.currentTarget.value)}
+          />
+          <Dictate field={() => field} value={text} onChange={write} />
+          <button type="submit" class="btn" disabled={busy() || !text().trim()}>
+            {t("Send")}
+          </button>
+        </form>
+      </div>
+    </Show>
+  );
+}
+
+/**
+ * An answered question. Change chooses again (the same decision takes the new answer); Talk
+ * reopens it with Claude ("and if we did it like this?"), whose new recommendation can replace it.
+ */
 export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<Card["questions"]>[number]; onChanged: () => void }) {
   const [editing, setEditing] = createSignal(false);
+  const [talkOpen, setTalkOpen] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const asked = (): OpenQuestion => ({
     card: props.card,
@@ -124,9 +332,13 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
     text: props.q.text,
     options: props.q.options ?? [],
     recommended: props.q.recommended,
+    context: props.q.context,
+    talk: props.q.talk ?? [],
     index: 0,
     of: 0,
   });
+  const turns = () => (props.q.talk ?? []).length;
+  const showTalk = () => talkOpen() || talking(props.repo, props.card.id, props.q.id);
   async function choose(text: string) {
     setBusy(true);
     try {
@@ -141,23 +353,52 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
     }
   }
   return (
-    <div class="decision" data-editing={editing() ? "" : undefined}>
+    <div class="decision" data-editing={editing() || showTalk() ? "" : undefined}>
       <dt>{props.q.text}</dt>
       <dd>
         {props.q.answer}
         <Show when={props.q.decision}>
           <span class="tag">{props.q.decision}</span>
         </Show>
-        <button
-          type="button"
-          class="btn btn-ghost decision-change"
-          aria-expanded={editing()}
-          disabled={busy()}
-          onClick={() => setEditing(!editing())}
-        >
-          {editing() ? t("Keep") : t("Change")}
-        </button>
+        <span class="decision-actions">
+          <button
+            type="button"
+            class="btn btn-ghost decision-change"
+            aria-expanded={showTalk()}
+            disabled={busy()}
+            title={t("Ask Claude about it, or propose another way")}
+            onClick={() => setTalkOpen(!showTalk())}
+          >
+            {turns() ? t("Talk ({n})", { n: turns() }) : t("Talk")}
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost decision-change"
+            aria-expanded={editing()}
+            disabled={busy()}
+            onClick={() => setEditing(!editing())}
+          >
+            {editing() ? t("Keep") : t("Change")}
+          </button>
+        </span>
       </dd>
+      <Show when={showTalk()}>
+        <div class="decision-more">
+          <Show when={props.q.context}>
+            <p class="q-context">{inline(props.q.context!)}</p>
+          </Show>
+          <QuestionTalk
+            repo={props.repo}
+            card={props.card}
+            q={props.q.id}
+            talk={props.q.talk ?? []}
+            answer={props.q.answer}
+            onUse={(o) => void choose(o)}
+            onChanged={props.onChanged}
+            open
+          />
+        </div>
+      </Show>
       <Show when={editing()}>
         <QuestionBlock q={asked()} selected busy={busy()} onAnswer={(a) => void choose(a)} />
       </Show>
@@ -330,7 +571,13 @@ export function InboxView(props: {
                         >
                           <p class="inbox-q">{inline(q.text)}</p>
                           <QuestionAbout q={q} />
-                          <QuestionBlock q={q} selected={isCurrent(q)} busy={busy()} onAnswer={(a) => void answer(q, a)} />
+                          <QuestionBlock
+                            q={q}
+                            selected={isCurrent(q)}
+                            busy={busy() || talking(props.repo, q.card.id, q.id)}
+                            onAnswer={(a) => void answer(q, a)}
+                          />
+                          <QuestionTalk repo={props.repo} card={q.card} q={q.id} talk={q.talk} onChanged={props.onChanged} />
                         </li>
                       )}
                     </For>

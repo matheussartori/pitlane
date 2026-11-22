@@ -158,6 +158,17 @@ export interface Question {
   answer?: string;
   answered_at?: string;
   decision?: string;
+  /** Talking it over with Claude; Claude's turns carry the options it offers from then on. */
+  talk?: Turn[];
+}
+
+export interface Turn {
+  at: string;
+  /** "you" or "claude". */
+  by: string;
+  text: string;
+  options?: string[];
+  recommended?: number;
 }
 
 export interface CardNote {
@@ -759,6 +770,10 @@ export const api = {
   /** Choose again on an answered question; its decision is rewritten in place. */
   cardReanswer: (path: string, id: number, question: number, answer: string) =>
     invoke<{ decision: string; card: Card }>("card_reanswer", { path, id, question, answer }),
+  /** Talks a question over with Claude; resolves with the card once Claude has answered. */
+  cardTalk: (path: string, id: number, question: number, message: string | null) =>
+    invoke<{ card: Card; cost_usd?: number }>("card_talk", { path, id, question, message }),
+  cardTalkStop: (path: string, id: number) => invoke<number>("card_talk_stop", { path, id }),
 };
 
 export const landedLabel: Record<Landed, string> = {

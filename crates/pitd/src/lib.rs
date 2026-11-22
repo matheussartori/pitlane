@@ -112,6 +112,18 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let ids: Vec<u32> = serde_json::from_value(req.get("cards").cloned().context("cards is required")?)?;
             sup.analyze(repo, ids).await?
         }
+        "talk" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let card = req.get("card").and_then(Value::as_u64).context("card is required")?;
+            let question = req.get("question").and_then(Value::as_u64).context("question is required")?;
+            let message = req.get("message").and_then(Value::as_str).map(str::to_owned);
+            sup.talk(repo, u32::try_from(card)?, u32::try_from(question)?, message).await?
+        }
+        "stop_talk" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let card = req.get("card").and_then(Value::as_u64).context("card is required")?;
+            json!({ "stopped": sup.stop_talk(&repo, u32::try_from(card)?) })
+        }
         "finish" => {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
             let ids: Vec<u32> = serde_json::from_value(req.get("cards").cloned().context("cards is required")?)?;

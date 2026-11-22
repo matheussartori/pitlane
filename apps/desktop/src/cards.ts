@@ -1,6 +1,6 @@
 // Where a card sits on the board and why. The card file says what someone set; the lane it is
 // linked to says where the work really is. The board groups by who acts next.
-import type { Card, CardState, Lane, RunMeta, Yard } from "./api";
+import type { Card, CardState, Lane, RunMeta, Turn, Yard } from "./api";
 import type { IconName } from "./icons";
 import { group, next, type ChipState } from "./lane";
 import { plural, t } from "./i18n";
@@ -108,6 +108,7 @@ export interface OpenQuestion {
   options: string[];
   recommended?: number;
   context?: string;
+  talk: Turn[];
   /** 1-based position among the card's open questions, and how many are open. */
   index: number;
   of: number;
@@ -125,6 +126,7 @@ export function openQuestions(cards: Card[]): OpenQuestion[] {
       options: q.options ?? [],
       recommended: q.recommended,
       context: q.context,
+      talk: q.talk ?? [],
       index: i + 1,
       of: open.length,
     }));
