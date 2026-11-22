@@ -32,7 +32,7 @@ export function Spinner() {
   return <span class="spinner" role="status" aria-label={t("Working")} />;
 }
 
-/** Tooltips for any element with `data-tip`: one floating label, placed in the window (never
+/** Tooltips for any element with `data-tip` (the nav rail draws its own, to the right): one floating label, placed in the window (never
  *  clipped by a scrolling list), after a short hover or at once on keyboard focus. Install once. */
 let tipsInstalled = false;
 export function installTips() {
@@ -63,7 +63,7 @@ export function installTips() {
     delete tip.dataset.on;
   };
   document.addEventListener("pointerover", (e) => {
-    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]") ?? null;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]:not(.navrail-item)") ?? null;
     if (el === on) return;
     hide();
     if (!el) return;
@@ -71,7 +71,7 @@ export function installTips() {
     timer = window.setTimeout(() => on === el && show(el), 350);
   });
   document.addEventListener("focusin", (e) => {
-    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]") ?? null;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]:not(.navrail-item)") ?? null;
     hide();
     if (el?.matches(":focus-visible")) (on = el), show(el);
   });
