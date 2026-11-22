@@ -33,6 +33,28 @@ pub struct CardReport {
     pub cost_usd: f64,
     pub duration_ms: u64,
     pub files: Vec<FileChange>,
+    /// The last screenshots its runs took (a browser's, kept in the run's `shots/`), oldest
+    /// first. Absent in reports written before they were kept; [`list`] fills them in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shots: Option<Vec<ShotRef>>,
+}
+
+/// A screenshot of a run: `runs/<run>/shots/<file>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShotRef {
+    pub run: String,
+    pub file: String,
+}
+
+/// Claude's short reading of a report (Sonnet, no tools): one line on what the batch came to,
+/// a few points on what was built, and one line per suggestion, in the suggestions' order.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Digest {
+    pub headline: String,
+    #[serde(default)]
+    pub points: Vec<String>,
+    #[serde(default)]
+    pub suggestions: Vec<String>,
 }
 
 /// Work a run noticed outside its card's spec. The person turns it into a card from the report.
@@ -73,6 +95,9 @@ pub struct Report {
     /// What the runs noticed beyond their cards, each ready to become a card.
     #[serde(default)]
     pub suggestions: Vec<Suggestion>,
+    /// Written after the report, when it is first shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<Digest>,
 }
 
 pub fn dir(pitlane_home: &Path) -> PathBuf {
@@ -108,6 +133,36 @@ fn files_of(repo: &Repo, lane: &str, base: Option<&str>) -> Vec<FileChange> {
         .collect()
 }
 
+/// How many screenshots a card keeps in its report.
+const SHOTS_PER_CARD: usize = 3;
+
+/// The last screenshots of the latest of `runs` that took any.
+fn shots_of(pitlane_home: &Path, runs: &[&RunMeta]) -> Vec<ShotRef> {
+    for m in runs.iter().rev() {
+        let dir = runs::runs_dir(pitlane_home).join(&m.id).join("shots");
+        let mut files: Vec<String> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|f| cards::image_type(f).is_some())
+            .collect();
+        if files.is_empty() {
+            continue;
+        }
+        files.sort();
+        let skip = files.len().saturating_sub(SHOTS_PER_CARD);
+        return files.into_iter().skip(skip).map(|file| ShotRef { run: m.id.clone(), file }).collect();
+    }
+    Vec::new()
+}
+
+fn card_runs(sessions: &[RunMeta], id: u32) -> Vec<&RunMeta> {
+    let mut runs: Vec<&RunMeta> = sessions.iter().filter(|m| m.card == id && m.kind == SessionKind::Run).collect();
+    runs.sort_by_key(|m| m.started_at);
+    runs
+}
+
 /// Builds and saves the report of a batch that started at `since` (seconds).
 #[allow(clippy::too_many_arguments)]
 pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: Option<String>, direct: bool, instructions: &str, finish: Option<Finish>) -> Result<Report> {
@@ -116,8 +171,7 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
     let mut suggestions: Vec<Suggestion> = Vec::new();
     for &id in ids {
         let Ok(c) = cards::get(repo, id) else { continue };
-        let mut runs: Vec<&RunMeta> = sessions.iter().filter(|m| m.card == id && m.kind == SessionKind::Run).collect();
-        runs.sort_by_key(|m| m.started_at);
+        let runs = card_runs(&sessions, id);
         let summary = runs.iter().rev().find_map(|m| m.handoff.as_ref()?.get("summary")?.as_str().map(str::to_owned));
         let verdict = runs.iter().rev().find_map(|m| m.verdict).map(|v| format!("{v:?}").to_lowercase());
         let base = runs.first().and_then(|m| m.base_sha.as_deref());
@@ -150,6 +204,7 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
             cost_usd: runs.iter().filter_map(|m| m.cost_usd).sum(),
             duration_ms: runs.iter().filter_map(|m| m.duration_ms).sum(),
             files,
+            shots: Some(shots_of(pitlane_home, &runs)),
         });
     }
     let now = now_secs();
@@ -167,6 +222,7 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
         cost_usd: sessions.iter().filter_map(|m| m.cost_usd).sum(),
         finish,
         suggestions,
+        digest: None,
     };
     let d = dir(pitlane_home);
     std::fs::create_dir_all(&d)?;
@@ -225,7 +281,104 @@ pub fn list(pitlane_home: &Path, repo: &Path) -> Vec<Report> {
         .filter(|r| r.repo == repo)
         .collect();
     all.sort_by_key(|r| std::cmp::Reverse(r.ended_at));
+    // Reports written before screenshots were kept: found once, saved with the report.
+    if let Some(since) = all.iter().filter(|r| r.cards.iter().any(|c| c.shots.is_none())).map(|r| r.started_at).min() {
+        let sessions = all_sessions(pitlane_home, repo, since);
+        for r in all.iter_mut().filter(|r| r.cards.iter().any(|c| c.shots.is_none())) {
+            for c in r.cards.iter_mut().filter(|c| c.shots.is_none()) {
+                let runs: Vec<&RunMeta> = card_runs(&sessions, c.id).into_iter().filter(|m| m.started_at <= r.ended_at && m.started_at >= r.started_at).collect();
+                c.shots = Some(shots_of(pitlane_home, &runs));
+            }
+            let _ = save(pitlane_home, r);
+        }
+    }
     all
+}
+
+fn save(pitlane_home: &Path, r: &Report) -> Result<()> {
+    std::fs::write(dir(pitlane_home).join(file_of(&r.id)?), serde_json::to_string_pretty(r)?)?;
+    Ok(())
+}
+
+/// Reads report `id`.
+pub fn get(pitlane_home: &Path, id: &str) -> Result<Report> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(dir(pitlane_home).join(file_of(id)?))?)?)
+}
+
+/// Writes Claude's digest on report `id`.
+pub fn set_digest(pitlane_home: &Path, id: &str, d: Digest) -> Result<Report> {
+    let mut r = get(pitlane_home, id)?;
+    r.digest = Some(d);
+    save(pitlane_home, &r)?;
+    Ok(r)
+}
+
+/// The rules of the digest: short, plain, for someone who did not watch the run.
+pub const DIGEST_RULES: &str = "You are Pitlane's report writer. You get the report of a batch of coding cards an \
+agent worked through. You do not read files or run anything. Write for the person who asked for the work and did not \
+watch it: plain words, no jargon they did not use, no file paths, no costs, no markdown. headline: one sentence (at \
+most 140 characters) saying what the batch came to. points: two to five short lines (at most 110 characters each), \
+one per thing that was built, fixed or left undone, most important first; name what the person can now see or do. \
+suggestions: exactly one line per suggestion given, in the same order (at most 100 characters each), saying what it \
+would do and why it matters. Never invent work the report does not show.";
+
+pub fn digest_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "headline": { "type": "string" },
+            "points": { "type": "array", "items": { "type": "string" } },
+            "suggestions": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["headline", "points", "suggestions"]
+    })
+}
+
+/// What the digest reads: the ask, each card's outcome and the agent's words, the suggestions.
+pub fn digest_prompt(r: &Report) -> String {
+    let clip = |s: &str, n: usize| s.trim().chars().take(n).collect::<String>();
+    let mut p = String::new();
+    if !r.instructions.trim().is_empty() {
+        p.push_str(&format!("## What the person asked when it was all done\n\n{}\n\n", clip(&r.instructions, 2000)));
+    }
+    p.push_str("## Cards\n\n");
+    for c in &r.cards {
+        let added: u64 = c.files.iter().map(|f| f.added).sum();
+        let removed: u64 = c.files.iter().map(|f| f.removed).sum();
+        p.push_str(&format!("### #{} {} [{}] ({} files, +{added} -{removed})\n\n", c.id, c.title, c.state, c.files.len()));
+        if let Some(s) = &c.summary {
+            p.push_str(&clip(s, 3000));
+            p.push_str("\n\n");
+        }
+    }
+    if let Some(f) = &r.finish {
+        p.push_str(&format!("## Closing step ({})\n\n{}\n\n", if f.ok { "done" } else { "failed" }, clip(f.summary.as_deref().unwrap_or(""), 2000)));
+    }
+    p.push_str(&format!("## Suggestions ({})\n\n", r.suggestions.len()));
+    for (i, s) in r.suggestions.iter().enumerate() {
+        p.push_str(&format!("{}. {}: {}\n", i + 1, s.title, clip(&s.body, 600).replace('\n', " ")));
+    }
+    p
+}
+
+/// Reads `claude -p --output-format json` for a digest.
+pub fn read_digest(stdout: &str) -> Result<Digest> {
+    let v: serde_json::Value = serde_json::from_str(stdout.trim())
+        .ok()
+        .or_else(|| stdout.lines().rev().find_map(|l| serde_json::from_str(l).ok()))
+        .ok_or_else(|| anyhow::anyhow!("the digest gave no result"))?;
+    if v.get("is_error").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+        anyhow::bail!("the digest stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
+    }
+    let mut d: Digest = serde_json::from_value(v.get("structured_output").cloned().ok_or_else(|| anyhow::anyhow!("the digest returned nothing"))?)?;
+    let tidy = |s: &str, n: usize| s.trim().trim_start_matches(['-', '•', '*', ' ']).chars().take(n).collect::<String>();
+    d.headline = tidy(&d.headline, 240);
+    d.points = d.points.iter().map(|s| tidy(s, 200)).filter(|s| !s.is_empty()).take(6).collect();
+    d.suggestions = d.suggestions.iter().map(|s| tidy(s, 200)).collect();
+    if d.headline.is_empty() {
+        anyhow::bail!("the digest is empty");
+    }
+    Ok(d)
 }
 
 /// The prompt of the closing step: what the person asked for, and what the batch did.
@@ -243,4 +396,19 @@ pub fn finish_prompt(repo: &Repo, ids: &[u32], instructions: &str, into: Option<
     }
     p.push_str("\nDo only what they asked. If something cannot be done, say why. End with a short summary of what you did.\n");
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_digest() {
+        let out = r#"{"type":"result","is_error":false,"structured_output":{"headline":" Login novo no ar. ","points":["- Tela de login refeita",""],"suggestions":["Cachear avatares"]}}"#;
+        let d = read_digest(out).unwrap();
+        assert_eq!(d.headline, "Login novo no ar.");
+        assert_eq!(d.points, vec!["Tela de login refeita"]);
+        assert_eq!(d.suggestions.len(), 1);
+        assert!(read_digest(r#"{"is_error":true,"result":"x"}"#).is_err());
+    }
 }

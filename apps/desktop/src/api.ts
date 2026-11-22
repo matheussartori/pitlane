@@ -233,12 +233,16 @@ export interface Report {
     cost_usd: number;
     duration_ms: number;
     files: { path: string; added: number; removed: number }[];
+    /** The last screenshots its runs took. */
+    shots?: { run: string; file: string }[];
   }[];
   sessions: number;
   cost_usd: number;
   finish: Finish | null;
   /** What the runs noticed beyond their cards; `made` is the card made from it. */
   suggestions?: { card: number; title: string; body: string; made: number | null }[];
+  /** Claude's short reading (Sonnet): a headline, a few points, one line per suggestion. */
+  digest?: { headline: string; points: string[]; suggestions: string[] };
 }
 
 export interface CardList {
@@ -730,6 +734,7 @@ export const api = {
   reportCreate: (path: string, cards: number[], since: number, into: string | null, direct: boolean, instructions: string, finish: Finish | null) =>
     invoke<Report>("report_create", { path, cards, since, into, direct, instructions, finish }),
   reports: (path: string) => invoke<Report[]>("reports_list", { path }),
+  reportDigest: (path: string, id: string) => invoke<Report>("report_digest", { path, id }),
   reportDelete: (id: string) => invoke<void>("report_delete", { id }),
   reportSuggestCard: (path: string, id: string, index: number) => invoke<Card>("report_suggest_card", { path, id, index }),
   reportRestore: (id: string) => invoke<void>("report_restore", { id }),

@@ -1,6 +1,7 @@
 // Reports: what each Run all came to, card by card, and what its closing step did. Exported as a
 // PDF through the system's print dialog (Save as PDF).
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import { Portal } from "solid-js/web";
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
@@ -10,6 +11,41 @@ import { clock, money } from "./run";
 import { Spinner, toast } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
+/** The first sentence of a suggestion's spec, for its tile when Claude's line is not there. */
+const firstLine = (body: string) => {
+  const line = body.replace(/[#*_`>]/g, "").split(/\n+/).map((l) => l.trim()).find(Boolean) ?? "";
+  const cut = line.search(/[.!?](\s|$)/);
+  return cut > 0 ? line.slice(0, cut + 1) : line;
+};
+
+/** A run's screenshot in the report: a thumbnail under its card's name that opens full size. */
+function ReportShot(props: { run: string; file: string; label: string }) {
+  const [src] = createResource(() => [props.run, props.file] as const, ([r, f]) => api.runShot(r, f).catch(() => ""));
+  const [big, setBig] = createSignal(false);
+  const key = (ev: KeyboardEvent) => ev.key === "Escape" && setBig(false);
+  createEffect(() => (big() ? window.addEventListener("keydown", key) : window.removeEventListener("keydown", key)));
+  onCleanup(() => window.removeEventListener("keydown", key));
+  return (
+    <Show when={src()}>
+      {(u) => (
+        <figure class="report-shot">
+          <button type="button" class="report-shot-thumb" title={t("Open full size")} onClick={() => setBig(true)}>
+            <img src={u()} alt={props.label} loading="lazy" />
+          </button>
+          <figcaption>{props.label}</figcaption>
+          <Show when={big()}>
+            <Portal>
+              <div class="shot-view" role="dialog" aria-label={t("Screenshot")} onClick={() => setBig(false)}>
+                <img src={u()} alt={props.label} />
+              </div>
+            </Portal>
+          </Show>
+        </figure>
+      )}
+    </Show>
+  );
+}
+
 const when = (secs: number) => new Date(secs * 1000).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
 
 export function ReportsView(props: { reports: Report[] | null; now: number; onChanged: () => void; onCardMade?: () => void }) {
@@ -17,6 +53,25 @@ export function ReportsView(props: { reports: Report[] | null; now: number; onCh
   const report = createMemo(() => {
     const all = props.reports ?? [];
     return all.find((r) => r.id === picked()) ?? all[0] ?? null;
+  });
+  // Claude's digest, asked for once per report the first time it is shown without one.
+  const [digesting, setDigesting] = createSignal<Record<string, "busy" | "failed">>({});
+  const digest = (r: Report) => {
+    setDigesting((d) => ({ ...d, [r.id]: "busy" }));
+    api.reportDigest(r.repo, r.id).then(
+      () => {
+        setDigesting((d) => {
+          const { [r.id]: _, ...rest } = d;
+          return rest;
+        });
+        props.onChanged();
+      },
+      () => setDigesting((d) => ({ ...d, [r.id]: "failed" })),
+    );
+  };
+  createEffect(() => {
+    const r = report();
+    if (r && !r.digest && !digesting()[r.id]) digest(r);
   });
   const exportPdf = async () => {
     try {
@@ -118,6 +173,87 @@ export function ReportsView(props: { reports: Report[] | null; now: number; onCh
                     </button>
                   </div>
                   </header>
+                  <section class="report-sec report-digest" aria-busy={digesting()[r.id] === "busy"}>
+                    <h3>{t("Summary")}</h3>
+                    <Show
+                      when={r.digest}
+                      fallback={
+                        <Show
+                          when={digesting()[r.id] === "failed"}
+                          fallback={<div class="loading-line"><Spinner /> {t("Claude is summarizing this run")}</div>}
+                        >
+                          <p class="report-meta">
+                            {t("The summary could not be written.")}{" "}
+                            <button type="button" class="link-btn" onClick={() => digest(r)}>{t("Try again")}</button>
+                          </p>
+                        </Show>
+                      }
+                    >
+                      {(d) => (
+                        <>
+                          <p class="report-headline">{d().headline}</p>
+                          <Show when={d().points.length > 0}>
+                            <ul class="report-points">
+                              <For each={d().points}>{(p) => <li>{p}</li>}</For>
+                            </ul>
+                          </Show>
+                        </>
+                      )}
+                    </Show>
+                  </section>
+                  <Show when={r.cards.some((c) => (c.shots?.length ?? 0) > 0)}>
+                    <section class="report-sec">
+                      <h3>{t("Screens")}</h3>
+                      <div class="report-shots">
+                        <For each={r.cards.flatMap((c) => (c.shots ?? []).map((s) => ({ ...s, label: `#${c.id} ${c.title}` })))}>
+                          {(s) => <ReportShot run={s.run} file={s.file} label={s.label} />}
+                        </For>
+                      </div>
+                    </section>
+                  </Show>
+                  <Show when={(r.suggestions?.length ?? 0) > 0}>
+                    <section class="report-sec">
+                      <h3>{t("Suggestions")}</h3>
+                      <div class="report-ideas">
+                        <For each={r.suggestions}>
+                          {(s, i) => (
+                            <button
+                              type="button"
+                              class="report-idea"
+                              data-made={s.made != null ? "" : undefined}
+                              disabled={s.made != null || making() != null}
+                              aria-busy={making() === `${r.id}:${i()}`}
+                              title={s.made != null ? t("Card #{id}", { id: s.made }) : t("Make a card from this suggestion")}
+                              onClick={() => void makeCard(r, i())}
+                            >
+                              <span class="report-idea-title">{s.title}</span>
+                              <span class="report-idea-line">{r.digest?.suggestions[i()] || firstLine(s.body)}</span>
+                              <span class="report-idea-foot">
+                                <Show
+                                  when={s.made == null}
+                                  fallback={<><Icon name="done" small /> {t("Card #{id}", { id: s.made! })}</>}
+                                >
+                                  <Show when={making() === `${r.id}:${i()}`} fallback={<Icon name="plus" small />}>
+                                    <Spinner />
+                                  </Show>
+                                  {t("Make a card")}
+                                </Show>
+                              </span>
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                    </section>
+                  </Show>
+                  <details class="report-more">
+                    <summary>
+                      {t("Details")}
+                      <span class="report-meta">
+                        {" · "}
+                        {plural(r.cards.length, "{n} card", "{n} cards")} · {plural(r.cards.reduce((n, c) => n + c.files.length, 0), "{n} file", "{n} files")}
+                      </span>
+                    </summary>
+                    <div class="report-more-body">
                   <Show when={r.instructions}>
                     <section class="report-sec">
                       <h3>{t("What you asked for")}</h3>
@@ -170,42 +306,6 @@ export function ReportsView(props: { reports: Report[] | null; now: number; onCh
                       )}
                     </For>
                   </section>
-                  <Show when={(r.suggestions?.length ?? 0) > 0}>
-                    <section class="report-sec">
-                      <h3>{t("Raised along the way")}</h3>
-                      <p class="report-meta">{t("Work the agents noticed outside what the cards asked for. Each becomes a card with its full spec.")}</p>
-                      <For each={r.suggestions}>
-                        {(s, i) => (
-                          <div class="report-card">
-                            <div class="report-card-head">
-                              <span class="report-card-title">{s.title}</span>
-                              <span class="report-state">{t("from #{id}", { id: s.card })}</span>
-                              <Show
-                                when={s.made == null}
-                                fallback={<span class="report-state" data-state="done">{t("Card #{id}", { id: s.made! })}</span>}
-                              >
-                                <button
-                                  type="button"
-                                  class="btn"
-                                  disabled={making() != null}
-                                  aria-busy={making() === `${r.id}:${i()}`}
-                                  onClick={() => void makeCard(r, i())}
-                                >
-                                  <Show when={making() === `${r.id}:${i()}`} fallback={<Icon name="plus" small />}>
-                                    <Spinner />
-                                  </Show>
-                                  {t("Make a card")}
-                                </button>
-                              </Show>
-                            </div>
-                            <div class="report-suggestion">
-                              <Prose text={s.body} />
-                            </div>
-                          </div>
-                        )}
-                      </For>
-                    </section>
-                  </Show>
                   <Show when={r.finish}>
                     {(f) => (
                       <section class="report-sec">
@@ -216,6 +316,8 @@ export function ReportsView(props: { reports: Report[] | null; now: number; onCh
                       </section>
                     )}
                   </Show>
+                    </div>
+                  </details>
                 </article>
               )}
             </Show>

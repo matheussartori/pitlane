@@ -112,6 +112,11 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let ids: Vec<u32> = serde_json::from_value(req.get("cards").cloned().context("cards is required")?)?;
             sup.analyze(repo, ids).await?
         }
+        "report_digest" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let id = req.get("id").and_then(Value::as_str).context("id is required")?.to_owned();
+            sup.report_digest(repo, id).await?
+        }
         "describe" => {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
             let card = req.get("card").and_then(Value::as_u64).context("card is required")?;

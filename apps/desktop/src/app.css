@@ -49,10 +49,6 @@ body { background: var(--color-frame); }
 .navrail-item:focus-visible, .strip-repo-btn:focus-visible, .navrail-quota:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .navrail-count { position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; padding-inline: var(--space-2xs); border-radius: var(--radius-pill); background: var(--color-paper-3); color: var(--color-ink-2); font: var(--weight-strong) 10px/16px var(--font-mono); font-variant-numeric: tabular-nums; text-align: center; box-shadow: 0 0 0 2px var(--color-frame); }
 .navrail-count[data-hot] { background: var(--color-accent); color: var(--color-accent-ink); }
-/* The name and key, beside the rail on hover: instant on focus, a breath on hover. */
-.navrail-item::after { content: attr(data-tip); position: absolute; left: calc(100% + 8px); top: 50%; z-index: 300; padding: var(--space-2xs) var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-3); color: var(--color-ink); box-shadow: var(--shadow-pop); font: var(--weight-regular) var(--text-sm)/1 var(--font-body); white-space: pre; pointer-events: none; opacity: 0; transform: translate(-2px, -50%); transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out); }
-.navrail-item:hover::after { opacity: 1; transform: translate(0, -50%); transition-delay: 350ms; }
-.navrail-item:focus-visible::after { opacity: 1; transform: translate(0, -50%); transition: none; }
 .navrail-quota { display: flex; gap: var(--space-2xs); align-items: flex-end; height: 24px; padding: var(--space-3xs) var(--space-xs); border: 0; border-radius: var(--radius-md); background: transparent; cursor: pointer; }
 .navrail-quota:hover { background: color-mix(in oklch, var(--color-ink) 7%, transparent); }
 .navrail-meter { position: relative; width: 4px; height: 18px; border-radius: 2px; background: var(--color-paper-3); overflow: hidden; }
@@ -839,6 +835,8 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 /* The floating tooltip (installTips). */
 .tip { position: fixed; z-index: 1000; max-width: 280px; padding: var(--space-2xs) var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-3); color: var(--color-ink); box-shadow: var(--shadow-pop); font: var(--weight-regular) var(--text-xs)/1.35 var(--font-body); pointer-events: none; opacity: 0; transition: opacity 120ms var(--ease-out); }
 .tip[data-on] { opacity: 1; }
+/* Beside the nav rail: the name and its key, a size up. */
+.tip[data-side] { max-width: none; font-size: var(--text-sm); line-height: 1; white-space: pre; }
 
 .ag-pane { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--color-paper-sunk); outline: none; }
 .ag-bar { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; height: 40px; padding-inline: var(--space-md) var(--space-xs); border-bottom: 1px solid var(--color-rule); background: var(--color-paper); }
@@ -973,6 +971,34 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .report-card-head .btn { flex: none; align-self: center; }
 .report-suggestion { color: var(--color-ink-2); font-size: var(--text-sm); min-width: 0; overflow-wrap: anywhere; }
 .report-del { color: var(--color-fail); }
+/* The report reads top down: Claude's summary, the screens, the suggestions; the rest folds away. */
+.report-digest { padding: var(--space-md); border-radius: var(--radius-md); background: var(--color-paper-2); }
+.report-headline { font: var(--weight-strong) var(--text-lg)/1.4 var(--font-display); color: var(--color-ink); text-wrap: pretty; }
+.report-points { display: grid; gap: var(--space-2xs); margin: 0; padding: 0; list-style: none; }
+.report-points li { position: relative; padding-left: var(--space-md); color: var(--color-ink-2); text-wrap: pretty; }
+.report-points li::before { content: ""; position: absolute; left: 4px; top: 0.6em; width: 6px; height: 6px; border-radius: 50%; background: var(--color-done); }
+.report-shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-sm); }
+.report-shot { display: grid; gap: var(--space-2xs); margin: 0; min-width: 0; break-inside: avoid; }
+.report-shot-thumb { display: block; padding: 0; border: 1px solid var(--color-rule); border-radius: var(--radius-sm); background: var(--color-paper-2); overflow: hidden; cursor: zoom-in; aspect-ratio: 16 / 10; }
+.report-shot-thumb:hover { border-color: var(--color-rule-strong); }
+.report-shot-thumb:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.report-shot-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.report-shot figcaption { font-size: var(--text-xs); color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.report-ideas { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-sm); }
+.report-idea { display: grid; grid-template-rows: auto 1fr auto; gap: var(--space-2xs); padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-paper-2); color: var(--color-ink); font: inherit; text-align: left; cursor: pointer; break-inside: avoid; }
+.report-idea:hover:not(:disabled) { border-color: var(--color-rule-strong); background: var(--color-paper-3); }
+.report-idea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.report-idea:disabled { cursor: default; }
+.report-idea[data-made] { opacity: 0.65; }
+.report-idea-title { font-weight: var(--weight-strong); }
+.report-idea-line { font-size: var(--text-sm); color: var(--color-ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.report-idea-foot { display: inline-flex; align-items: center; gap: var(--space-2xs); margin-top: var(--space-2xs); font-size: var(--text-sm); color: var(--color-muted); }
+.report-idea:hover:not(:disabled) .report-idea-foot { color: var(--color-ink); }
+.report-idea[data-made] .report-idea-foot { color: var(--color-done); }
+.report-more { border-top: 1px solid var(--color-rule); padding-top: var(--space-sm); }
+.report-more > summary { cursor: pointer; font-size: var(--text-sm); font-weight: var(--weight-strong); color: var(--color-ink-2); }
+.report-more > summary:hover { color: var(--color-ink); }
+.report-more-body { display: grid; gap: var(--space-md); padding-top: var(--space-sm); }
 @media (max-width: 720px) { .reports-body { grid-template-columns: 1fr; } .reports-list { position: static; } }
 
 /* The PDF: only the report, on white. */
@@ -980,7 +1006,9 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
   body * { visibility: hidden !important; }
   .report-doc, .report-doc * { visibility: visible !important; }
   .report-doc { position: absolute; inset: 0 auto auto 0; width: 100%; max-width: none; padding: 0; color: #111; background: #fff; }
-  .report-actions, .report-card-head .btn { display: none; }
+  .report-actions, .report-card-head .btn, .report-idea-foot { display: none; }
+  .report-digest, .report-idea { background: none !important; border-color: #ddd !important; }
+  .report-headline, .report-idea-title { color: #111 !important; }
   .report-meta, .report-card-meta, .report-sec h3, .report-state, .report-path { color: #555 !important; }
   .report-summary, .report-card-title, .report-title { color: #111 !important; }
   .report-add { color: #186a3b !important; }

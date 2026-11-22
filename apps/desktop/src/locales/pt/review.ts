@@ -190,4 +190,10 @@ export default {
   "Work the agents noticed outside what the cards asked for. Each becomes a card with its full spec.": "O que os agentes notaram fora do que os cards pediam. Cada item vira um card com a especificação completa.",
   "from #{id}": "de #{id}",
   "Make a card": "Criar card",
+  "Claude is summarizing this run": "O Claude está resumindo este lote",
+  "The summary could not be written.": "Não foi possível escrever o resumo.",
+  "Screens": "Telas",
+  "Suggestions": "Sugestões",
+  "Make a card from this suggestion": "Criar um card com esta sugestão",
+  "Details": "Detalhes",
 } as Record<string, string>;

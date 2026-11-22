@@ -1877,6 +1877,44 @@ impl Supervisor {
         Ok(serde_json::json!({ "card": card.id, "title": card.title, "summary": card.summary }))
     }
 
+    /// Claude's digest of report `id` (Sonnet, no tools, about a cent): saved on the report.
+    pub async fn report_digest(self: &Arc<Self>, repo: PathBuf, id: String) -> Result<Value> {
+        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let report = pit_core::report::get(&self.cfg.home, &id)?;
+        let routing = Routing::load(&self.cfg.home)?;
+        // Never the API key, like the card summaries.
+        let choice = routing
+            .choices(&r.root, &home_dir(), &self.cfg.home)?
+            .into_iter()
+            .find(|c| c.kind != accounts::Kind::ApiKey);
+        let language = pit_core::language::agent_language(&self.cfg.home);
+        let system = format!("{}{}", pit_core::report::DIGEST_RULES, pit_core::language::rule(&language));
+        let mut cmd = Command::new(&self.cfg.claude_bin);
+        cmd.args(["-p", "--output-format", "json", "--model", pit_core::describe::MODEL])
+            .args(["--setting-sources", "project,local", "--tools", "", "--max-turns", "2"])
+            .args(["--append-system-prompt", &system])
+            .args(["--json-schema", &pit_core::report::digest_schema().to_string()])
+            .arg(format!("{}{}", pit_core::report::digest_prompt(&report), pit_core::language::reminder(&language)))
+            .current_dir(&r.root)
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_CHILD_SESSION")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        if let Some(dir) = choice.as_ref().and_then(|c| c.config_dir.as_ref()) {
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
+        let out = tokio::time::timeout(Duration::from_secs(120), cmd.output())
+            .await
+            .context("the digest took over two minutes")?
+            .with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
+        let d = pit_core::report::read_digest(&String::from_utf8_lossy(&out.stdout))?;
+        let report = pit_core::report::set_digest(&self.cfg.home, &id, d)?;
+        Ok(serde_json::to_value(report)?)
+    }
+
     async fn analyst(
         &self,
         repo: &Path,

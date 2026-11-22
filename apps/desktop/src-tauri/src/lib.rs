@@ -18,6 +18,7 @@ use tauri::{Emitter, Manager};
 
 mod dictate;
 mod files;
+mod holes;
 mod vscode;
 mod term;
 use serde::{Deserialize, Serialize};
@@ -750,6 +751,17 @@ async fn reports_list(path: String) -> CmdResult<Vec<pit_core::report::Report>> 
     blocking(move || Ok(pit_core::report::list(&default_homes().1, &open(&path)?.root))).await
 }
 
+/// Claude's short reading of a report, written on it; returns the report.
+#[tauri::command]
+async fn report_digest(path: String, id: String) -> CmdResult<pit_core::report::Report> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        let v = call(serde_json::json!({ "op": "report_digest", "repo": root, "id": id }))?;
+        Ok(serde_json::from_value(v)?)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn report_delete(id: String) -> CmdResult<()> {
     blocking(move || pit_core::report::delete(&default_homes().1, &id)).await
@@ -1076,6 +1088,8 @@ struct CodeView {
     places: Mutex<serde_json::Value>,
     /// The folder the tab wants shown, and where (logical pixels).
     shown: Mutex<Option<(String, (f64, f64, f64, f64))>>,
+    /// What the page draws over VS Code (tooltips, toasts): window rects (x, y, w, h, radius).
+    holes: Mutex<Vec<[f64; 5]>>,
     next: std::sync::atomic::AtomicU32,
 }
 
@@ -1138,8 +1152,10 @@ fn place_views(app: &tauri::AppHandle) {
                 let _ = wv.set_size(LogicalSize::new(*w, *h));
                 let _ = wv.set_position(LogicalPosition::new(*x, *y));
                 let _ = wv.set_focus();
+                holes::cut(&wv, (*w, *h), local_holes(&state, *x, *y));
             }
             _ => {
+                holes::cut(&wv, (0.0, 0.0), Vec::new());
                 let _ = wv.set_position(LogicalPosition::new(PARKED.0, PARKED.1));
             }
         }
@@ -1302,6 +1318,26 @@ async fn vscode_hide(app: tauri::AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
+/// What the page draws over VS Code's area (window rects: x, y, w, h, corner radius), shown
+/// through it: VS Code is a view of its own above the page, out of reach of any z-index.
+#[tauri::command]
+fn vscode_holes(app: tauri::AppHandle, holes: Vec<[f64; 5]>) {
+    let state = app.state::<CodeView>();
+    *state.holes.lock().unwrap() = holes;
+    let shown = state.shown.lock().unwrap().clone();
+    let Some((folder, (x, y, w, h))) = shown else { return };
+    for v in state.views.lock().unwrap().iter().filter(|v| v.folder == folder) {
+        if let Some(wv) = app.get_webview(&v.label) {
+            holes::cut(&wv, (w, h), local_holes(&state, x, y));
+        }
+    }
+}
+
+/// The holes, in the coordinates of a view placed at (x, y).
+fn local_holes(state: &CodeView, x: f64, y: f64) -> Vec<[f64; 5]> {
+    state.holes.lock().unwrap().iter().map(|[hx, hy, hw, hh, r]| [hx - x, hy - y, *hw, *hh, *r]).collect()
+}
+
 /// Opens a file at a line in the VS Code that is running.
 #[tauri::command]
 async fn vscode_open(app: tauri::AppHandle, path: String, line: Option<u32>, col: Option<u32>) -> CmdResult<()> {
@@ -1367,6 +1403,36 @@ fn open_external(url: String) -> CmdResult<()> {
         return Err(format!("{url} is not a web link"));
     }
     std::process::Command::new("/usr/bin/open").arg(&url).status().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn show_main(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// The menu-bar icon: a click opens Pitlane, its menu opens or quits it.
+fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::TrayIconBuilder;
+    let open = MenuItem::with_id(app, "tray-open", "Open Pitlane", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "tray-quit", "Quit Pitlane", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+    TrayIconBuilder::with_id("main")
+        .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+        .icon_as_template(true)
+        .tooltip("Pitlane")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, e| match e.id().as_ref() {
+            "tray-open" => show_main(app),
+            "tray-quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
     Ok(())
 }
 
@@ -1516,10 +1582,25 @@ pub fn run() {
         .manage(vscode::Vscode::default())
         .manage(CodeView::default())
         .menu(menu)
+        .setup(|app| {
+            tray(app.handle())?;
+            Ok(())
+        })
         .on_menu_event(|app, e| {
             if e.id().as_ref() == "close-window" {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.close();
+                }
+            }
+        })
+        // Closing the window only hides it: Pitlane stays in the Dock and the menu bar, agents
+        // keep going, and the Dock icon or the tray brings it back. Quit (⌘Q, the Dock's or the
+        // tray's) is what ends it.
+        .on_window_event(|w, e| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                if w.label() == "main" && !QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = w.hide();
                 }
             }
         })
@@ -1578,6 +1659,7 @@ pub fn run() {
             run_all_finish,
             report_create,
             reports_list,
+            report_digest,
             report_delete,
             report_restore,
             report_suggest_card,
@@ -1599,6 +1681,7 @@ pub fn run() {
             vscode_places,
             vscode_show,
             vscode_hide,
+            vscode_holes,
             vscode_open,
             open_external,
             term_write,
@@ -1620,6 +1703,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Pitlane failed to start")
         .run(|app, event| {
+            // A click on the Dock icon brings the hidden window back.
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main(app);
+            }
             // No shell outlives the app.
             if let tauri::RunEvent::Exit = event {
                 // Nothing outlives the app: the daemon stops every agent and ends.
