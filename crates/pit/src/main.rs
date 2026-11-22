@@ -889,7 +889,7 @@ fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
                 Some(n) => Some(n - 1),
                 None => None,
             };
-            let c = cards::ask(repo, id, vec![NewQuestion { text: question, options, recommended }])?;
+            let c = cards::ask(repo, id, vec![NewQuestion { text: question, options, recommended, context: None }])?;
             println!("{} #{} has {} open question(s)", paint(DONE, "✓"), c.id, c.open_questions());
         }
         CardCmd::Answer { id, question, answer } => {

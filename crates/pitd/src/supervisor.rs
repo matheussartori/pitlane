@@ -122,6 +122,8 @@ struct Side {
     limit: Duration,
     /// Give it Pitlane's board tools too (`pit mcp`: add_card, list_cards, update_card, add_note).
     board: bool,
+    /// Images sent with the prompt (the card's screenshots, for the analysis).
+    images: Vec<(&'static str, Vec<u8>)>,
 }
 
 pub struct Subscription {
@@ -582,7 +584,8 @@ impl Supervisor {
             fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
             prep.briefing.clone()
         };
-        stdin.write_all(format!("{}\n", runs::claude_user_line(&first)).as_bytes()).await?;
+        let line = if resuming { runs::claude_user_line(&first) } else { runs::claude_user_line_with(&first, &prep.images) };
+        stdin.write_all(format!("{line}\n").as_bytes()).await?;
         stdin.flush().await?;
         {
             let mut live = self.live.lock().unwrap();
@@ -1012,6 +1015,7 @@ impl Supervisor {
             prompt,
             limit: Duration::from_secs(20 * 60),
             board: false,
+            images: Vec::new(),
         };
         match self.side_session(side).await {
             Ok(stdout) => match pit_core::verify::read_judge(&stdout) {
@@ -1098,6 +1102,7 @@ impl Supervisor {
             prompt: prompt.to_owned(),
             limit: Duration::from_secs(20 * 60),
             board: false,
+            images: Repo::open(repo, &home_dir(), &self.cfg.home).map(|r| cards::image_bytes(&r, card)).unwrap_or_default(),
         };
         let stdout = self.side_session(side).await.map_err(|e| anyhow::anyhow!("the analysis {e:#}"))?;
         pit_core::analyze::read(&stdout)
@@ -1142,6 +1147,7 @@ impl Supervisor {
             prompt: pit_core::report::finish_prompt(&r, &ids, &instructions, into.as_deref()),
             limit: Duration::from_secs(90 * 60),
             board: false,
+            images: Vec::new(),
         };
         let id_hint = now_secs();
         let out = self.side_session(side).await;
@@ -1201,6 +1207,7 @@ impl Supervisor {
             prompt: text,
             limit: Duration::from_secs(30 * 60),
             board: true,
+            images: Vec::new(),
         };
         let me = Arc::clone(self);
         tokio::spawn(async move {
@@ -1311,7 +1318,7 @@ impl Supervisor {
         let work = async {
             let mut child = cmd.spawn().with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
             let mut stdin = child.stdin.take().context("no stdin")?;
-            stdin.write_all(format!("{}\n", runs::claude_user_line(&side.prompt)).as_bytes()).await?;
+            stdin.write_all(format!("{}\n", runs::claude_user_line_with(&side.prompt, &side.images)).as_bytes()).await?;
             stdin.flush().await?;
             {
                 let mut live = self.live.lock().unwrap();
@@ -1816,6 +1823,8 @@ struct Prepared {
     tools: Vec<String>,
     max_turns: u32,
     model: Option<String>,
+    /// The card's images, sent with the briefing.
+    images: Vec<(&'static str, Vec<u8>)>,
 }
 
 /// The card's lane and worktree, made when missing, and what the agent is launched with.
@@ -1906,6 +1915,7 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
         None
     };
     Ok(Prepared {
+        images: cards::image_bytes(&r, &the_card),
         branch,
         worktree: worktree.clone(),
         brief: map.as_ref().map(|b| b.stats.clone()),

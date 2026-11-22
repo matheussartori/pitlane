@@ -18,7 +18,7 @@ fn repo() -> (TempDir, Repo) {
 }
 
 fn q(text: &str, options: &[&str], recommended: Option<usize>) -> NewQuestion {
-    NewQuestion { text: text.into(), options: options.iter().map(|s| s.to_string()).collect(), recommended }
+    NewQuestion { text: text.into(), options: options.iter().map(|s| s.to_string()).collect(), recommended, context: None }
 }
 
 #[test]
@@ -222,4 +222,35 @@ fn delete_and_restore() {
     assert!(left.analyzed.is_none() && left.areas.is_empty());
     assert_eq!(left.notes.len(), 1);
     assert_eq!(left.questions.len(), 1);
+}
+
+#[test]
+fn images_ride_with_the_card() {
+    let (_t, r) = repo();
+    let c = cards::add(&r, NewCard { title: "Kart menu".into(), body: "Make it pop.".into(), ..Default::default() }).unwrap();
+    assert!(cards::attach(&r, c.id, "notes.txt", b"x").is_err(), "only images");
+    let c = cards::attach(&r, c.id, "Screen Shot 1.png", b"\x89PNG fake").unwrap();
+    let c2 = cards::attach(&r, c.id, "shot.JPG", b"jpeg").unwrap();
+    assert_eq!(c2.images, ["1-screen-shot-1.png", "2-shot.jpg"]);
+    assert!(cards::images_dir(&r, c.id).join("2-shot.jpg").is_file());
+    let got = cards::image_bytes(&r, &c2);
+    assert_eq!(got[0].0, "image/png");
+    assert_eq!(got[1].1, b"jpeg");
+
+    // The briefing names them, and the first message carries them before the text.
+    let b = pit_core::runs::briefing(&r, &c2);
+    assert!(b.contains("## Images") && b.contains("2 images") && b.contains("2-shot.jpg"));
+    let line: serde_json::Value = serde_json::from_str(&pit_core::runs::claude_user_line_with("hi", &got)).unwrap();
+    let content = line["message"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 3);
+    assert_eq!(content[0]["source"]["media_type"], "image/png");
+    assert_eq!(content[2]["text"], "hi");
+
+    let c3 = cards::detach(&r, c.id, "1-screen-shot-1.png").unwrap();
+    assert_eq!(c3.images, ["2-shot.jpg"]);
+    assert!(!cards::images_dir(&r, c.id).join("1-screen-shot-1.png").exists());
+    // The free number is reused only once its file is gone.
+    let c4 = cards::attach(&r, c.id, "again.png", b"p").unwrap();
+    assert_eq!(c4.images, ["2-shot.jpg", "1-again.png"]);
+    assert_eq!(cards::get(&r, c.id).unwrap().images.len(), 2, "kept in the card file");
 }

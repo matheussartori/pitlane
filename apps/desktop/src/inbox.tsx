@@ -3,6 +3,7 @@ import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid
 import { api, type Approval, type Card, type RunMeta } from "./api";
 import { ApprovalBlock } from "./approvals";
 import { Dictate } from "./dictate";
+import { Prose, inline } from "./prose";
 import { openQuestions, type OpenQuestion } from "./cards";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
@@ -77,6 +78,38 @@ export function QuestionBlock(props: {
         </button>
       </form>
     </div>
+  );
+}
+
+/**
+ * What a question is about, under it: the asker's context, and the card itself (spec and what
+ * the analysis found) a click away, so answering never means leaving for the card.
+ */
+export function QuestionAbout(props: { q: OpenQuestion; card?: boolean }) {
+  const notes = () => (props.q.card.notes ?? []).filter((n) => n.by === "claude");
+  return (
+    <>
+      <Show when={props.q.context}>
+        <p class="q-context">{inline(props.q.context!)}</p>
+      </Show>
+      <Show when={props.card !== false && (props.q.card.body.trim() || notes().length)}>
+        <details class="q-card">
+          <summary>
+            Read card #{props.q.card.id}
+            <Show when={(props.q.card.images ?? []).length}> · {(props.q.card.images ?? []).length} images</Show>
+          </summary>
+          <div class="q-card-body">
+            <Show when={props.q.card.body.trim()}>
+              <Prose text={props.q.card.body} />
+            </Show>
+            <Show when={notes().length}>
+              <p class="cs-label">What Claude found</p>
+              <For each={notes()}>{(n) => <Prose text={n.text} />}</For>
+            </Show>
+          </div>
+        </details>
+      </Show>
+    </>
   );
 }
 
@@ -292,7 +325,8 @@ export function InboxView(props: {
                           onFocusIn={() => setIndex(questions().findIndex((x) => key(x) === key(q)))}
                           onClick={() => setIndex(questions().findIndex((x) => key(x) === key(q)))}
                         >
-                          <p class="inbox-q">{q.text}</p>
+                          <p class="inbox-q">{inline(q.text)}</p>
+                          <QuestionAbout q={q} />
                           <QuestionBlock q={q} selected={isCurrent(q)} busy={busy()} onAnswer={(a) => void answer(q, a)} />
                         </li>
                       )}

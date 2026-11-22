@@ -377,6 +377,37 @@ async fn card_reanswer(path: String, id: u32, question: u32, answer: String) -> 
     .await
 }
 
+/// Attaches an image (base64, as the webview read it) to a card.
+#[tauri::command]
+async fn card_attach(path: String, id: u32, name: String, data: String) -> CmdResult<CardOut> {
+    blocking(move || {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| anyhow::anyhow!("the image did not arrive whole: {e}"))?;
+        Ok(cards::attach(&open(&path)?, id, &name, &bytes)?.into())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn card_detach(path: String, id: u32, file: String) -> CmdResult<CardOut> {
+    blocking(move || Ok(cards::detach(&open(&path)?, id, &file)?.into())).await
+}
+
+/// One of a card's images as a data URL, for the sheet's thumbnails.
+#[tauri::command]
+async fn card_image(path: String, id: u32, file: String) -> CmdResult<String> {
+    blocking(move || {
+        use base64::Engine as _;
+        let ty = cards::image_type(&file).ok_or_else(|| anyhow::anyhow!("{file} is not an image"))?;
+        if file.contains('/') || file.contains("..") {
+            anyhow::bail!("bad image name {file}");
+        }
+        let bytes = std::fs::read(cards::images_dir(&open(&path)?, id).join(&file))?;
+        Ok(format!("data:{ty};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    })
+    .await
+}
+
 // ---------------------------------------------------------------- runs (through the daemon)
 
 /// The `pit` executable that starts the daemon when nobody answers on its socket.
@@ -1266,6 +1297,9 @@ pub fn run() {
             card_update,
             card_answer,
             card_reanswer,
+            card_attach,
+            card_detach,
+            card_image,
             card_reorder,
             card_delete,
             cards_forget,

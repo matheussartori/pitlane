@@ -482,7 +482,8 @@ pub fn handoff_schema() -> Value {
                 "items": { "type": "object", "properties": {
                     "text": { "type": "string" },
                     "options": { "type": "array", "items": { "type": "string" } },
-                    "recommended": { "type": "integer" } }, "required": ["text"] } }
+                    "recommended": { "type": "integer" },
+                    "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is about, what you found, and what each option changes." } }, "required": ["text", "context"] } }
         },
         "required": ["status", "summary"]
     })
@@ -512,6 +513,13 @@ pub fn briefing(repo: &Repo, card: &Card) -> String {
         b.push_str(card.body.trim());
         b.push('\n');
     }
+    if !card.images.is_empty() {
+        b.push_str(&format!(
+            "\n## Images\n\nThe {} attached to this card come with this message, in this order: {}. They are part of the spec.\n",
+            if card.images.len() == 1 { "image".to_owned() } else { format!("{} images", card.images.len()) },
+            card.images.join(", ")
+        ));
+    }
     let answered: Vec<_> = card.questions.iter().filter(|q| q.answer.is_some()).collect();
     if !answered.is_empty() {
         b.push_str("\n## Decisions on this card\n\n");
@@ -539,6 +547,21 @@ pub fn briefing(repo: &Repo, card: &Card) -> String {
     }
     b.push_str("\nWhen you finish, end with the handoff.\n");
     b
+}
+
+/// A user message with images first (the card's screenshots), then the text.
+pub fn claude_user_line_with(text: &str, images: &[(&str, Vec<u8>)]) -> String {
+    use base64::Engine as _;
+    if images.is_empty() {
+        return claude_user_line(text);
+    }
+    let mut content: Vec<Value> = images
+        .iter()
+        .map(|(ty, bytes)| json!({ "type": "image", "source": { "type": "base64", "media_type": ty,
+            "data": base64::engine::general_purpose::STANDARD.encode(bytes) } }))
+        .collect();
+    content.push(json!({ "type": "text", "text": text }));
+    json!({ "type": "user", "message": { "role": "user", "content": content } }).to_string()
 }
 
 /// A user message in Claude Code's stream-json input format.

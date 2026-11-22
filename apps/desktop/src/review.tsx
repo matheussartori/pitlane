@@ -113,7 +113,14 @@ function DiffView(props: {
   const [kept, setKept] = createSignal(loadViewed(`${props.viewedKey}.kept`));
   const [dropping, setDropping] = createSignal<string | null>(null);
   const hunkKey = (file: string, head: string) => `${file}\0${head}`;
-  const files = createMemo(() => parsePatch(props.diff.patch));
+  // Files that did not change keep their object, so their section (open, scroll) stays put.
+  const files = createMemo<ReturnType<typeof parsePatch>>((prev) => {
+    const before = new Map(prev.map((f) => [f.path, f]));
+    return parsePatch(props.diff.patch).map((f) => {
+      const o = before.get(f.path);
+      return o && JSON.stringify(o) === JSON.stringify(f) ? o : f;
+    });
+  }, []);
   const stat = (path: string) => props.diff.files.find((f) => f.path === path);
   const at = (path: string, line: number | undefined) =>
     line == null ? [] : props.findings.map((f, i) => ({ f, i })).filter(({ f }) => f.file === path && f.line === line);
@@ -282,13 +289,16 @@ export function ReviewScreen(props: {
   const [verification] = createResource(() => props.run?.id, (id) => api.runVerification(id));
   const round = () => props.run?.round ?? 0;
   const [scope, setScope] = createSignal<"card" | "round">(round() > 0 ? "round" : "card");
-  const [diff, { refetch: rereadDiff }] = createResource(
+  // Keyed by value: a card or run re-read that changed nothing does not read the diff again.
+  const diffSource = createMemo(
     () => (props.card?.lane ? ([props.repo, props.card.lane, scope() === "round" ? (props.run?.base_sha ?? undefined) : undefined] as const) : null),
-    ([repo, lane, from]) => api.laneDiff(repo, lane, from),
+    undefined,
+    { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
   );
+  const [diff, { refetch: rereadDiff }] = createResource(diffSource, ([repo, lane, from]) => api.laneDiff(repo, lane, from));
   const judgement = () => verification()?.judge?.judgement ?? null;
   const findings = () => judgement()?.findings ?? [];
-  const placed = createMemo(() => anchors(diff() ? parsePatch(diff()!.patch) : [], findings()));
+  const placed = createMemo(() => anchors(diff.latest ? parsePatch(diff.latest.patch) : [], findings()));
   const [picked, setPicked] = createSignal<Set<number>>(new Set());
   const [note, setNote] = createSignal("");
   const [asking, setAsking] = createSignal(false);
@@ -428,8 +438,9 @@ export function ReviewScreen(props: {
                   </button>
                 </div>
               </Show>
-              <Show when={!diff.loading} fallback={<p class="loading-line"><Spinner /> Reading the diff</p>}>
-                <Show when={diff()} fallback={<ErrorLine>{diff.error ? msg(diff.error) : "No lane to compare."}</ErrorLine>}>
+              {/* A re-read keeps the diff on screen (and your scroll); only the first read shows the spinner. */}
+              <Show when={diff.latest !== undefined || !diff.loading} fallback={<p class="loading-line"><Spinner /> Reading the diff</p>}>
+                <Show when={diff.latest} fallback={<ErrorLine>{diff.error ? msg(diff.error) : "No lane to compare."}</ErrorLine>}>
                   {(d) => (
                     <DiffView
                       diff={d()}

@@ -95,12 +95,21 @@
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-top-container,
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-border-bottom-container { display: none !important; }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .label-description { font-size: 11px; }
+/* Tab names read upright and solid: no preview italics, no faded inactive names. */
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .monaco-icon-label,
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .label-name,
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab.italic .label-name,
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .monaco-icon-label.italic .label-name,
+.monaco-workbench .part.editor > .content .editor-group-container > .title .title-label .label-name { font-style: normal !important; }
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .label-name { font-size: 13px; font-weight: 500; letter-spacing: 0; }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .breadcrumbs-control { font-size: 12px; }
 
 /* Status bar: Pitlane's meta line, small and muted on the panel's ground, whatever state VS Code
    colours it for (no folder, debugging, a remote, focus). */
-.monaco-workbench .part.statusbar { font-size: 11.5px; background-color: var(--vscode-sideBar-background) !important; color: var(--pl-muted) !important; border-top: 1px solid var(--pl-rule) !important; }
+.monaco-workbench .part.statusbar { font-size: 11px; background-color: var(--vscode-sideBar-background) !important; color: var(--pl-muted) !important; border-top: 1px solid var(--pl-rule) !important; }
 .monaco-workbench .part.statusbar > .items-container > .statusbar-item > .statusbar-item-label { padding-inline: 6px; }
+/* VS Code fixes the bar at 22px; smaller type and icons give it air above and below. */
+.monaco-workbench .part.statusbar > .items-container > .statusbar-item .codicon { font-size: 13px !important; }
 .monaco-workbench .part.statusbar > .items-container > .statusbar-item.remote-kind,
 .monaco-workbench .part.statusbar > .items-container > .statusbar-item[id="status.host"] { display: none !important; }
 

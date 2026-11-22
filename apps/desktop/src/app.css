@@ -191,7 +191,7 @@ body { background: var(--color-frame); }
 .board-scroll > .board-screen > .board { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .board .col { display: flex; flex-direction: column; min-height: 0; gap: 0; padding-bottom: 0; }
 .board .col-head { flex: none; position: relative; z-index: 1; }
-.col-body { flex: 1; min-height: 0; display: grid; align-content: start; gap: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); padding: var(--space-3xs) var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+.col-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow-x: hidden; gap: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); padding: var(--space-3xs) var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
 /* A rule under the head once the column has scrolled, so cards slide under it, not into it. */
 .col-head:has(+ .col-body[data-scrolled]) { box-shadow: 0 1px 0 var(--color-rule), 0 6px 8px -8px rgb(0 0 0 / 0.45); }
 /* Short screens: back to one page scroll, columns at their natural height. */
@@ -203,6 +203,8 @@ body { background: var(--color-frame); }
 .col-head { margin: 0; }
 .col-empty { color: var(--color-muted); font-size: var(--text-sm); padding: var(--space-xs) var(--space-2xs); max-width: 28ch; }
 .card .card-foot { flex-wrap: nowrap; }
+/* A long URL or path in a title wraps inside the card; the column never scrolls sideways. */
+.card-title, .card-why { overflow-wrap: anywhere; min-width: 0; }
 .lane-tag { font: var(--weight-regular) var(--text-xs)/1.2 var(--font-body); color: var(--color-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .spacer { margin-inline-start: auto; flex-shrink: 0; }
 /* The track at card size: the same stops, ink joins where reached, and the one stop that matters in words. */
@@ -877,3 +879,38 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-add { background: color-mix(in oklab, var(--color-done) 16%, transparent); color: var(--color-ink); }
 .cc-more { color: var(--color-muted); }
 @media (prefers-reduced-motion: reduce) { .cc-dot[data-s="work"] { animation: none; } }
+
+/* Links inside text Claude or you wrote: open in the browser. */
+a.link { color: var(--color-accent-text); text-decoration: underline; text-decoration-color: color-mix(in oklch, var(--color-accent-text) 45%, transparent); text-underline-offset: 0.18em; overflow-wrap: anywhere; cursor: pointer; }
+a.link:hover { text-decoration-color: currentColor; }
+a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 2px; }
+
+/* The spec reads until Edit. */
+.cs-spec-read { min-height: 6lh; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); }
+.cs-spec-read .prose { max-width: none; }
+
+/* A card's images. */
+.img-zone { border-radius: var(--radius-md); transition: box-shadow 120ms ease; }
+.img-zone[data-over] { box-shadow: 0 0 0 2px var(--color-accent); }
+.img-hint { margin: 0; font-size: var(--text-sm); color: var(--color-muted); }
+.img-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-xs); }
+.img-thumb { position: relative; }
+.img-open { display: grid; place-items: center; width: 100%; aspect-ratio: 4 / 3; padding: 0; border: 0; border-radius: var(--radius-md); overflow: hidden; background: var(--color-paper-sunk); box-shadow: var(--ring); cursor: zoom-in; }
+.img-open img { width: 100%; height: 100%; object-fit: cover; }
+.img-open:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.img-remove { position: absolute; top: var(--space-3xs); right: var(--space-3xs); background: color-mix(in oklch, var(--color-paper) 80%, transparent); opacity: 0; }
+.img-thumb:hover .img-remove, .img-remove:focus-visible { opacity: 1; }
+.img-big { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: var(--space-lg); background: rgb(0 0 0 / 0.78); cursor: zoom-out; }
+.img-big img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-md); }
+.img-pending { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3xs); font-size: var(--text-sm); color: var(--color-ink-2); }
+.img-pending li { display: flex; align-items: center; gap: var(--space-xs); }
+.img-pending span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A question carries what it is about, and the card can open right under it. */
+.q-context { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--color-ink-2); max-width: var(--measure); }
+.q-card { font-size: var(--text-sm); }
+.q-card > summary { cursor: pointer; color: var(--color-muted); width: fit-content; }
+.q-card > summary:hover { color: var(--color-ink); }
+.q-card[open] > summary { margin-bottom: var(--space-xs); }
+.q-card-body { display: grid; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); max-height: 50vh; overflow: auto; }
+.q-card-body .prose { font-size: var(--text-md); }

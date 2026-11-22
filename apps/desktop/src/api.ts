@@ -153,6 +153,8 @@ export interface Question {
   text: string;
   options?: string[];
   recommended?: number;
+  /** What it is about and what each option changes, so it can be answered without the card. */
+  context?: string;
   answer?: string;
   answered_at?: string;
   decision?: string;
@@ -180,6 +182,8 @@ export interface Card {
   /** Shared parts of the code it changes; cards sharing one never run together. */
   areas?: string[];
   notes?: CardNote[];
+  /** Attached screenshots, by file name; Claude gets them with the spec. */
+  images?: string[];
   created: string;
   updated: string;
   questions?: Question[];
@@ -625,6 +629,10 @@ export const api = {
     invoke<{ analyzed: { card: number; questions?: number; notes?: number; cost_usd?: number; error?: string }[] }>("cards_analyze", { path, ids }),
   cardAnswer: (path: string, id: number, question: number, answer: string) =>
     invoke<{ decision: string; card: Card }>("card_answer", { path, id, question, answer }),
+  cardAttach: (path: string, id: number, name: string, data: string) => invoke<Card>("card_attach", { path, id, name, data }),
+  cardDetach: (path: string, id: number, file: string) => invoke<Card>("card_detach", { path, id, file }),
+  /** A data URL of one of the card's images. */
+  cardImage: (path: string, id: number, file: string) => invoke<string>("card_image", { path, id, file }),
   /** Choose again on an answered question; its decision is rewritten in place. */
   cardReanswer: (path: string, id: number, question: number, answer: string) =>
     invoke<{ decision: string; card: Card }>("card_reanswer", { path, id, question, answer }),

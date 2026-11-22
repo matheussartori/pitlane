@@ -5,8 +5,11 @@ import { clock, elapsed, money, runStateView } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
+import { CardImages, attachImages, imagesIn } from "./images";
+import { Linked } from "./links";
+import { Prose, inline } from "./prose";
 import { refreshAgents } from "./agents";
-import { DecisionItem, QuestionBlock } from "./inbox";
+import { DecisionItem, QuestionAbout, QuestionBlock } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 
@@ -585,9 +588,9 @@ export function BoardView(props: {
                               </span>
                             </Show>
                           </div>
-                          <div class="card-title">{card.title}</div>
+                          <div class="card-title"><Linked text={card.title} /></div>
                           <Show when={p.why}>
-                            <div class="card-why">{p.why}</div>
+                            <div class="card-why"><Linked text={p.why ?? ""} /></div>
                           </Show>
                           <Show when={card.lane}>
                             <div class="card-foot">
@@ -661,7 +664,8 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
             <p class="ask-card">
               <span class="card-id">#{q.card.id}</span> {q.card.title}
             </p>
-            <p class="inbox-q">{q.text}</p>
+            <p class="inbox-q">{inline(q.text)}</p>
+            <QuestionAbout q={q} />
             <QuestionBlock q={q} selected busy={busy()} onAnswer={(a) => void answer(a)} />
           </div>
         )}
@@ -687,72 +691,6 @@ function ago(at: string, now: number): string {
   return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-/** Inline markdown that notes use: `code` and **bold**. Never HTML. */
-function inline(text: string): JSX.Element {
-  return (
-    <For each={text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean)}>
-      {(part) =>
-        part.startsWith("`") && part.endsWith("`") && part.length > 2 ? (
-          <code>{part.slice(1, -1)}</code>
-        ) : part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
-          <b>{part.slice(2, -2)}</b>
-        ) : (
-          part
-        )
-      }
-    </For>
-  );
-}
-
-/** A note's markdown, small: paragraphs, bullet lists, headings as bold lines, fenced code. */
-export function Prose(props: { text: string }) {
-  const blocks = () => {
-    const out: ({ kind: "p" | "h"; text: string } | { kind: "ul"; items: string[] } | { kind: "pre"; text: string })[] = [];
-    const lines = props.text.replace(/\r/g, "").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      if (line.startsWith("```")) {
-        const code: string[] = [];
-        while (++i < lines.length && !lines[i]!.startsWith("```")) code.push(lines[i]!);
-        out.push({ kind: "pre", text: code.join("\n") });
-      } else if (/^\s*[-*] /.test(line)) {
-        const last = out[out.length - 1];
-        const item = line.replace(/^\s*[-*] /, "");
-        if (last?.kind === "ul") last.items.push(item);
-        else out.push({ kind: "ul", items: [item] });
-      } else if (/^#{1,6} /.test(line)) {
-        out.push({ kind: "h", text: line.replace(/^#+ /, "") });
-      } else if (line.trim() === "") {
-        out.push({ kind: "p", text: "" });
-      } else {
-        const last = out[out.length - 1];
-        if (last?.kind === "p" && last.text) last.text += ` ${line.trim()}`;
-        else out.push({ kind: "p", text: line.trim() });
-      }
-    }
-    return out.filter((b) => !(b.kind === "p" && !b.text));
-  };
-  return (
-    <div class="prose">
-      <For each={blocks()}>
-        {(b) =>
-          b.kind === "ul" ? (
-            <ul>
-              <For each={b.items}>{(x) => <li>{inline(x)}</li>}</For>
-            </ul>
-          ) : b.kind === "pre" ? (
-            <pre>{b.text}</pre>
-          ) : b.kind === "h" ? (
-            <p class="prose-h">{inline(b.text)}</p>
-          ) : (
-            <p>{inline(b.text)}</p>
-          )
-        }
-      </For>
-    </div>
-  );
-}
-
 const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
   claude: { name: "Claude", icon: "spark" },
   you: { name: "You", icon: "person" },
@@ -773,6 +711,9 @@ export function CardSheet(props: {
   const [title, setTitle] = createSignal(props.card.title);
   const [body, setBody] = createSignal(props.card.body);
   let specRef: HTMLTextAreaElement | undefined;
+  // The spec reads as text (its links open) until Edit; an empty one opens for writing.
+  const [editing, setEditing] = createSignal(!props.card.body.trim());
+  let addImages: ((files: File[]) => void) | undefined;
   const [state, setState] = createSignal<CardState>(props.card.state);
   const [lane, setLane] = createSignal(props.card.lane ?? "");
   const [busy, setBusy] = createSignal(false);
@@ -924,30 +865,61 @@ export function CardSheet(props: {
         </>
       }
     >
-      <div class="cs-grid">
+      <div
+        class="cs-grid"
+        onPaste={(e) => {
+          const files = imagesIn(e.clipboardData);
+          if (!files.length) return;
+          e.preventDefault();
+          addImages?.(files);
+        }}
+      >
         <div class="cs-main">
           <section class="cs-section">
             <div class="field-head">
               <label class="cs-label" for="card-body">
                 Spec
               </label>
-              <Dictate field={() => specRef} value={body} onChange={(v) => (setBody(v), specRef && fit(specRef))} />
+              <Show
+                when={editing()}
+                fallback={
+                  <button type="button" class="btn btn-ghost" onClick={() => setEditing(true)}>
+                    <Icon name="edit" small /> Edit
+                  </button>
+                }
+              >
+                <Dictate field={() => specRef} value={body} onChange={(v) => (setBody(v), specRef && fit(specRef))} />
+              </Show>
             </div>
-            <textarea
-              ref={(el) => {
-                specRef = el;
-                requestAnimationFrame(() => fit(el));
-              }}
-              id="card-body"
-              class="input textarea cs-spec"
-              placeholder="Goal, acceptance criteria, out of scope, how to verify"
-              value={body()}
-              onInput={(e) => {
-                setBody(e.currentTarget.value);
-                fit(e.currentTarget);
-              }}
-            />
+            <Show
+              when={editing()}
+              fallback={
+                <div class="cs-spec-read" onDblClick={() => setEditing(true)} title="Double-click or Edit to change it">
+                  <Prose text={body()} />
+                </div>
+              }
+            >
+              <textarea
+                ref={(el) => {
+                  specRef = el;
+                  requestAnimationFrame(() => {
+                    fit(el);
+                    if (body()) el.focus();
+                  });
+                }}
+                id="card-body"
+                class="input textarea cs-spec"
+                placeholder="Goal, acceptance criteria, out of scope, how to verify"
+                value={body()}
+                onInput={(e) => {
+                  setBody(e.currentTarget.value);
+                  fit(e.currentTarget);
+                }}
+              />
+            </Show>
           </section>
+
+          <CardImages repo={props.repo} card={props.card} onChanged={props.onChanged} ref={(add) => (addImages = add)} />
 
           <Show when={open().length > 0}>
             <section class="cs-section">
@@ -957,7 +929,8 @@ export function CardSheet(props: {
               <For each={open()}>
                 {(q) => (
                   <div class="sheet-question">
-                    <p class="inbox-q">{q.text}</p>
+                    <p class="inbox-q">{inline(q.text)}</p>
+                    <QuestionAbout q={q} card={false} />
                     <QuestionBlock q={q} selected={false} busy={busy()} onAnswer={(a) => void answer(q.id, a)} />
                   </div>
                 )}
@@ -1104,8 +1077,12 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
   const [title, setTitle] = createSignal("");
   const [body, setBody] = createSignal("");
   let newSpecRef: HTMLTextAreaElement | undefined;
+  let newPicker: HTMLInputElement | undefined;
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  // Images wait here until the card exists, then go on it.
+  const [pending, setPending] = createSignal<File[]>([]);
+  const take = (files: File[]) => files.length && setPending((p) => [...p, ...files]);
 
   async function create(e: Event) {
     e.preventDefault();
@@ -1114,6 +1091,7 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
     setError(null);
     try {
       const c = await api.cardAdd(props.repo, title().trim(), body());
+      if (pending().length) await attachImages(props.repo, c.id, pending());
       toast({ tone: "done", title: `#${c.id} ${c.title}`, body: c.file });
       props.onDone(c.id);
       props.onClose();
@@ -1143,7 +1121,20 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
         </>
       }
     >
-      <form id="new-card" class="sheet-form" onSubmit={create}>
+      <form
+        id="new-card"
+        class="sheet-form"
+        onSubmit={create}
+        onPaste={(e) => {
+          const files = imagesIn(e.clipboardData);
+          if (files.length) (e.preventDefault(), take(files));
+        }}
+        onDragOver={(e) => e.dataTransfer?.types.includes("Files") && e.preventDefault()}
+        onDrop={(e) => {
+          const files = imagesIn(e.dataTransfer);
+          if (files.length) (e.preventDefault(), take(files));
+        }}
+      >
         <div class="field">
           <label class="field-label" for="new-card-title">
             Title
@@ -1175,6 +1166,41 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
             onInput={(e) => setBody(e.currentTarget.value)}
           />
           <span class="field-help">Saved to this repository's board in ~/.pitlane, the same in every branch and worktree.</span>
+        </div>
+        <div class="field">
+          <div class="field-head">
+            <span class="field-label">
+              Images <span class="count">{pending().length}</span>
+            </span>
+            <button type="button" class="btn btn-ghost" onClick={() => newPicker?.click()}>
+              <Icon name="plus" small /> Add
+            </button>
+            <input
+              ref={newPicker}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              hidden
+              onChange={(e) => {
+                take(Array.from(e.currentTarget.files ?? []));
+                e.currentTarget.value = "";
+              }}
+            />
+          </div>
+          <Show when={pending().length > 0} fallback={<span class="field-help">Drop screenshots here, pick them with Add, or paste with ⌘V.</span>}>
+            <ul class="img-pending">
+              <For each={pending()}>
+                {(f, i) => (
+                  <li>
+                    <span>{f.name || "Pasted image"}</span>
+                    <button type="button" class="btn btn-ghost btn-icon" aria-label="Remove" onClick={() => setPending((p) => p.filter((_, j) => j !== i()))}>
+                      <Icon name="close" small />
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
         </div>
       </form>
       <Show when={error()}>

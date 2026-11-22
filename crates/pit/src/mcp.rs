@@ -161,7 +161,8 @@ fn question_schema() -> Value {
         "properties": {
             "text": { "type": "string", "description": "The question, in one sentence." },
             "options": { "type": "array", "items": { "type": "string" }, "description": "Two to four answers to pick from." },
-            "recommended": { "type": "integer", "description": "0-based index of the option you recommend." }
+            "recommended": { "type": "integer", "description": "0-based index of the option you recommend." },
+            "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is about, what you found, and what each option changes." }
         },
         "required": ["text"]
     })

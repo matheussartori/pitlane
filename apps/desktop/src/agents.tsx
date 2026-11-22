@@ -8,7 +8,7 @@ import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
 import { toast } from "./ui";
 import { ApprovalBlock } from "./approvals";
-import { Prose } from "./board";
+import { Prose } from "./prose";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 

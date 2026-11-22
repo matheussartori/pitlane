@@ -105,6 +105,7 @@ export interface OpenQuestion {
   text: string;
   options: string[];
   recommended?: number;
+  context?: string;
   /** 1-based position among the card's open questions, and how many are open. */
   index: number;
   of: number;
@@ -121,6 +122,7 @@ export function openQuestions(cards: Card[]): OpenQuestion[] {
       text: q.text,
       options: q.options ?? [],
       recommended: q.recommended,
+      context: q.context,
       index: i + 1,
       of: open.length,
     }));

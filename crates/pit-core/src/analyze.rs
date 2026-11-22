@@ -16,7 +16,8 @@ otherwise stop a run (where scope ends, whether related parts are in or out, whi
 to change). Never ask how the work gets done or lands (worktrees, branches, commits, pushing, merging, tests): \
 Pitlane and the run decide that. Ask only what the code and the \
 spec cannot answer and what would change the work (scope, behaviour, a choice between real alternatives); never \
-ask what you can find out by reading. Each question gets two to four options and the one you recommend. Notes say \
+ask what you can find out by reading. Each question gets two to four options, the one you recommend, and a context the person can answer from \
+without opening the card (they read the questions one after another, away from the spec). Notes say \
 what you found that the working session needs: where the code is (paths and symbols), how it fits together, \
 risks, and how to verify. Keep each note short and specific. If the card is clear and small, return no questions. \
 You also say how this card sits among the other cards of the same batch, because they run in parallel on branches \
@@ -34,8 +35,9 @@ pub fn schema() -> Value {
             "questions": { "type": "array", "items": { "type": "object", "properties": {
                 "text": { "type": "string" },
                 "options": { "type": "array", "items": { "type": "string" } },
-                "recommended": { "type": "integer", "description": "0-based index into options." }
-            }, "required": ["text", "options"] } },
+                "recommended": { "type": "integer", "description": "0-based index into options." },
+                "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is about, what you found, and what each option changes." }
+            }, "required": ["text", "options", "context"] } },
             "notes": { "type": "array", "items": { "type": "string" }, "description": "Findings in markdown, one per item." },
             "after": { "type": "array", "items": { "type": "integer" }, "description": "Ids of cards in this batch that must land first." },
             "areas": { "type": "array", "items": { "type": "string" }, "description": "Shared parts of the code this card changes, short lowercase names." }
