@@ -79,12 +79,15 @@ pub fn ensure(resources: Option<&Path>, pitlane_home: &Path) -> Result<PathBuf> 
 }
 
 /// Pitlane's colours, under VS Code's own dark and light themes, merged into the settings. A
-/// settings file Pitlane cannot read (comments, a typo) is left alone.
-pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>, mode: &str) -> Result<()> {
+/// settings file Pitlane cannot read (comments, a typo) is left alone. True when the scheme VS
+/// Code should show changed: a loaded VS Code does not pick that up from the file by itself.
+pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>, mode: &str) -> Result<bool> {
     first_settings(pitlane_home)?;
     let file = data(pitlane_home).join("User/settings.json");
-    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&file)?) else { return Ok(()) };
-    let Some(obj) = v.as_object_mut() else { return Ok(()) };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&file)?) else { return Ok(false) };
+    let Some(obj) = v.as_object_mut() else { return Ok(false) };
+    let scheme = |o: &serde_json::Map<String, serde_json::Value>| (o.get("window.autoDetectColorScheme").cloned(), o.get("workbench.colorTheme").cloned());
+    let before = scheme(obj);
     look(obj);
     // Pitlane's appearance: VS Code follows the system, or holds the scheme Pitlane holds.
     match mode {
@@ -103,8 +106,9 @@ pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json
         c.insert("[Dark Modern]".into(), serde_json::Value::Object(dark));
         c.insert("[Light Modern]".into(), serde_json::Value::Object(light));
     }
+    let changed = v.as_object().map(scheme) != Some(before);
     std::fs::write(&file, serde_json::to_string_pretty(&v)?)?;
-    Ok(())
+    Ok(changed)
 }
 
 fn password() -> String {

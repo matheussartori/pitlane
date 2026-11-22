@@ -1019,8 +1019,19 @@ fn code_server(app: &tauri::AppHandle) -> Result<PathBuf> {
 
 /// Pitlane's colours for VS Code's dark and light themes.
 #[tauri::command]
-async fn vscode_theme(dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>, mode: Option<String>) -> CmdResult<()> {
-    blocking(move || vscode::write_theme(&default_homes().1, dark, light, mode.as_deref().unwrap_or("system"))).await
+async fn vscode_theme(app: tauri::AppHandle, dark: serde_json::Map<String, serde_json::Value>, light: serde_json::Map<String, serde_json::Value>, mode: Option<String>) -> CmdResult<()> {
+    let changed = blocking(move || vscode::write_theme(&default_homes().1, dark, light, mode.as_deref().unwrap_or("system"))).await?;
+    // A loaded VS Code keeps the scheme it started with: reload it to follow Pitlane's (open
+    // editors come back, unsaved text with them, from VS Code's own backup).
+    if changed {
+        let state = app.state::<CodeView>();
+        for v in state.views.lock().unwrap().iter() {
+            if let Some(wv) = app.get_webview(&v.label) {
+                let _ = wv.eval("location.reload()");
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn code_server_running(app: &tauri::AppHandle) -> CmdResult<vscode::Running> {
@@ -1225,6 +1236,47 @@ async fn vscode_open(app: tauri::AppHandle, path: String, line: Option<u32>, col
 #[tauri::command]
 fn term_open(app: tauri::AppHandle, terms: tauri::State<'_, term::Terms>, cwd: String, label: String, cols: u16, rows: u16) -> CmdResult<term::TermInfo> {
     terms.open(term::app_sink(&app), &cwd, &label, cols, rows).map_err(|e| format!("{e:#}"))
+}
+
+/// "Continue in Claude Code": the official CLI resumes a finished agent session in a terminal,
+/// in the folder the agent worked in and on the account it ran on (Claude Code keeps sessions per
+/// folder and per configuration directory). Pitlane only points it at them; the login stays Claude Code's.
+#[tauri::command]
+async fn term_resume(app: tauri::AppHandle, run: String, cols: u16, rows: u16) -> CmdResult<term::TermInfo> {
+    blocking(move || {
+        let home = default_homes().1;
+        if run.is_empty() || run.contains(['/', '\\', '.']) {
+            bail!("{run:?} is not a run");
+        }
+        let text = std::fs::read_to_string(runs::runs_dir(&home).join(&run).join("meta.json")).with_context(|| format!("no run {run}"))?;
+        let meta: RunMeta = serde_json::from_str(&text)?;
+        if meta.state.is_live() {
+            bail!("the agent is still working; stop it first, so two Claude Codes never write the same session");
+        }
+        let sid = meta.session_id.trim();
+        if sid.is_empty() || !sid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            bail!("this session has no Claude Code session to resume");
+        }
+        let mut args = vec!["claude".to_owned(), "--resume".to_owned(), sid.to_owned()];
+        if let Some(m) = meta.model.as_deref().filter(|m| !m.is_empty()) {
+            args.extend(["--model".into(), m.to_owned()]);
+        }
+        if let Some(e) = meta.effort.as_deref().filter(|e| !e.is_empty()) {
+            args.extend(["--effort".into(), e.to_owned()]);
+        }
+        let mut env = Vec::new();
+        if let Some(dir) = accounts::profile_dir(&meta.account, &home) {
+            env.push(("CLAUDE_CONFIG_DIR".to_owned(), dir.to_string_lossy().into_owned()));
+        }
+        if let Some(helper) = Routing::load(&home).ok().and_then(|r| r.account(&meta.account).and_then(|a| a.api_key_helper.clone())) {
+            args.extend(["--settings".into(), serde_json::json!({ "apiKeyHelper": helper }).to_string()]);
+        }
+        let cwd = [&meta.worktree, &meta.repo].into_iter().find(|p| !p.as_os_str().is_empty() && p.is_dir()).context("the folder the agent worked in is gone")?;
+        let label = format!("#{} {}", meta.card, meta.card_title);
+        let terms = app.state::<term::Terms>();
+        terms.launch(term::app_sink(&app), &cwd.to_string_lossy(), &label, cols, rows, Some(term::Program { args, env, session: Some(sid.to_owned()) }))
+    })
+    .await
 }
 
 /// Opens a web link in the person's browser (links clicked in a terminal). Only http and https.
@@ -1454,6 +1506,7 @@ pub fn run() {
             plan,
             files_list,
             term_open,
+            term_resume,
             vscode_theme,
             vscode_prewarm,
             vscode_places,
