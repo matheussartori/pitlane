@@ -336,7 +336,7 @@ body { background: var(--color-frame); }
 .main:has(.review-screen) { overflow: hidden; padding-bottom: var(--space-md); }
 .review-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--space-lg); min-height: 0; }
 .review-main { overflow: auto; min-height: 0; display: grid; align-content: start; gap: var(--space-md); padding-right: var(--space-2xs); }
-.review-side { overflow: auto; min-height: 0; display: grid; align-content: start; gap: var(--space-sm); }
+.review-side { overflow-y: auto; overflow-x: hidden; min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: var(--space-sm); overflow-wrap: anywhere; }
 .walkthrough { display: grid; gap: var(--space-xs); font-size: var(--text-md); color: var(--color-ink); max-width: var(--measure); }
 .review-diff { display: grid; gap: var(--space-sm); }
 .review-diff .diff-file { padding-block: var(--space-2xs); }
@@ -363,10 +363,10 @@ body { background: var(--color-frame); }
 .review-side .side-title:first-child { margin-top: 0; }
 .review-side > p { font-size: var(--text-sm); color: var(--color-ink-2); }
 .review-side > .chip { justify-self: start; }
-.findings { list-style: none; margin: 0; padding: 0; display: grid; }
+.findings { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .finding { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--space-xs); align-items: baseline; padding: var(--space-xs) 0; border-top: 1px solid var(--color-rule); font-size: var(--text-sm); color: var(--color-ink-2); }
 .finding .check { align-self: center; }
-.finding-jump { font-family: var(--font-mono); font-size: var(--text-xs); justify-self: start; }
+.finding-jump { font-family: var(--font-mono); font-size: var(--text-xs); justify-self: start; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
 .finding-text { min-width: 0; }
 .review-verdict { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-md); color: var(--color-ink); }
 .review-verdict .icon { color: var(--color-accent-text); }
