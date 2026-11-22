@@ -137,10 +137,10 @@
 .panel-meta { margin-inline-start: auto; display: flex; align-items: center; gap: var(--space-xs); color: var(--color-muted); font-size: var(--text-xs); }
 
 /* ---------- Board ---------- */
-.board { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: var(--space-md); min-width: 0; overflow-x: auto; }
-/* Each column is a well: sunk, ringed, so four groups read as four places, not one stream. */
-.col { display: grid; align-content: start; gap: var(--space-xs); min-width: 0; padding: var(--space-2xs) var(--space-xs) var(--space-xs); background: var(--color-paper-sunk); border-radius: var(--radius-lg); box-shadow: var(--ring); }
-.col-head { display: flex; align-items: center; gap: var(--space-xs); height: 30px; padding-inline: var(--space-2xs); font: var(--weight-strong) var(--text-sm)/1 var(--font-body); color: var(--color-ink-2); }
+.board { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: var(--space-lg); min-width: 0; overflow-x: auto; }
+/* Columns sit open on the panel, as in Warp: no box around them, a hairline under the head and air between them. Cards are the only filled shapes. */
+.col { display: grid; align-content: start; gap: var(--space-xs); min-width: 0; padding: 0; background: none; }
+.col-head { display: flex; align-items: center; gap: var(--space-xs); height: 32px; padding-inline: var(--space-2xs); margin-bottom: var(--space-2xs); box-shadow: 0 1px 0 var(--color-rule); font: var(--weight-strong) var(--text-sm)/1 var(--font-body); color: var(--color-ink-2); }
 .col-head > .icon { color: var(--color-muted); }
 .col-head[data-hot] > .icon { color: var(--color-accent-text); }
 .col-head .count { margin-inline-start: auto; }
@@ -148,15 +148,15 @@
 /* The one action a column offers (Run all on the Backlog): quiet text, never a second primary. */
 .col-action { height: 22px; padding-inline: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink); }
 .col-action .icon { color: var(--color-accent-text); }
-.card { display: grid; gap: var(--space-2xs); padding: var(--space-xs) var(--space-sm) var(--space-sm); background: var(--color-paper-2); border-radius: var(--radius-md); box-shadow: var(--ring); cursor: pointer; min-width: 0;
+.card { display: grid; gap: 6px; padding: 10px var(--space-sm) var(--space-sm); background: var(--color-paper-2); border-radius: var(--radius-lg); box-shadow: none; cursor: pointer; min-width: 0;
   transition: box-shadow var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
 .card:hover, .card.is-hover { box-shadow: var(--ring-strong); background: var(--color-paper-3); }
 .card:focus-visible, .card.is-focus { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .card[aria-selected="true"] { box-shadow: inset 0 0 0 1px var(--color-accent); }
 /* Your move: a 2px stripe on the left, in accent; in fail when what waits is broken. Never a wash. */
-.card[data-state="needs"] { box-shadow: inset 2px 0 0 var(--color-accent), var(--ring); }
+.card[data-state="needs"] { box-shadow: inset 2px 0 0 var(--color-accent); }
 .card[data-state="needs"]:hover { box-shadow: inset 2px 0 0 var(--color-accent), var(--ring-strong); }
-.card[data-state="needs"][data-tone="failed"] { box-shadow: inset 2px 0 0 var(--color-fail), var(--ring); }
+.card[data-state="needs"][data-tone="failed"] { box-shadow: inset 2px 0 0 var(--color-fail); }
 .card[data-state="needs"][data-tone="failed"]:hover { box-shadow: inset 2px 0 0 var(--color-fail), var(--ring-strong); }
 /* Landed work steps back: it is done, the eye goes elsewhere. */
 .card[data-state="landed"] .card-title { color: var(--color-ink-2); font-weight: var(--weight-regular); }

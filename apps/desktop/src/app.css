@@ -188,12 +188,12 @@ body { background: var(--color-frame); }
 /* Trello-like: the board fills the screen and each column scrolls on its own; the page does not. */
 .board-scroll:has(> .board-screen) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: var(--space-md); }
 .board-scroll > .board-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-md); }
-.board-scroll > .board-screen > .board { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.board-scroll > .board-screen > .board { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); padding-inline: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); overflow: hidden; } /* room for the columns' scroll gutters, so the board itself never scrolls sideways */
 .board .col { display: flex; flex-direction: column; min-height: 0; gap: 0; padding-bottom: 0; }
 .board .col-head { flex: none; position: relative; z-index: 1; }
-.col-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow-x: hidden; gap: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); padding: var(--space-3xs) var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+.col-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow-x: hidden; gap: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); padding: var(--space-3xs) var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--color-rule-strong) transparent; scrollbar-gutter: stable; }
 /* A rule under the head once the column has scrolled, so cards slide under it, not into it. */
-.col-head:has(+ .col-body[data-scrolled]) { box-shadow: 0 1px 0 var(--color-rule), 0 6px 8px -8px rgb(0 0 0 / 0.45); }
+.col-head:has(+ .col-body[data-scrolled]) { box-shadow: 0 1px 0 var(--color-rule-strong); }
 /* Short screens: back to one page scroll, columns at their natural height. */
 @media (max-height: 520px) {
   .board-scroll:has(> .board-screen) { overflow: auto; display: block; }
@@ -784,7 +784,8 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .col-forget .icon { color: var(--color-muted); }
 .cs-forget { margin-inline-start: auto; height: 22px; font-size: var(--text-xs); color: var(--color-muted); }
 .forget-list { display: grid; gap: var(--space-xs); margin: var(--space-sm) 0; padding-inline-start: var(--space-md); }
-.board-ask { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); }
+.board-ask { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-sm); border-radius: var(--radius-lg); background: var(--color-paper-2); }
+.board-ask:hover { box-shadow: var(--ring); }
 .board-ask:focus-within { box-shadow: var(--ring-strong); }
 .board-ask .ag-prompt { line-height: 28px; }
 .board-ask > .btn { height: 28px; padding-inline: var(--space-xs); font-size: var(--text-sm); } /* Dictate and Ask share one height, size and baseline */
