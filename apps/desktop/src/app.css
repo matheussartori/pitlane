@@ -848,3 +848,28 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
   .report-del, .report-summary[data-fail] { color: #a61b1b !important; }
   .report-card { border-color: #ddd; }
 }
+
+/* ---------------------------------------------------------------- agent sessions, as Claude Code draws them */
+.cc-msg, .cc-call { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); align-items: start; }
+.cc-msg { margin-block: var(--space-xs); }
+.cc-dot { color: var(--color-ink); line-height: inherit; }
+.cc-dot[data-s="ok"] { color: var(--color-done); }
+.cc-dot[data-s="fail"] { color: var(--color-fail); }
+.cc-dot[data-s="work"] { color: var(--color-muted); animation: shimmer 1.2s var(--ease-in-out) infinite; }
+.cc-dot[data-s="ended"] { color: var(--color-muted); }
+.cc-text { min-width: 0; color: var(--color-ink); font-family: var(--font-body); font-size: 13.5px; line-height: 1.55; }
+.cc-text :where(p, ul, pre) { margin: 0 0 var(--space-2xs); }
+.cc-text code { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-accent-text); }
+.cc-text pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: var(--color-paper-2); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; }
+.cc-tool { margin-block: var(--space-2xs); }
+.ag-spawn.cc-call { padding: 0; margin-block: var(--space-2xs); }
+.cc-name { color: var(--color-ink); font-weight: var(--weight-strong); }
+.cc-arg { color: var(--color-ink-2); overflow-wrap: anywhere; }
+.cc-result { padding-inline-start: 1.4em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-diff { margin: var(--space-3xs) 0 var(--space-3xs) 1.4em; padding-block: 2px; border-radius: var(--radius-sm); background: var(--color-paper); box-shadow: var(--ring); font: 12px/1.5 var(--font-mono); overflow-x: auto; }
+.cc-diff > div { padding-inline: var(--space-xs); white-space: pre; }
+.cc-sign { display: inline-block; width: 1.4em; color: var(--color-muted); user-select: none; }
+.cc-del { background: color-mix(in oklab, var(--color-fail) 16%, transparent); color: var(--color-ink); }
+.cc-add { background: color-mix(in oklab, var(--color-done) 16%, transparent); color: var(--color-ink); }
+.cc-more { color: var(--color-muted); }
+@media (prefers-reduced-motion: reduce) { .cc-dot[data-s="work"] { animation: none; } }

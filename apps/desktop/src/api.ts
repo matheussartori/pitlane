@@ -378,8 +378,8 @@ export type Decision = "once" | "run" | "always" | "deny";
 export type RunEvent =
   | { kind: "started"; model: string; session: string }
   | { kind: "text"; text: string; parent?: string }
-  | { kind: "tool"; id: string; name: string; detail: string; parent?: string }
-  | { kind: "tool-done"; id: string; ok: boolean; detail: string; parent?: string }
+  | { kind: "tool"; id: string; name: string; detail: string; parent?: string; change?: { old: string; new: string; cut: number } }
+  | { kind: "tool-done"; id: string; ok: boolean; detail: string; parent?: string; lines?: number }
   | { kind: "said"; text: string }
   | { kind: "quota"; window: string; used: number; resets_at: number }
   | { kind: "finished"; ok: boolean; cost_usd: number; duration_ms: number; turns: number; tokens: Tokens; handoff: Handoff | null; denied: string[] }

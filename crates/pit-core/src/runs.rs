@@ -244,6 +244,9 @@ pub enum RunEvent {
         detail: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
+        /// What an edit puts in (Edit, MultiEdit, Write): shown as a diff, like Claude Code does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        change: Option<Change>,
     },
     ToolDone {
         id: String,
@@ -251,6 +254,9 @@ pub enum RunEvent {
         detail: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
+        /// How many lines the result had ("Read 120 lines").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lines: Option<usize>,
     },
     /// A message from the person, sent while the agent works.
     Said { text: String },
@@ -306,6 +312,7 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
                             name: s(b, "name"),
                             detail: tool_detail(&s(b, "name"), b.get("input").unwrap_or(&Value::Null)),
                             parent: parent.clone(),
+                            change: tool_change(&s(b, "name"), b.get("input").unwrap_or(&Value::Null)),
                         }),
                         _ => None,
                     })
@@ -320,11 +327,15 @@ pub fn read_claude_line(v: &Value) -> Vec<RunEvent> {
                     .iter()
                     .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
                     .filter(|b| !s(b, "content").starts_with("Structured output provided"))
-                    .map(|b| RunEvent::ToolDone {
-                        id: s(b, "tool_use_id"),
-                        ok: !b.get("is_error").and_then(Value::as_bool).unwrap_or(false),
-                        detail: first_line(&content_text(b.get("content"))),
-                        parent: parent.clone(),
+                    .map(|b| {
+                        let text = content_text(b.get("content"));
+                        RunEvent::ToolDone {
+                            id: s(b, "tool_use_id"),
+                            ok: !b.get("is_error").and_then(Value::as_bool).unwrap_or(false),
+                            detail: first_line(&text),
+                            parent: parent.clone(),
+                            lines: Some(text.lines().count()).filter(|n| *n > 1),
+                        }
                     })
                     .collect()
             })
@@ -403,6 +414,42 @@ fn tool_detail(name: &str, input: &Value) -> String {
         _ => None,
     };
     first_line(&d.unwrap_or_default())
+}
+
+/// An edit's before and after, cut to what reads well in a live view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Change {
+    pub old: String,
+    pub new: String,
+    /// Lines left out of `old` and `new` together.
+    #[serde(default)]
+    pub cut: usize,
+}
+
+const CHANGE_LINES: usize = 40;
+
+fn tool_change(name: &str, input: &Value) -> Option<Change> {
+    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+    let (old, new) = match name {
+        "Edit" => (s(input, "old_string"), s(input, "new_string")),
+        "Write" => (String::new(), s(input, "content")),
+        "MultiEdit" => {
+            let edits = input.get("edits").and_then(Value::as_array)?;
+            let pick = |k: &str| edits.iter().map(|e| s(e, k)).collect::<Vec<_>>().join("\n…\n");
+            (pick("old_string"), pick("new_string"))
+        }
+        _ => return None,
+    };
+    if old.is_empty() && new.is_empty() {
+        return None;
+    }
+    let cut_to = |t: &str, n: usize| -> (String, usize) {
+        let lines: Vec<&str> = t.lines().collect();
+        if lines.len() <= n { (t.to_owned(), 0) } else { (lines[..n].join("\n"), lines.len() - n) }
+    };
+    let (old, a) = cut_to(&old, CHANGE_LINES / 2);
+    let (new, b) = cut_to(&new, CHANGE_LINES);
+    Some(Change { old, new, cut: a + b })
 }
 
 fn content_text(c: Option<&Value>) -> String {
@@ -626,14 +673,14 @@ mod tests {
         ]}});
         let ev = read_claude_line(&a);
         assert_eq!(ev.len(), 2);
-        assert_eq!(ev[1], RunEvent::Tool { id: "t1".into(), name: "Bash".into(), detail: "npm test -- validate".into(), parent: None });
+        assert_eq!(ev[1], RunEvent::Tool { id: "t1".into(), name: "Bash".into(), detail: "npm test -- validate".into(), parent: None, change: None });
 
         // Inside a subagent, every event names the Task call that opened it.
         let sub = json!({"type":"assistant","parent_tool_use_id":"task1","message":{"content":[{"type":"text","text":"Looking."}]}});
         assert_eq!(read_claude_line(&sub), vec![RunEvent::Text { text: "Looking.".into(), parent: Some("task1".into()) }]);
 
         let u = json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"FAIL validate.test.ts"}]}});
-        assert_eq!(read_claude_line(&u), vec![RunEvent::ToolDone { id: "t1".into(), ok: false, detail: "FAIL validate.test.ts".into(), parent: None }]);
+        assert_eq!(read_claude_line(&u), vec![RunEvent::ToolDone { id: "t1".into(), ok: false, detail: "FAIL validate.test.ts".into(), parent: None, lines: None }]);
 
         let r = json!({"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":4795,"total_cost_usd":0.19,
             "usage":{"input_tokens":2,"output_tokens":367,"cache_read_input_tokens":0,"cache_creation_input_tokens":23181},

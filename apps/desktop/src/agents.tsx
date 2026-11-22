@@ -8,6 +8,7 @@ import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
 import { toast } from "./ui";
 import { ApprovalBlock } from "./approvals";
+import { Prose } from "./board";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -381,12 +382,22 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
     const mm = m();
     if (!mm) return [];
     const s = sub();
+    // Results show under their tool call, as in Claude Code; a result with no call in view
+    // (a failure, say) still shows on its own.
+    const shown = new Set((timelines[mm.id] ?? []).filter((e) => e.kind === "tool").map((e) => (e as { id: string }).id));
     return (timelines[mm.id] ?? []).filter((e) => {
       const p = "parent" in e ? e.parent : undefined;
+      if (e.kind === "quota") return false;
+      if (e.kind === "tool-done" && shown.has(e.id)) return false;
       if (s) return p === s;
-      if (e.kind === "quota" || (e.kind === "tool-done" && e.ok)) return false;
       return !p;
     });
+  });
+  const results = createMemo(() => {
+    const mm = m();
+    const out = new Map<string, Extract<RunEvent, { kind: "tool-done" }>>();
+    for (const e of mm ? (timelines[mm.id] ?? []) : []) if (e.kind === "tool-done") out.set(e.id, e);
+    return out;
   });
   const [text, setText] = createSignal("");
   let log: HTMLDivElement | undefined;
@@ -482,7 +493,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
           </div>
           <div class="ag-log" ref={log} onScroll={(e) => (stick = e.currentTarget.scrollTop + e.currentTarget.clientHeight >= e.currentTarget.scrollHeight - 24)}>
             <For each={events()} fallback={<div class="ag-line ag-muted">{live(mm()) ? "Starting…" : "Nothing recorded."}</div>}>
-              {(e) => <Line e={e} m={mm()} />}
+              {(e) => <Line e={e} m={mm()} done={e.kind === "tool" ? results().get(e.id) : undefined} />}
             </For>
             <Show when={live(mm())}>
               <div class="ag-asks">
@@ -519,21 +530,77 @@ export function AgentPane(props: { onOpenRun: (id: string) => void }) {
   );
 }
 
-function Line(props: { e: RunEvent; m: RunMeta }) {
+/** Claude Code's names for its tools, as its own terminal shows them. */
+const TOOL_LABEL: Record<string, string> = { Edit: "Update", MultiEdit: "Update", Grep: "Search", WebFetch: "Fetch", WebSearch: "Web search", NotebookEdit: "Update" };
+
+/** What a finished tool came to, in one line, the way Claude Code sums it up. */
+function resultLine(name: string, d: Extract<RunEvent, { kind: "tool-done" }>): string {
+  const n = d.lines ?? (d.detail ? 1 : 0);
+  if (!d.ok) return d.detail || "Failed";
+  if (name === "Read") return `Read ${n} line${n === 1 ? "" : "s"}`;
+  if (name === "Edit" || name === "MultiEdit" || name === "Write" || name === "NotebookEdit") return d.detail || "Done";
+  if (name === "Grep" || name === "Glob") return n > 1 ? `Found ${n} results` : d.detail || "No matches";
+  const more = n > 1 ? `  … +${n - 1} lines` : "";
+  return `${d.detail || "Done"}${more}`;
+}
+
+/** An edit as Claude Code shows it: removed lines, then added ones. */
+function Diff(props: { change: { old: string; new: string; cut: number } }) {
+  const old = () => (props.change.old ? props.change.old.split("\n") : []);
+  const add = () => (props.change.new ? props.change.new.split("\n") : []);
+  return (
+    <div class="cc-diff">
+      <For each={old()}>{(l) => <div class="cc-del"><span class="cc-sign">-</span>{l || " "}</div>}</For>
+      <For each={add()}>{(l) => <div class="cc-add"><span class="cc-sign">+</span>{l || " "}</div>}</For>
+      <Show when={props.change.cut > 0}>
+        <div class="cc-more">… {props.change.cut} more line{props.change.cut === 1 ? "" : "s"}</div>
+      </Show>
+    </div>
+  );
+}
+
+function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind: "tool-done" }> }) {
   const e = props.e;
   switch (e.kind) {
     case "text":
-      return <div class="ag-line ag-text">{e.text.trim()}</div>;
-    case "tool":
-      return e.name === "Task" || e.name === "Agent" ? (
-        <button type="button" class="ag-line ag-spawn" onClick={() => selectAgent(props.m.id, e.id)}>
-          <span class="ag-glyph">⤷</span> Subagent: {e.detail || e.name} <span class="ag-muted">open</span>
-        </button>
-      ) : (
-        <div class="ag-line ag-tool">
-          <span class="ag-glyph">●</span> <span class="ag-tool-name">{e.name}</span> <span class="ag-muted">{e.detail}</span>
+      return (
+        <div class="cc-msg">
+          <span class="cc-dot">●</span>
+          <div class="cc-text">
+            <Prose text={e.text.trim()} />
+          </div>
         </div>
       );
+    case "tool": {
+      if (e.name === "Task" || e.name === "Agent")
+        return (
+          <button type="button" class="ag-line ag-spawn cc-call" onClick={() => selectAgent(props.m.id, e.id)}>
+            <span class="cc-dot" data-s={props.done ? (props.done.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
+            <span>
+              <b class="cc-name">Task</b>
+              <span class="cc-arg">({e.detail || e.name})</span> <span class="ag-muted">› open</span>
+            </span>
+          </button>
+        );
+      const d = props.done;
+      return (
+        <div class="cc-tool">
+          <div class="cc-call">
+            <span class="cc-dot" data-s={d ? (d.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
+            <span>
+              <b class="cc-name">{TOOL_LABEL[e.name] ?? e.name}</b>
+              <Show when={e.detail}>
+                <span class="cc-arg">({e.detail})</span>
+              </Show>
+            </span>
+          </div>
+          <Show when={e.change}>{(c) => <Diff change={c()} />}</Show>
+          <Show when={d} fallback={<Show when={live(props.m)}><div class="cc-result ag-muted">⎿  Running…</div></Show>}>
+            {(d) => <div class={`cc-result ${d().ok ? "ag-muted" : "ag-fail"}`}>⎿  {resultLine(e.name, d())}</div>}
+          </Show>
+        </div>
+      );
+    }
     case "tool-done":
       return e.ok ? (
         <div class="ag-line ag-muted">  ⎿ {e.detail}</div>

@@ -75,9 +75,15 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       if (String(args?.run ?? "").includes("analysis"))
         return pairs([
           { kind: "started", model: "sonnet", session: "s" },
-          { kind: "text", text: "Reading the card and the invite routes." },
+          { kind: "text", text: "Reading the card and the invite routes. The limit lives in `src/invites/limit.ts`; **two** callers skip it:\n\n- `sendInvite` in the API\n- the resend job" },
           { kind: "tool", id: "a1", name: "Grep", detail: "rateLimit" },
-          { kind: "tool-done", id: "a1", ok: true, detail: "3 files" },
+          { kind: "tool-done", id: "a1", ok: true, detail: "src/invites/limit.ts", lines: 3 },
+          { kind: "tool", id: "r1", name: "Read", detail: "src/invites/limit.ts" },
+          { kind: "tool-done", id: "r1", ok: true, detail: "export const LIMIT = 10;", lines: 48 },
+          { kind: "tool", id: "e1", name: "Edit", detail: "src/invites/limit.ts", change: { old: "export const LIMIT = 10;", new: "export const LIMIT = 10;\nexport const WINDOW_MS = 60_000;", cut: 0 } },
+          { kind: "tool-done", id: "e1", ok: true, detail: "The file src/invites/limit.ts has been updated." },
+          { kind: "tool", id: "b1", name: "Bash", detail: "npm test -- invites" },
+          { kind: "tool-done", id: "b1", ok: false, detail: "FAIL src/invites/limit.test.ts", lines: 12 },
           { kind: "tool", id: "task1", name: "Task", detail: "Find every caller of sendInvite" },
           { kind: "tool", id: "s1", name: "Grep", detail: "sendInvite(", parent: "task1" },
           { kind: "text", text: "Found two callers.", parent: "task1" },
