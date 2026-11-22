@@ -3,6 +3,7 @@
 
 pub mod accounts;
 pub mod actions;
+pub mod analyze;
 pub mod brief;
 pub mod cards;
 pub mod flow;

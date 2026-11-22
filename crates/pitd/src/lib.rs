@@ -92,6 +92,11 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let no_brief = req.get("no_brief").and_then(Value::as_bool).unwrap_or(false);
             json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, ..Default::default() })? })
         }
+        "analyze" => {
+            let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);
+            let ids: Vec<u32> = serde_json::from_value(req.get("cards").cloned().context("cards is required")?)?;
+            sup.analyze(repo, ids).await?
+        }
         "resume" => {
             let prev = sup.get(run_arg(req)?)?;
             json!({ "run": sup.start(prev.repo.clone(), prev.card, Some(prev.id), Default::default())? })

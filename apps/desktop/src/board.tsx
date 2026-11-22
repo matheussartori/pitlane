@@ -1,5 +1,5 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, type JSX } from "solid-js";
 import { api, cardStates, isLive, type Card, type CardState, type Plan, type RunMeta, type Yard } from "./api";
 import { clock, elapsed, money, runStateView } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
@@ -55,21 +55,25 @@ export function LaneTrack(props: { branch: string | undefined; yard: Yard | null
 }
 
 /** One quiet line for a card the planner would hold back; nothing for one that can start now. */
-function planNote(plan: Plan | null | undefined, id: number): string | null {
+export function planNote(plan: Plan | null | undefined, id: number, cards: Card[] = []): string | null {
   if (!plan) return null;
   const name = (f: string) => {
     const [n, dir] = f.split("/").reverse();
     return dir && /^(index|mod|__init__)\./.test(n!) ? `${dir}/${n}` : n!;
   };
+  const called = (other: number) => {
+    const c = cards.find((x) => x.id === other);
+    return c ? `#${other} ${c.title}` : `#${other}`;
+  };
   const wait = plan.waits.find((w) => w.card === id);
-  if (wait) return `Waits for ${wait.with_lane ?? `#${wait.with_card}`} to land: both touch ${name(wait.files[0]!)}`;
+  if (wait) return `Waits for ${wait.with_lane ?? called(wait.with_card!)} to land: both touch ${name(wait.files[0]!)}`;
   const batch = plan.batches.findIndex((b) => b.includes(id));
   if (batch <= 0) return null;
   const earlier = new Set(plan.batches.slice(0, batch).flat());
   const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1)) || (x.with_card === id && earlier.has(x.card)));
   if (!c) return null;
-  const other = c.card === id ? c.with_card : c.card;
-  return `After #${other}: both touch ${name(c.files[0]!)}`;
+  const other = c.card === id ? c.with_card! : c.card;
+  return `After ${called(other)}: both touch ${name(c.files[0]!)}`;
 }
 
 export function BoardView(props: {
@@ -80,16 +84,29 @@ export function BoardView(props: {
   runs: RunMeta[];
   onOpen: (id: number) => void;
   onNew: () => void;
-  /** Starts every card in `ids`; the board has already left out what the planner holds back. */
-  onRunAll: (ids: number[], held: { id: number; why: string }[]) => void;
-  /** True while Run all is starting its cards. */
-  runningAll: boolean;
-  /** The planner's view of open cards: which should wait, and for what. */
+  /** Starts Run all on these backlog cards, in board order: analyse, ask, then work them. */
+  onRunAll: (ids: number[]) => void;
+  onStopAll: () => void;
+  /** Where Run all is. */
+  phase: "idle" | "analyzing" | "asking" | "working";
+  /** Cards Run all still has to start. */
+  queued: number[];
+  /** The whole board's new order, after a card was dragged. */
+  onReorder: (ids: number[]) => void;
+  /** The planner's view of open cards, only while Run all works. */
   plan?: Plan | null;
 }) {
   const liveRun = (id: number) => props.runs.find((r) => r.card === id && isLive(r.state));
+  // The order you just dragged to, shown until the saved cards come back.
+  const [order, setOrder] = createSignal<number[] | null>(null);
+  createEffect(on(() => props.cards, () => setOrder(null), { defer: true }));
+  const sorted = createMemo(() => {
+    const all = props.cards ?? [];
+    const o = order();
+    return o ? [...all].sort((x, y) => o.indexOf(x.id) - o.indexOf(y.id)) : all;
+  });
   const placed = createMemo(() =>
-    (props.cards ?? []).map((c) => {
+    sorted().map((c) => {
       const asking = props.runs.find((r) => r.card === c.id && isLive(r.state) && r.waiting.length > 0);
       if (c.state === "review" && !asking) {
         const r = reviewSummary(latestRun(props.runs, c.id));
@@ -98,21 +115,83 @@ export function BoardView(props: {
       const p = asking
         ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? "Wants to run" : `Wants ${asking.waiting[0]!.tool}`, why: `Asks to run ${asking.waiting[0]!.detail}` }
         : place(c, props.yard);
-      const note = planNote(props.plan, c.id);
+      const note = props.queued.includes(c.id) ? planNote(props.plan, c.id, props.cards ?? []) : null;
       return { card: c, p: note && p.column === "backlog" ? { ...p, why: note } : p };
     }),
   );
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);
   const needs = () => byColumn("needs").length;
-  // Run all takes the Backlog minus what the planner would hold back (a clash, a lane to land).
   const backlog = () => byColumn("backlog").filter(({ card }) => !liveRun(card.id) && card.state !== "done");
-  const runnable = () => backlog().filter(({ card }) => !planNote(props.plan, card.id)).map(({ card }) => card.id);
-  const held = () =>
-    backlog().flatMap(({ card }) => {
-      const why = planNote(props.plan, card.id);
-      return why ? [{ id: card.id, why }] : [];
-    });
   const colIcon = { needs: "needs", backlog: "queued", progress: "run", landed: "done" } as const;
+
+  // ---- dragging a card up or down its column
+  const [drag, setDrag] = createSignal<{ id: number; col: string; y0: number; dy: number; live: boolean } | null>(null);
+  let dragged = false;
+  const columnEls: Record<string, HTMLElement | undefined> = {};
+
+  function moveTo(col: string, id: number, index: number) {
+    const ids = byColumn(col).map((x) => x.card.id);
+    const from = ids.indexOf(id);
+    if (from < 0 || index === from) return;
+    ids.splice(from, 1);
+    ids.splice(Math.max(0, Math.min(index, ids.length)), 0, id);
+    // The column's new sequence takes the places its cards held in the whole board's order.
+    const all = sorted().map((c) => c.id);
+    const slots = all.map((x, i) => (ids.includes(x) ? i : -1)).filter((i) => i >= 0);
+    slots.forEach((slot, i) => (all[slot] = ids[i]!));
+    setOrder(all);
+    props.onReorder(all);
+  }
+
+  function onPointerDown(e: PointerEvent, col: string, id: number) {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input")) return;
+    setDrag({ id, col, y0: e.clientY, dy: 0, live: false });
+    const move = (ev: PointerEvent) => {
+      const d = drag();
+      if (!d) return;
+      const dy = ev.clientY - d.y0;
+      if (!d.live && Math.abs(dy) < 5) return;
+      setDrag({ ...d, dy, live: true });
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const d = drag();
+      setDrag(null);
+      if (!d?.live) return;
+      dragged = true;
+      setTimeout(() => (dragged = false), 0);
+      // Where it lands: how many of the other cards' middles sit above the pointer.
+      const others = [...(columnEls[d.col]?.querySelectorAll<HTMLElement>("[data-card-id]") ?? [])].filter((el) => Number(el.dataset.cardId) !== d.id);
+      const index = others.filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2 < ev.clientY;
+      }).length;
+      moveTo(d.col, d.id, index);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  /** The line that shows where the dragged card would land: before or after which card. */
+  const gapMark = (col: string, id: number): "before" | "after" | undefined => {
+    const d = drag();
+    if (!d?.live || d.col !== col || d.id === id) return undefined;
+    const others = byColumn(col).map((x) => x.card.id).filter((x) => x !== d.id);
+    const y = d.y0 + d.dy;
+    const els = others.map((x) => columnEls[col]?.querySelector<HTMLElement>(`[data-card-id="${x}"]`));
+    const g = els.filter((el) => {
+      const r = el?.getBoundingClientRect();
+      return r && r.top + r.height / 2 < y;
+    }).length;
+    const from = byColumn(col).findIndex((x) => x.card.id === d.id);
+    if (g === from) return undefined; // where it already is
+    if (g < others.length) return others[g] === id ? "before" : undefined;
+    return others[others.length - 1] === id ? "after" : undefined;
+  };
+
+  const runLabel = () =>
+    props.phase === "analyzing" ? "Analysing" : props.phase === "asking" ? "Answer to go on" : props.phase === "working" ? `Stop (${props.queued.length} queued)` : "Run all";
 
   return (
     <div class="board-screen">
@@ -148,52 +227,67 @@ export function BoardView(props: {
             </div>
           }
         >
-          <div class="board">
+          <div class="board" data-dragging={drag()?.live ? "" : undefined}>
             <For each={columns}>
               {(col) => (
-                <section class="col" aria-label={columnTitle[col]}>
+                <section class="col" aria-label={columnTitle[col]} ref={(el) => (columnEls[col] = el)}>
                   <h2 class="col-head" data-hot={col === "needs" && byColumn(col).length > 0 ? "" : undefined}>
                     <Icon name={colIcon[col]} small />
                     {columnTitle[col]}
                     <span class={col === "needs" && byColumn(col).length > 0 ? "count count-hot" : "count"}>
                       {byColumn(col).length}
                     </span>
-                    <Show when={col === "backlog" && backlog().length > 0}>
+                    <Show when={col === "backlog" && (backlog().length > 0 || props.phase !== "idle")}>
                       <button
                         type="button"
                         class="btn btn-ghost col-action"
-                        disabled={props.runningAll || runnable().length === 0}
-                        aria-busy={props.runningAll}
+                        disabled={props.phase === "analyzing" || props.phase === "asking"}
+                        aria-busy={props.phase === "analyzing"}
                         title={
-                          runnable().length === 0
-                            ? "The planner holds every backlog card back until earlier work lands"
-                            : held().length > 0
-                              ? `Starts ${runnable().map((i) => `#${i}`).join(", ")}; ${held().map((h) => `#${h.id}`).join(", ")} wait on the planner`
-                              : "Claude Code works every backlog card, each in its own worktree"
+                          props.phase === "working"
+                            ? "Stops starting queued cards; runs already going keep going"
+                            : "Claude reads every backlog card first, asks you what it needs one question at a time, then works them top to bottom until the backlog is empty"
                         }
-                        onClick={() => props.onRunAll(runnable(), held())}
+                        onClick={() =>
+                          props.phase === "working" ? props.onStopAll() : props.onRunAll(backlog().map(({ card }) => card.id))
+                        }
                       >
-                        <Show when={props.runningAll} fallback={<Icon name="play" small />}>
+                        <Show when={props.phase === "analyzing"} fallback={<Icon name={props.phase === "working" ? "stop" : "play"} small />}>
                           <Spinner />
                         </Show>
-                        {props.runningAll ? "Starting" : held().length > 0 && runnable().length > 0 ? "Run ready" : "Run all"}
+                        {runLabel()}
                       </button>
                     </Show>
                   </h2>
                   <Show when={byColumn(col).length > 0} fallback={<p class="col-empty">{columnEmpty[col]}</p>}>
                     <For each={byColumn(col)}>
-                      {({ card, p }) => (
+                      {({ card, p }, i) => (
                         <article
                           class="card"
+                          data-card-id={card.id}
                           data-state={p.column === "needs" ? "needs" : p.column === "landed" ? "landed" : undefined}
                           data-tone={p.chip === "failed" ? "failed" : undefined}
+                          data-lifted={drag()?.live && drag()!.id === card.id ? "" : undefined}
+                          data-gap={gapMark(col, card.id)}
+                          style={drag()?.live && drag()!.id === card.id ? { transform: `translateY(${drag()!.dy}px)` } : undefined}
                           tabindex="0"
                           role="button"
-                          aria-label={`Card ${card.id}: ${card.title}`}
-                          onClick={() => props.onOpen(card.id)}
-                          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), props.onOpen(card.id))}
+                          aria-label={`Card ${card.id}: ${card.title}. Alt and the arrow keys move it.`}
+                          onPointerDown={(e) => onPointerDown(e, col, card.id)}
+                          onClick={() => !dragged && props.onOpen(card.id)}
+                          onKeyDown={(e) => {
+                            if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                              e.preventDefault();
+                              moveTo(col, card.id, i() + (e.key === "ArrowUp" ? -1 : 1));
+                              const el = e.currentTarget;
+                              requestAnimationFrame(() => el.isConnected && el.focus());
+                              return;
+                            }
+                            if (e.key === "Enter" || e.key === " ") (e.preventDefault(), props.onOpen(card.id));
+                          }}
                         >
                           <div class="card-top">
+                            <span class="card-id">#{card.id}</span>
                             <Show
                               when={p.column !== "needs" && liveRun(card.id)}
                               fallback={
@@ -210,7 +304,12 @@ export function BoardView(props: {
                                 </span>
                               )}
                             </Show>
-                            <span class="card-id">#{card.id}</span>
+                            <Show when={(card.notes?.length ?? 0) > 0}>
+                              <span class="card-notes" title={`${card.notes!.length} ${card.notes!.length === 1 ? "note" : "notes"}`}>
+                                <Icon name="note" small />
+                                {card.notes!.length}
+                              </span>
+                            </Show>
                           </div>
                           <div class="card-title">{card.title}</div>
                           <Show when={p.why}>
@@ -238,7 +337,152 @@ export function BoardView(props: {
   );
 }
 
+/** Run all's questions, one at a time, each with its card as context. */
+export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: () => void; onDone: () => void; onStop: () => void }) {
+  const open = () => openQuestions(props.cards);
+  // The count at the start, so "2 of 5" holds while answers land.
+  const total = open().length;
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const current = () => open()[0];
+  createEffect(on(() => open().length, (n) => n === 0 && props.onDone(), { defer: true }));
+
+  async function answer(text: string) {
+    const q = current();
+    if (!q) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cardAnswer(props.repo, q.card.id, q.id, text);
+      props.onChanged();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      title="Before the run"
+      onClose={props.onStop}
+      foot={
+        <>
+          <span class="sheet-note">
+            Question {Math.min(total, total - open().length + 1)} of {total}
+          </span>
+          <button type="button" class="btn btn-ghost" onClick={props.onStop} disabled={busy()}>
+            Stop Run all
+          </button>
+          <button type="button" class="btn" onClick={props.onDone} disabled={busy()} title="Cards with open questions wait; the rest start now">
+            Answer later
+          </button>
+        </>
+      }
+    >
+      <Show when={current()} keyed>
+        {(q) => (
+          <div class="ask-one">
+            <p class="ask-card">
+              <span class="card-id">#{q.card.id}</span> {q.card.title}
+            </p>
+            <p class="inbox-q">{q.text}</p>
+            <QuestionBlock q={q} selected busy={busy()} onAnswer={(a) => void answer(a)} />
+          </div>
+        )}
+      </Show>
+      <Show when={error()}>
+        <ErrorLine>{error()}</ErrorLine>
+      </Show>
+    </Sheet>
+  );
+}
+
 // ---------------------------------------------------------------- one card
+
+/** A note's age in words: "now", "12 min", "3 h", "2 d", then the date. */
+function ago(at: string, now: number): string {
+  const t = Date.parse(at);
+  if (Number.isNaN(t)) return at;
+  const m = Math.floor((now - t) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 60 * 24) return `${Math.floor(m / 60)} h ago`;
+  if (m < 60 * 24 * 7) return `${Math.floor(m / 1440)} d ago`;
+  return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/** Inline markdown that notes use: `code` and **bold**. Never HTML. */
+function inline(text: string): JSX.Element {
+  return (
+    <For each={text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean)}>
+      {(part) =>
+        part.startsWith("`") && part.endsWith("`") && part.length > 2 ? (
+          <code>{part.slice(1, -1)}</code>
+        ) : part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
+          <b>{part.slice(2, -2)}</b>
+        ) : (
+          part
+        )
+      }
+    </For>
+  );
+}
+
+/** A note's markdown, small: paragraphs, bullet lists, headings as bold lines, fenced code. */
+export function Prose(props: { text: string }) {
+  const blocks = () => {
+    const out: ({ kind: "p" | "h"; text: string } | { kind: "ul"; items: string[] } | { kind: "pre"; text: string })[] = [];
+    const lines = props.text.replace(/\r/g, "").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (line.startsWith("```")) {
+        const code: string[] = [];
+        while (++i < lines.length && !lines[i]!.startsWith("```")) code.push(lines[i]!);
+        out.push({ kind: "pre", text: code.join("\n") });
+      } else if (/^\s*[-*] /.test(line)) {
+        const last = out[out.length - 1];
+        const item = line.replace(/^\s*[-*] /, "");
+        if (last?.kind === "ul") last.items.push(item);
+        else out.push({ kind: "ul", items: [item] });
+      } else if (/^#{1,6} /.test(line)) {
+        out.push({ kind: "h", text: line.replace(/^#+ /, "") });
+      } else if (line.trim() === "") {
+        out.push({ kind: "p", text: "" });
+      } else {
+        const last = out[out.length - 1];
+        if (last?.kind === "p" && last.text) last.text += ` ${line.trim()}`;
+        else out.push({ kind: "p", text: line.trim() });
+      }
+    }
+    return out.filter((b) => !(b.kind === "p" && !b.text));
+  };
+  return (
+    <div class="prose">
+      <For each={blocks()}>
+        {(b) =>
+          b.kind === "ul" ? (
+            <ul>
+              <For each={b.items}>{(x) => <li>{inline(x)}</li>}</For>
+            </ul>
+          ) : b.kind === "pre" ? (
+            <pre>{b.text}</pre>
+          ) : b.kind === "h" ? (
+            <p class="prose-h">{inline(b.text)}</p>
+          ) : (
+            <p>{inline(b.text)}</p>
+          )
+        }
+      </For>
+    </div>
+  );
+}
+
+const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
+  claude: { name: "Claude", icon: "spark" },
+  you: { name: "You", icon: "person" },
+  judge: { name: "Judge", icon: "verify" },
+};
 
 export function CardSheet(props: {
   repo: string;
@@ -258,6 +502,8 @@ export function CardSheet(props: {
   const [lane, setLane] = createSignal(props.card.lane ?? "");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [note, setNote] = createSignal("");
+  const [noting, setNoting] = createSignal(false);
   const dirty = () =>
     title().trim() !== props.card.title ||
     body() !== props.card.body ||
@@ -266,6 +512,14 @@ export function CardSheet(props: {
   const open = () => openQuestions([props.card]);
   const live = () => props.runs.find((r) => isLive(r.state));
   const answered = () => (props.card.questions ?? []).filter((q) => q.answer != null);
+  const notes = () => props.card.notes ?? [];
+  const where = () => place(props.card, props.yard);
+
+  // The spec grows with its text, so a long spec reads without a second scroll.
+  const fit = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  };
 
   async function save() {
     setBusy(true);
@@ -300,11 +554,47 @@ export function CardSheet(props: {
     }
   }
 
+  async function addNote() {
+    if (!note().trim()) return;
+    setNoting(true);
+    setError(null);
+    try {
+      await api.cardNote(props.repo, props.card.id, note().trim());
+      setNote("");
+      props.onChanged();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setNoting(false);
+    }
+  }
+
   return (
     <Sheet
       title={`Card #${props.card.id}`}
-      wide
+      class="card-sheet"
       onClose={props.onClose}
+      head={
+        <div class="cs-head">
+          <div class="cs-head-line">
+            <span class="cs-id">#{props.card.id}</span>
+            <span class="chip" data-state={where().chip}>
+              <Icon name={where().icon} small />
+              {where().label}
+            </span>
+            <span class="cs-where">in {columnTitle[where().column]}</span>
+            <button type="button" class="btn btn-ghost btn-icon cs-close" aria-label="Close" onClick={props.onClose}>
+              <Icon name="close" small />
+            </button>
+          </div>
+          <input
+            class="cs-title"
+            aria-label="Title"
+            value={title()}
+            onInput={(e) => setTitle(e.currentTarget.value)}
+          />
+        </div>
+      }
       foot={
         <>
           <span class="sheet-note">{props.card.file}</span>
@@ -348,118 +638,180 @@ export function CardSheet(props: {
         </>
       }
     >
-      <div class="field">
-        <label class="field-label" for="card-title">
-          Title
-        </label>
-        <input id="card-title" class="input" value={title()} onInput={(e) => setTitle(e.currentTarget.value)} />
-      </div>
-      <div class="card-meta">
-        <div class="field">
-          <label class="field-label" for="card-state">
-            State
-          </label>
-          <select id="card-state" class="select" value={state()} onChange={(e) => setState(e.currentTarget.value as CardState)}>
-            <For each={cardStates}>{(s) => <option value={s}>{stateLabel[s]}</option>}</For>
-          </select>
-        </div>
-        <div class="field">
-          <label class="field-label" for="card-lane">
-            Lane
-          </label>
-          <input
-            id="card-lane"
-            class="input input-mono"
-            list="lane-branches"
-            placeholder="feat/thing"
-            autocomplete="off"
-            spellcheck={false}
-            value={lane()}
-            onInput={(e) => setLane(e.currentTarget.value)}
-          />
-          <datalist id="lane-branches">
-            <For each={props.yard?.lanes ?? []}>{(l) => <option value={l.branch} />}</For>
-          </datalist>
-        </div>
-      </div>
-      <p class="card-where">
-        On the board in <b>{columnTitle[place(props.card, props.yard).column]}</b>
-        <Show when={place(props.card, props.yard).column === "needs"}>, {place(props.card, props.yard).label.toLowerCase()}</Show>.
-      </p>
-      <Show when={props.card.lane}>
-        <div class="card-lane-track">
-          <MiniTrack card={props.card} yard={props.yard} now={props.now} />
-        </div>
-      </Show>
-      <div class="field">
-        <div class="field-head">
-          <label class="field-label" for="card-body">
-            Spec
-          </label>
-          <Dictate field={() => specRef} value={body} onChange={setBody} />
-        </div>
-        <textarea
-          ref={specRef}
-          id="card-body"
-          class="input textarea input-mono"
-          rows="8"
-          placeholder="Goal, acceptance criteria, out of scope, how to verify"
-          value={body()}
-          onInput={(e) => setBody(e.currentTarget.value)}
-        />
-      </div>
-      <Show when={open().length > 0}>
-        <h3 class="sheet-sub">Open questions</h3>
-        <For each={open()}>
-          {(q) => (
-            <div class="sheet-question">
-              <p class="inbox-q">{q.text}</p>
-              <QuestionBlock q={q} selected={false} busy={busy()} onAnswer={(a) => void answer(q.id, a)} />
+      <div class="cs-grid">
+        <div class="cs-main">
+          <section class="cs-section">
+            <div class="field-head">
+              <label class="cs-label" for="card-body">
+                Spec
+              </label>
+              <Dictate field={() => specRef} value={body} onChange={(v) => (setBody(v), specRef && fit(specRef))} />
             </div>
-          )}
-        </For>
-      </Show>
-      <Show when={props.runs.length > 0}>
-        <h3 class="sheet-sub">Runs</h3>
-        <ul class="card-runs">
-          <For each={props.runs}>
-            {(r) => (
-              <li>
-                <button type="button" class="card-run" onClick={() => props.onOpenRun(r.id)}>
-                  <span class="chip" data-state={runStateView[r.state].chip}>
-                    <Icon name={runStateView[r.state].icon} small />
-                    {runStateView[r.state].label}
-                  </span>
-                  <span class="card-run-summary">{r.handoff?.summary ?? r.error?.split("\n")[0] ?? r.branch}</span>
-                  <span class="figure">{clock(elapsed(r, props.now))}</span>
-                  <span class="figure">{money(r.cost_usd)}</span>
-                </button>
-              </li>
-            )}
-          </For>
-        </ul>
-      </Show>
-      <Show when={answered().length > 0}>
-        <h3 class="sheet-sub">Decisions</h3>
-        <dl class="decisions">
-          <For each={answered()}>
-            {(q) => (
-              <div>
-                <dt>{q.text}</dt>
-                <dd>
-                  {q.answer}
-                  <Show when={q.decision}>
-                    <span class="tag">{q.decision}</span>
-                  </Show>
-                </dd>
+            <textarea
+              ref={(el) => {
+                specRef = el;
+                requestAnimationFrame(() => fit(el));
+              }}
+              id="card-body"
+              class="input textarea cs-spec"
+              placeholder="Goal, acceptance criteria, out of scope, how to verify"
+              value={body()}
+              onInput={(e) => {
+                setBody(e.currentTarget.value);
+                fit(e.currentTarget);
+              }}
+            />
+          </section>
+
+          <Show when={open().length > 0}>
+            <section class="cs-section">
+              <h3 class="cs-label">
+                Open questions <span class="count count-hot">{open().length}</span>
+              </h3>
+              <For each={open()}>
+                {(q) => (
+                  <div class="sheet-question">
+                    <p class="inbox-q">{q.text}</p>
+                    <QuestionBlock q={q} selected={false} busy={busy()} onAnswer={(a) => void answer(q.id, a)} />
+                  </div>
+                )}
+              </For>
+            </section>
+          </Show>
+
+          <section class="cs-section">
+            <h3 class="cs-label">
+              Notes <span class="count">{notes().length}</span>
+              <span class="cs-hint">What Claude learned working this card, and what you add. Every run reads them.</span>
+            </h3>
+            <Show when={notes().length > 0} fallback={<p class="cs-empty">No notes yet. Run all's analysis and each run add theirs here.</p>}>
+              <ol class="notes">
+                <For each={notes()}>
+                  {(n) => (
+                    <li class="note" data-by={n.by}>
+                      <div class="note-head">
+                        <Icon name={noteBy[n.by]?.icon ?? "person"} small />
+                        <span class="note-by">{noteBy[n.by]?.name ?? n.by}</span>
+                        <span class="note-at" title={n.at}>
+                          {ago(n.at, props.now)}
+                        </span>
+                      </div>
+                      <Prose text={n.text} />
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
+            <div class="note-compose">
+              <textarea
+                class="input textarea"
+                rows="2"
+                aria-label="Add a note"
+                placeholder="Add context for the next run (⌘↩ adds it)"
+                value={note()}
+                onInput={(e) => setNote(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    void addNote();
+                  }
+                }}
+              />
+              <button type="button" class="btn" disabled={noting() || !note().trim()} aria-busy={noting()} onClick={() => void addNote()}>
+                <Show when={noting()} fallback={<Icon name="plus" small />}>
+                  <Spinner />
+                </Show>
+                Add note
+              </button>
+            </div>
+          </section>
+          <Show when={error()}>
+            <ErrorLine>{error()}</ErrorLine>
+          </Show>
+        </div>
+
+        <aside class="cs-side">
+          <div class="field">
+            <label class="field-label" for="card-state">
+              State
+            </label>
+            <select id="card-state" class="select" value={state()} onChange={(e) => setState(e.currentTarget.value as CardState)}>
+              <For each={cardStates}>{(s) => <option value={s}>{stateLabel[s]}</option>}</For>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="card-lane">
+              Lane
+            </label>
+            <input
+              id="card-lane"
+              class="input input-mono"
+              list="lane-branches"
+              placeholder="feat/thing"
+              autocomplete="off"
+              spellcheck={false}
+              value={lane()}
+              onInput={(e) => setLane(e.currentTarget.value)}
+            />
+            <datalist id="lane-branches">
+              <For each={props.yard?.lanes ?? []}>{(l) => <option value={l.branch} />}</For>
+            </datalist>
+            <Show when={props.card.lane}>
+              <div class="card-lane-track">
+                <MiniTrack card={props.card} yard={props.yard} now={props.now} />
               </div>
-            )}
-          </For>
-        </dl>
-      </Show>
-      <Show when={error()}>
-        <ErrorLine>{error()}</ErrorLine>
-      </Show>
+            </Show>
+          </div>
+
+          <Show when={props.runs.length > 0}>
+            <div class="cs-side-block">
+              <h3 class="field-label">Runs</h3>
+              <ul class="card-runs">
+                <For each={props.runs}>
+                  {(r) => (
+                    <li>
+                      <button type="button" class="card-run cs-run" onClick={() => props.onOpenRun(r.id)} title={r.handoff?.summary ?? r.error ?? r.branch}>
+                        <span class="chip" data-state={runStateView[r.state].chip}>
+                          <Icon name={runStateView[r.state].icon} small />
+                          {runStateView[r.state].label}
+                        </span>
+                        <span class="figure">{clock(elapsed(r, props.now))}</span>
+                        <span class="figure">{money(r.cost_usd)}</span>
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </div>
+          </Show>
+
+          <Show when={answered().length > 0}>
+            <div class="cs-side-block">
+              <h3 class="field-label">Decisions</h3>
+              <dl class="decisions">
+                <For each={answered()}>
+                  {(q) => (
+                    <div>
+                      <dt>{q.text}</dt>
+                      <dd>
+                        {q.answer}
+                        <Show when={q.decision}>
+                          <span class="tag">{q.decision}</span>
+                        </Show>
+                      </dd>
+                    </div>
+                  )}
+                </For>
+              </dl>
+            </div>
+          </Show>
+
+          <p class="cs-meta">
+            Created {ago(props.card.created, props.now)}
+            <Show when={props.card.analyzed}>, analysed {ago(props.card.analyzed!, props.now)}</Show>
+          </p>
+        </aside>
+      </div>
     </Sheet>
   );
 }

@@ -614,3 +614,70 @@ body[data-resizing] .pane { pointer-events: none; }
 .dictate .figure { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
 .dictate-meter { display: inline-block; width: 28px; height: 3px; border-radius: 2px; background: var(--color-rule); overflow: hidden; }
 .dictate-meter > span { display: block; height: 100%; background: var(--color-ink-2); transform-origin: left; transition: transform 80ms linear; }
+
+/* ---------- Board: drag to reorder ---------- */
+.board .card { touch-action: none; }
+.board[data-dragging] { cursor: grabbing; user-select: none; }
+.board[data-dragging] .card { cursor: grabbing; }
+.card[data-lifted] { position: relative; z-index: var(--z-raised); background: var(--color-paper-3); box-shadow: var(--ring-strong), var(--shadow-pop); }
+.board:not([data-dragging]) .card { transition: transform var(--dur-short) var(--ease-out); }
+.card[data-gap="before"] { box-shadow: 0 -5px 0 -3px var(--color-accent), var(--ring); }
+.card[data-gap="after"] { box-shadow: 0 5px 0 -3px var(--color-accent), var(--ring); }
+.card-notes { display: inline-flex; align-items: center; gap: 2px; margin-inline-start: auto; font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); }
+
+/* ---------- Run all: one question at a time ---------- */
+.ask-one { display: grid; gap: var(--space-sm); padding-top: var(--space-2xs); }
+.ask-card { display: flex; align-items: baseline; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-ink-2); }
+
+/* ---------- Card sheet ---------- */
+dialog.card-sheet { width: min(1080px, calc(100% - 48px)); height: min(88vh, 940px); }
+dialog.card-sheet[open] { display: flex; flex-direction: column; }
+.card-sheet .sheet-head { padding: var(--space-md) var(--space-lg) var(--space-sm); border-bottom: 1px solid var(--color-rule); }
+.card-sheet .sheet-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; padding: 0; display: block; }
+.cs-head { display: grid; gap: var(--space-xs); width: 100%; min-width: 0; }
+.cs-head-line { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.cs-id { font: var(--weight-strong) var(--text-sm)/1 var(--font-mono); color: var(--color-ink-2); }
+.cs-where { font-size: var(--text-xs); color: var(--color-muted); }
+.cs-close { margin-inline-start: auto; }
+.cs-title { width: 100%; min-width: 0; padding: 2px var(--space-2xs); margin-inline: calc(var(--space-2xs) * -1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-ink); font: var(--weight-display) var(--text-xl)/1.3 var(--font-display); letter-spacing: var(--tracking-display); }
+.cs-title:hover { background: var(--color-paper-3); }
+.cs-title:focus-visible, .cs-title:focus { outline: 2px solid var(--color-focus); outline-offset: 0; background: var(--color-paper-sunk); }
+.cs-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; height: 100%; min-height: 0; }
+.cs-main { display: grid; align-content: start; gap: var(--space-lg); padding: var(--space-md) var(--space-lg) var(--space-xl); overflow: auto; min-height: 0; }
+.cs-side { display: grid; align-content: start; gap: var(--space-md); padding: var(--space-md) var(--space-lg) var(--space-lg); overflow: auto; min-height: 0; border-left: 1px solid var(--color-rule); background: var(--color-paper); }
+.cs-section { display: grid; gap: var(--space-xs); min-width: 0; }
+.cs-label { display: flex; align-items: baseline; gap: var(--space-xs); font: var(--weight-strong) var(--text-md)/1.2 var(--font-body); color: var(--color-ink); }
+.cs-label .count { margin: 0; }
+.cs-hint { margin-inline-start: var(--space-2xs); font: var(--weight-regular) var(--text-xs)/1.3 var(--font-body); color: var(--color-muted); }
+.cs-spec { min-height: 12lh; max-height: none; resize: none; overflow: hidden; font: var(--weight-regular) var(--text-lg)/var(--leading-prose) var(--font-body); color: var(--color-ink); padding: var(--space-sm) var(--space-md); }
+.cs-empty { font-size: var(--text-sm); color: var(--color-muted); }
+.cs-side-block { display: grid; gap: var(--space-2xs); }
+.cs-side .decisions > div { font-size: var(--text-sm); }
+.cs-run { grid-template-columns: minmax(0, 1fr) auto auto; }
+.cs-meta { font-size: var(--text-xs); color: var(--color-muted); }
+
+.notes { list-style: none; margin: 0; padding: 0; display: grid; }
+.note { display: grid; gap: var(--space-2xs); padding: var(--space-sm) 0 var(--space-sm) var(--space-md); border-left: 1px solid var(--color-rule-strong); position: relative; }
+.note + .note { border-top: 0; }
+.note::before { content: ""; position: absolute; left: -3px; top: calc(var(--space-sm) + 5px); width: 5px; height: 5px; border-radius: 50%; background: var(--color-muted); }
+.note[data-by="claude"]::before { background: var(--color-run); }
+.note[data-by="you"]::before { background: var(--color-ink); }
+.note-head { display: flex; align-items: center; gap: var(--space-2xs); font-size: var(--text-xs); color: var(--color-muted); }
+.note-by { font-weight: var(--weight-strong); color: var(--color-ink-2); }
+.note-at::before { content: "·"; margin-inline-end: var(--space-2xs); }
+.note-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-xs); }
+.note-compose .textarea { min-height: 3lh; }
+
+.prose { display: grid; gap: var(--space-xs); font: var(--weight-regular) var(--text-lg)/var(--leading-prose) var(--font-body); color: var(--color-ink); max-width: var(--measure); overflow-wrap: anywhere; }
+.prose p, .prose ul, .prose pre { margin: 0; }
+.prose ul { padding-inline-start: 1.2em; display: grid; gap: 2px; }
+.prose .prose-h { font-weight: var(--weight-strong); }
+.prose code { font: var(--weight-regular) 0.88em/1 var(--font-mono); padding: 1px 4px; border-radius: var(--radius-sm); background: var(--color-paper-sunk); color: var(--color-ink); }
+.prose pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); font: var(--weight-regular) var(--text-sm)/1.5 var(--font-mono); white-space: pre-wrap; }
+
+@media (max-width: 760px) {
+  .cs-grid { grid-template-columns: 1fr; overflow: auto; }
+  .cs-main, .cs-side { overflow: visible; }
+  .cs-side { border-left: 0; border-top: 1px solid var(--color-rule); }
+}
+.note-head .icon { color: var(--color-muted); }

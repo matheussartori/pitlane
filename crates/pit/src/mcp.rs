@@ -45,7 +45,18 @@ pub fn serve_approver(run: String) -> Result<()> {
                 "inputSchema": { "type": "object", "properties": {
                     "tool_name": { "type": "string" }, "input": { "type": "object" }, "tool_use_id": { "type": "string" } },
                     "required": ["tool_name", "input"] }
+            }, {
+                "name": "note",
+                "description": "Adds a note to the card you are working: context the next session needs (where the code is, what you found, a choice you made and why, what is left). Short markdown; one note per finding.",
+                "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
             }] }),
+            "tools/call" if params.get("name").and_then(Value::as_str) == Some("note") => {
+                let text = params.pointer("/arguments/text").and_then(Value::as_str).unwrap_or_default();
+                match note_on_run(&run, text) {
+                    Ok(()) => json!({ "content": [{ "type": "text", "text": "Noted on the card." }] }),
+                    Err(e) => json!({ "content": [{ "type": "text", "text": format!("{e:#}") }], "isError": true }),
+                }
+            }
             "tools/call" => {
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
                 let answer = ask_daemon(&run, &args).unwrap_or_else(|e| {
@@ -62,6 +73,16 @@ pub fn serve_approver(run: String) -> Result<()> {
         writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "result": result }))?;
         out.flush()?;
     }
+    Ok(())
+}
+
+/// A note from a run lands on the run's own card.
+fn note_on_run(run: &str, text: &str) -> Result<()> {
+    let (home, pitlane) = pit_core::default_homes();
+    let meta: pit_core::runs::RunMeta =
+        serde_json::from_slice(&std::fs::read(pit_core::runs::runs_dir(&pitlane).join(run).join("meta.json")).context("no such run")?)?;
+    let repo = Repo::open(&meta.repo, &home, &pitlane)?;
+    cards::note(&repo, meta.card, "claude", text)?;
     Ok(())
 }
 
@@ -202,6 +223,14 @@ fn tools() -> Value {
             }, "required": ["id", "question_id", "answer"] }
         },
         {
+            "name": "add_note",
+            "description": "Add a note to a card: context the next one to work it needs (where the code is, what you found, what was tried, what is left). Notes show on the card and go into every run's briefing.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "integer" },
+                "text": { "type": "string", "description": "Markdown." }
+            }, "required": ["id", "text"] }
+        },
+        {
             "name": "brief",
             "description": "Where to look in this repository for a card or a task: the most relevant files with their symbols (line and signature) and the tests nearby, from Pitlane's tree-sitter index. Give a card id, or a text describing the task.",
             "inputSchema": { "type": "object", "properties": {
@@ -296,6 +325,10 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
             let done = cards::answer(&repo, id()?, u32::try_from(q)?, &a)?;
             json!({ "decision": done.decision, "card": card_json(&done.card) })
         }
+        "add_note" => {
+            let text = str_arg("text").context("text is required")?;
+            card_json(&cards::note(&repo, id()?, "claude", &text)?)
+        }
         _ => bail!("unknown tool {name}"),
     })
 }
@@ -326,7 +359,7 @@ mod tests {
 
         let list = rpc(&dir, 2, "tools/list", json!({}));
         let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "ask", "answer", "brief"]);
+        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "ask", "answer", "add_note", "brief"]);
 
         let added = rpc(&dir, 3, "tools/call", json!({ "name": "add_card", "arguments": {
             "title": "Rate limit invites",

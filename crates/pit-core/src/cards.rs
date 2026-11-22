@@ -84,6 +84,15 @@ pub struct Question {
     pub decision: Option<String>,
 }
 
+/// One piece of context on a card: what someone learned that the next one to work it needs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub at: String,
+    /// Who wrote it: `claude`, `judge` or `you`.
+    pub by: String,
+    pub text: String,
+}
+
 impl Question {
     pub fn is_open(&self) -> bool {
         self.answer.is_none()
@@ -101,11 +110,20 @@ pub struct Card {
     pub lane: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Place on the board, lowest first; cards without one sort by id. Run all follows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i64>,
+    /// When Run all's analysis read the card; it is not analysed twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analyzed: Option<String>,
     pub created: String,
     pub updated: String,
     /// Kept last: TOML wants tables after plain values.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questions: Vec<Question>,
+    /// Context gathered while working the card (by Claude, the judge or you), oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
     /// The spec, in markdown.
     #[serde(skip)]
     pub body: String,
@@ -114,6 +132,11 @@ pub struct Card {
 }
 
 impl Card {
+    /// Where the card sits on the board: its rank, or its id for cards never moved.
+    pub fn order(&self) -> (i64, u32) {
+        (self.rank.unwrap_or(self.id as i64), self.id)
+    }
+
     pub fn open_questions(&self) -> usize {
         self.questions.iter().filter(|q| q.is_open()).count()
     }
@@ -303,7 +326,7 @@ pub fn list(repo: &Repo) -> Result<(Vec<Card>, Vec<String>)> {
             Err(e) => problems.push(format!("{e:#}")),
         }
     }
-    cards.sort_by_key(|c| c.id);
+    cards.sort_by_key(Card::order);
     Ok((cards, problems))
 }
 
@@ -326,6 +349,8 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
     let _lock = Lock::take(repo)?;
     let (cards, _) = list(repo)?;
     let id = cards.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+    // New cards go to the bottom of the board.
+    let rank = cards.iter().map(|c| c.order().0).max().map_or(id as i64, |r| (r + 1).max(id as i64));
     let now = timestamp(now_secs());
     let mut card = Card {
         id,
@@ -333,9 +358,12 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         state: CardState::Inbox,
         lane: None,
         tags: new.tags,
+        rank: Some(rank),
+        analyzed: None,
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
+        notes: Vec::new(),
         body: new.body,
         path: dir(repo).join(format!("{id:04}-{}.md", slug(title))),
     };
@@ -366,6 +394,47 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
         card.tags = t;
     }
     card.updated = timestamp(now_secs());
+    write(&card)?;
+    Ok(card)
+}
+
+/// Puts the cards in `ids` in that order on the board; the others keep their place after them.
+pub fn reorder(repo: &Repo, ids: &[u32]) -> Result<()> {
+    let _lock = Lock::take(repo)?;
+    let (cards, _) = list(repo)?;
+    let mut order: Vec<u32> = ids.iter().copied().filter(|i| cards.iter().any(|c| c.id == *i)).collect();
+    order.extend(cards.iter().map(|c| c.id).filter(|i| !ids.contains(i)));
+    for (i, id) in order.into_iter().enumerate() {
+        let mut card = cards.iter().find(|c| c.id == id).cloned().expect("listed above");
+        let rank = i as i64 + 1;
+        if card.rank != Some(rank) {
+            card.rank = Some(rank);
+            write(&card)?;
+        }
+    }
+    Ok(())
+}
+
+/// Marks the card as analysed by Run all.
+pub fn mark_analyzed(repo: &Repo, id: u32) -> Result<Card> {
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    card.analyzed = Some(timestamp(now_secs()));
+    write(&card)?;
+    Ok(card)
+}
+
+/// Adds a note to the card: context for whoever works it next.
+pub fn note(repo: &Repo, id: u32, by: &str, text: &str) -> Result<Card> {
+    let text = text.trim();
+    if text.is_empty() {
+        bail!("the note is empty");
+    }
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    let now = timestamp(now_secs());
+    card.notes.push(Note { at: now.clone(), by: by.trim().to_owned(), text: text.to_owned() });
+    card.updated = now;
     write(&card)?;
     Ok(card)
 }
@@ -604,6 +673,9 @@ mod tests {
                 answered_at: None,
                 decision: None,
             }],
+            rank: Some(3),
+            analyzed: None,
+            notes: vec![Note { at: "2026-11-20T11:00:00Z".into(), by: "claude".into(), text: "Avatars go through `upload.ts`.\n\nTwo lines.".into() }],
             body: "## Goal\n\nRefuse avatars over the limit.".into(),
             path: PathBuf::from("x.md"),
         };
@@ -613,6 +685,8 @@ mod tests {
         assert_eq!(back.title, card.title);
         assert_eq!(back.lane, card.lane);
         assert_eq!(back.questions, card.questions);
+        assert_eq!(back.notes, card.notes);
+        assert_eq!(back.rank, Some(3));
         assert_eq!(back.body, card.body);
         assert_eq!(back.open_questions(), 1);
     }

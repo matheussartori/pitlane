@@ -179,7 +179,24 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
         ],
       } as T;
     case "cards_list":
-      return { cards: new URLSearchParams(location.search).get("state") === "empty" ? [] : cards, problems: [] } as T;
+      return { cards: new URLSearchParams(location.search).get("state") === "empty" ? [] : [...cards].sort((a, b) => ((a as { rank?: number }).rank ?? a.id) - ((b as { rank?: number }).rank ?? b.id)), problems: [] } as T;
+    case "card_reorder": {
+      const ids = (args as { ids: number[] }).ids;
+      ids.forEach((id, i) => {
+        const c = cards.find((x) => x.id === id) as { rank?: number } | undefined;
+        if (c) c.rank = i + 1;
+      });
+      return null as T;
+    }
+    case "card_note": {
+      const a = args as { id: number; text: string };
+      const c = cards.find((x) => x.id === a.id) as unknown as { notes?: { at: string; by: string; text: string }[] };
+      (c.notes ??= []).push({ at: new Date().toISOString(), by: "you", text: a.text });
+      return c as T;
+    }
+    case "cards_analyze":
+      await new Promise((r) => setTimeout(r, 1200));
+      return { analyzed: (args as { ids: number[] }).ids.map((card) => ({ card, questions: 0, notes: 1 })) } as T;
     default:
       throw `Preview mode: "${cmd}" runs only in the desktop app.`;
   }

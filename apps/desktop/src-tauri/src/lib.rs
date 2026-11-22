@@ -313,6 +313,28 @@ async fn card_update(
     .await
 }
 
+/// Puts the cards in this order on the board.
+#[tauri::command]
+async fn card_reorder(path: String, ids: Vec<u32>) -> CmdResult<()> {
+    blocking(move || cards::reorder(&open(&path)?, &ids)).await
+}
+
+/// A note you add to a card, for whoever works it next.
+#[tauri::command]
+async fn card_note(path: String, id: u32, text: String) -> CmdResult<CardOut> {
+    blocking(move || Ok(cards::note(&open(&path)?, id, "you", &text)?.into())).await
+}
+
+/// Run all's analysis: questions and notes on each card not analysed yet.
+#[tauri::command]
+async fn cards_analyze(path: String, ids: Vec<u32>) -> CmdResult<serde_json::Value> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        call(serde_json::json!({ "op": "analyze", "repo": root, "cards": ids }))
+    })
+    .await
+}
+
 #[derive(Debug, Serialize)]
 pub struct AnswerOut {
     pub decision: String,
@@ -1084,6 +1106,9 @@ pub fn run() {
             card_add,
             card_update,
             card_answer,
+            card_reorder,
+            card_note,
+            cards_analyze,
             runs_list,
             run_start,
             run_resume,

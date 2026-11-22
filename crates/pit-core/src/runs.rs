@@ -404,7 +404,9 @@ pub const RULES: &str = "You are running inside Pitlane, on one card, in a git w
 Work only inside the current directory. Commit your work on the current branch with clear messages; \
 never push, never switch branches, never merge. Read the card's spec and decisions before you start. \
 If a decision is missing and you cannot proceed safely, stop and report status \"blocked\" with all your \
-questions at once, each with options and the one you recommend. End every run with the structured handoff.";
+questions at once, each with options and the one you recommend. As you learn something the next session on this \
+card would need (where the code is, a choice you made and why, what is left), add it with the note tool, short and \
+one finding per note. End every run with the structured handoff.";
 
 /// The first message of a run: the card, its decisions and the repository's decisions file.
 pub fn briefing(repo: &Repo, card: &Card) -> String {
@@ -425,6 +427,12 @@ pub fn briefing(repo: &Repo, card: &Card) -> String {
                 q.answer.as_deref().unwrap_or_default(),
                 q.decision.as_deref().map(|d| format!(" ({d})")).unwrap_or_default()
             ));
+        }
+    }
+    if !card.notes.is_empty() {
+        b.push_str("\n## Notes on this card\n\n");
+        for n in &card.notes {
+            b.push_str(&format!("- {} ({}): {}\n", n.by, n.at, n.text.trim().replace('\n', "\n  ")));
         }
     }
     if let Ok(d) = std::fs::read_to_string(cards::decisions_path(repo))

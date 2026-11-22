@@ -41,7 +41,24 @@
     ],
     "body": "## Goal\n\nStop invite spam without blocking real hosts.\n\n## Acceptance\n\n- When an account sends more invites than the limit, the API must refuse with 429.",
     "open_questions": 2,
-    "file": "0001-rate-limit-the-invites-endpoint.md"
+    "file": "0001-rate-limit-the-invites-endpoint.md",
+    "notes": [
+      {
+        "at": "2026-11-22T09:10:00Z",
+        "by": "claude",
+        "text": "Invites are created in `src/invites/index.ts` (`createInvite`). There is no limiter in the repo yet; `src/lib/redis.ts` already exposes a client.\n\n- The route is mounted in `src/app.ts`\n- Tests for invites live in `src/invites/index.test.ts`"
+      },
+      {
+        "at": "2026-11-22T09:12:00Z",
+        "by": "you",
+        "text": "Keep it per workspace, not per user."
+      },
+      {
+        "at": "2026-11-22T10:40:00Z",
+        "by": "claude",
+        "text": "Run r-1 ended partial: limiter added with a sliding window of 20 per hour.\n\nLeft to do:\n- Return `Retry-After` on 429\n- Document the limit in the README"
+      }
+    ]
   },
   {
     "id": 2,

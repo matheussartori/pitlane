@@ -927,6 +927,83 @@ impl Supervisor {
         out
     }
 
+    /// Run all's analysis: for each card not analysed yet, a read-only Claude Code session in the
+    /// repository returns questions and notes, written on the card. Three at a time.
+    pub async fn analyze(self: &Arc<Self>, repo: PathBuf, ids: Vec<u32>) -> Result<Value> {
+        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let routing = Routing::load(&self.cfg.home)?;
+        // Never the API key: analysis is not worth a paid token without a yes.
+        let choice = routing
+            .choices(&r.root, &home_dir(), &self.cfg.home)?
+            .into_iter()
+            .find(|c| c.kind != accounts::Kind::ApiKey);
+        let model = r.flow.verify.judge_model.clone();
+        let todo: Vec<cards::Card> = ids
+            .into_iter()
+            .filter_map(|id| cards::get(&r, id).ok())
+            .filter(|c| c.analyzed.is_none() && c.state != CardState::Done)
+            .collect();
+        let gate = Arc::new(tokio::sync::Semaphore::new(3));
+        let mut tasks = Vec::new();
+        for card in todo {
+            let (gate, me, root, choice, model) = (gate.clone(), self.clone(), r.root.clone(), choice.clone(), model.clone());
+            let prompt = pit_core::analyze::prompt(&r, &card);
+            tasks.push(tokio::spawn(async move {
+                let _slot = gate.acquire().await;
+                let out = me.analyst(&root, &prompt, choice.as_ref(), model.as_deref()).await;
+                (card.id, out)
+            }));
+        }
+        let mut results = Vec::new();
+        for t in tasks {
+            let Ok((id, out)) = t.await else { continue };
+            results.push(match out.and_then(|(a, cost)| {
+                let (q, n) = (a.questions.len(), a.notes.len());
+                pit_core::analyze::record(&r, id, a)?;
+                Ok((q, n, cost))
+            }) {
+                Ok((q, n, cost)) => serde_json::json!({ "card": id, "questions": q, "notes": n, "cost_usd": cost }),
+                Err(e) => serde_json::json!({ "card": id, "error": format!("{e:#}") }),
+            });
+        }
+        Ok(serde_json::json!({ "analyzed": results }))
+    }
+
+    async fn analyst(&self, root: &Path, prompt: &str, choice: Option<&Choice>, model: Option<&str>) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
+        let mut cmd = Command::new(&self.cfg.claude_bin);
+        cmd.args(["-p", "--output-format", "json", "--setting-sources", "project,local", "--permission-mode", "default"])
+            .args(["--permission-prompts", "none", "--allowedTools", "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(ls:*)"])
+            .args(["--max-turns", "25"])
+            .arg("--append-system-prompt")
+            .arg(pit_core::analyze::RULES)
+            .arg("--json-schema")
+            .arg(pit_core::analyze::schema().to_string());
+        if let Some(m) = model {
+            cmd.args(["--model", m]);
+        }
+        if let Some(dir) = choice.and_then(|c| c.config_dir.as_ref()) {
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
+        cmd.current_dir(root)
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let run = async {
+            let mut child = cmd.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(prompt.as_bytes()).await?;
+                stdin.shutdown().await?;
+            }
+            let o = child.wait_with_output().await?;
+            anyhow::Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        };
+        let stdout = tokio::time::timeout(Duration::from_secs(10 * 60), run).await.map_err(|_| anyhow::anyhow!("the analysis took longer than 10 minutes"))??;
+        pit_core::analyze::read(&stdout)
+    }
+
     /// A person's decision on a card in review. Approve ships the lane one stage (into
     /// integration); changes resumes the run's session with the comments; discard returns the
     /// card to ready with its lane intact.
@@ -1227,6 +1304,7 @@ fn prepare(repo: &Path, card: u32, home: &Path, continues: Option<(&RunMeta, &st
     };
     note(format!("Working in {}", worktree.display()));
     let mut tools: Vec<String> = RUN_BASE_TOOLS.iter().map(|s| s.to_string()).collect();
+    tools.push("mcp__pitlane_run__note".into());
     tools.extend(r.flow.run.allow.iter().cloned());
     let the_card = cards::get(&r, card)?;
     // Where to look, from the index. A failure here never stops the run; it runs without the map.
@@ -1300,6 +1378,20 @@ fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Result<()> {
 fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
     let r = Repo::open(&m.repo, &home_dir(), home)?;
     let status = m.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str);
+    // The handoff stays on the card as a note: the next session starts from it.
+    if let Some(h) = &m.handoff
+        && let Some(summary) = h.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    {
+        let mut text = format!("Run {} ended {}: {}", m.id, status.unwrap_or("done"), summary.trim());
+        let next: Vec<&str> = h.get("next_steps").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        if !next.is_empty() {
+            text.push_str("\n\nLeft to do:\n");
+            for n in next {
+                text.push_str(&format!("- {n}\n"));
+            }
+        }
+        let _ = cards::note(&r, m.card, "claude", &text);
+    }
     if let Some(qs) = m.handoff.as_ref().and_then(|h| h.get("questions")).and_then(Value::as_array) {
         let qs: Vec<NewQuestion> = qs.iter().filter_map(|q| serde_json::from_value(q.clone()).ok()).collect();
         if !qs.is_empty() {

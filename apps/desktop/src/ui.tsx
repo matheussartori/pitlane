@@ -28,22 +28,30 @@ export function Spinner() {
 }
 
 /** Native <dialog>: Escape and focus trapping come free. Unmount it to close. */
-export function Sheet(props: { title: string; wide?: boolean; onClose: () => void; children: JSX.Element; foot: JSX.Element }) {
+export function Sheet(props: {
+  title: string;
+  wide?: boolean;
+  /** Extra class on the dialog, for a sheet with a layout of its own. */
+  class?: string;
+  /** Replaces the plain title in the head. */
+  head?: JSX.Element;
+  onClose: () => void;
+  children: JSX.Element;
+  foot: JSX.Element;
+}) {
   let ref!: HTMLDialogElement;
   onMount(() => ref.showModal());
   return (
     <dialog
       ref={ref}
-      class={props.wide ? "sheet sheet-wide" : "sheet"}
+      class={`${props.wide ? "sheet sheet-wide" : "sheet"}${props.class ? ` ${props.class}` : ""}`}
       aria-label={props.title}
       onCancel={(e) => {
         e.preventDefault();
         props.onClose();
       }}
     >
-      <div class="sheet-head">
-        <h2>{props.title}</h2>
-      </div>
+      <div class="sheet-head">{props.head ?? <h2>{props.title}</h2>}</div>
       <div class="sheet-body">{props.children}</div>
       <div class="sheet-foot">{props.foot}</div>
     </dialog>

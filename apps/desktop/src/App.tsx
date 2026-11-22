@@ -7,7 +7,7 @@ import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
 import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
-import { BoardView, CardSheet, NewCardSheet } from "./board";
+import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, planNote } from "./board";
 import { openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
@@ -27,6 +27,7 @@ type SheetState =
   | { kind: "card"; id: number }
   | { kind: "new-card" }
   | { kind: "accounts" }
+  | { kind: "questions" }
   | null;
 
 const TAB_KEY = "pitlane.tab";
@@ -256,14 +257,8 @@ export default function App() {
     if (r) setCodePlaces(r, current()?.name ?? "repository", yard()?.lanes ?? [], yard()?.head);
   });
 
-  // The planner, read again when the cards change: which open cards should wait, and for what.
+  // The planner only speaks during Run all: read when it starts and again as cards change.
   const [plan, setPlan] = createSignal<Plan | null>(null);
-  createEffect(
-    on(cards, () => {
-      const path = repo();
-      if (path) void api.plan(path).then(setPlan, () => setPlan(null));
-    }),
-  );
 
   async function terminalIn(lane: Lane | undefined) {
     const path = repo();
@@ -325,18 +320,69 @@ export default function App() {
     }
   }
 
-  // Run all: starts the Backlog's cards one after another, staying on the Board. A paid option
-  // stops the loop and asks once; the cards after it wait for that yes.
-  const [runningAll, setRunningAll] = createSignal(false);
-  async function runAll(ids: number[], held: { id: number; why: string }[], allowApiKey = false) {
+  // Run all, as a session: analyse every backlog card (questions and notes from Claude), ask the
+  // open questions one at a time, then start what can start and keep going as work lands, until
+  // the queue is empty. The planner speaks only here.
+  const [phase, setPhase] = createSignal<"idle" | "analyzing" | "asking" | "working">("idle");
+  const [queue, setQueue] = createSignal<number[]>([]);
+  let advancing = false;
+
+  async function runAll(ids: number[]) {
     const path = repo();
-    if (!path || runningAll() || ids.length === 0) return;
-    setRunningAll(true);
-    const started: number[] = [];
-    const failed: { id: number; why: string }[] = [];
-    let paid: { reason: string; rest: number[] } | null = null;
+    if (!path || phase() !== "idle" || ids.length === 0) return;
+    setQueue(ids);
+    setPhase("analyzing");
     try {
-      for (const [i, id] of ids.entries()) {
+      const r = await api.cardsAnalyze(path, ids);
+      const failed = r.analyzed.filter((a) => a.error);
+      if (failed.length > 0)
+        toast({ tone: "fail", title: `Could not analyse ${failed.map((f) => `#${f.card}`).join(", ")}`, body: failed[0]!.error }, 0);
+    } catch (e) {
+      toast({ tone: "fail", title: "The analysis did not run", body: msg(e) }, 0);
+    }
+    await loadCards();
+    if (phase() !== "analyzing") return; // stopped meanwhile
+    try {
+      setPlan(await api.plan(path));
+    } catch {
+      setPlan(null);
+    }
+    const asking = openQuestions((cards() ?? []).filter((c) => queue().includes(c.id)));
+    if (asking.length > 0) {
+      setPhase("asking");
+      setSheet({ kind: "questions" });
+    } else {
+      setPhase("working");
+      void advance();
+    }
+  }
+
+  function stopRunAll() {
+    setQueue([]);
+    setPhase("idle");
+    setPlan(null);
+    if (sheet()?.kind === "questions") setSheet(null);
+  }
+
+  /** Starts every queued card that can start now: no open question, nothing the planner holds it for. */
+  async function advance(allowApiKey = false) {
+    const path = repo();
+    if (!path || phase() !== "working" || advancing) return;
+    advancing = true;
+    try {
+      const all = cards() ?? [];
+      const live = (id: number) => (runs() ?? []).some((r) => r.card === id && isLive(r.state));
+      // Cards that started, finished or left the backlog leave the queue.
+      const q = queue().filter((id) => {
+        const c = all.find((x) => x.id === id);
+        return c && !live(id) && (c.state === "inbox" || c.state === "ready" || c.state === "blocked");
+      });
+      const ready = q.filter((id) => {
+        const c = all.find((x) => x.id === id)!;
+        return (c.questions ?? []).every((x) => x.answer != null) && !planNote(plan(), id, all);
+      });
+      const started: number[] = [];
+      for (const [i, id] of ready.entries()) {
         try {
           const m = await api.runStart(path, id, allowApiKey);
           void api.runFollow(m.id, 0).catch(() => {});
@@ -344,41 +390,50 @@ export default function App() {
         } catch (e) {
           const text = msg(e);
           if (text.startsWith(NEEDS_API_KEY)) {
-            paid = { reason: text.slice(NEEDS_API_KEY.length), rest: ids.slice(i) };
+            const rest = ready.slice(i);
+            toast(
+              {
+                tone: "info",
+                title: `Only the API key can take ${rest.map((x) => `#${x}`).join(", ")} now`,
+                body: `${text.slice(NEEDS_API_KEY.length)}. It is paid per token.`,
+                action: { label: "Use the API key", run: () => void advance(true) },
+              },
+              0,
+            );
             break;
           }
-          failed.push({ id, why: text.split("\n")[0]! });
+          toast({ tone: "fail", title: `#${id} did not start`, body: text.split("\n")[0] }, 0);
+          q.splice(q.indexOf(id), 1);
         }
       }
+      const left = q.filter((id) => !started.includes(id));
+      setQueue(left);
+      if (started.length > 0) {
+        toast({ tone: "done", title: `Started ${started.map((x) => `#${x}`).join(", ")}`, body: left.length > 0 ? `${left.length} more in the queue.` : "The queue is empty." });
+        await loadRuns();
+        void loadCards();
+      }
+      if (left.length === 0 && !(runs() ?? []).some((r) => isLive(r.state))) {
+        setPhase("idle");
+        setPlan(null);
+      }
     } finally {
-      setRunningAll(false);
-      await loadRuns();
-      void loadCards();
-    }
-    const list = (xs: number[]) => xs.map((x) => `#${x}`).join(", ");
-    if (started.length > 0) {
-      const wait = held.length > 0 ? ` ${held.map((h) => `#${h.id}`).join(", ")} wait: ${held[0]!.why.charAt(0).toLowerCase()}${held[0]!.why.slice(1)}.` : "";
-      toast({
-        tone: "done",
-        title: `Started ${started.length} ${started.length === 1 ? "card" : "cards"}`,
-        body: `${list(started)} run in their own worktrees.${wait}`,
-      });
-    }
-    if (failed.length > 0)
-      toast({ tone: "fail", title: `${list(failed.map((f) => f.id))} did not start`, body: failed[0]!.why }, 0);
-    if (paid) {
-      const rest = paid.rest;
-      toast(
-        {
-          tone: "info",
-          title: `Only the API key can take ${list(rest)} now`,
-          body: `${paid.reason}. It is paid per token.`,
-          action: { label: "Use the API key", run: () => void runAll(rest, [], true) },
-        },
-        0,
-      );
+      advancing = false;
     }
   }
+
+  // While the session works, every change to the cards re-reads the planner and starts what can.
+  createEffect(
+    on(cards, () => {
+      if (phase() !== "working") return;
+      const path = repo();
+      if (!path) return;
+      void api.plan(path).then(
+        (p) => (setPlan(p), void advance()),
+        () => void advance(),
+      );
+    }),
+  );
 
   async function switchTo(path: string) {
     setMenu(false);
@@ -801,8 +856,18 @@ export default function App() {
                       else setSheet({ kind: "card", id });
                     }}
                     onNew={() => setSheet({ kind: "new-card" })}
-                    onRunAll={(ids, held) => void runAll(ids, held)}
-                    runningAll={runningAll()}
+                    onRunAll={(ids) => void runAll(ids)}
+                    onStopAll={stopRunAll}
+                    phase={phase()}
+                    queued={queue()}
+                    onReorder={(ids) => {
+                      const path = repo();
+                      if (!path) return;
+                      void api.cardReorder(path, ids).then(
+                        () => loadCards(),
+                        (e) => toast({ tone: "fail", title: "The order was not saved", body: msg(e) }),
+                      );
+                    }}
                   />
                 </Match>
                 <Match when={tab() === "ledger"}>
@@ -833,6 +898,23 @@ export default function App() {
                 }}
                 onChanged={() => void loadCards()}
                 onClose={() => setSheet(null)}
+              />
+            )}
+          </Show>
+          <Show when={sheet()?.kind === "questions" && repo()}>
+            {(path) => (
+              <QuestionsSheet
+                repo={path()}
+                cards={(cards() ?? []).filter((c) => queue().includes(c.id))}
+                onChanged={() => void loadCards()}
+                onDone={() => {
+                  setSheet(null);
+                  if (phase() === "asking") {
+                    setPhase("working");
+                    void advance();
+                  }
+                }}
+                onStop={stopRunAll}
               />
             )}
           </Show>

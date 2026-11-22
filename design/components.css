@@ -161,7 +161,7 @@
 /* Landed work steps back: it is done, the eye goes elsewhere. */
 .card[data-state="landed"] .card-title { color: var(--color-ink-2); font-weight: var(--weight-regular); }
 .card-top { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; min-height: 18px; }
-.card-top .card-id { margin-inline-start: auto; }
+.card-top .card-id { color: var(--color-ink-2); }
 .card-id { font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); }
 .card-title { font-weight: var(--weight-strong); font-size: var(--text-md); line-height: 1.35; color: var(--color-ink); text-wrap: pretty; }
 .card-why { font-size: var(--text-sm); color: var(--color-muted); line-height: 1.4; }

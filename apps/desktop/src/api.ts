@@ -158,12 +158,22 @@ export interface Question {
   decision?: string;
 }
 
+export interface CardNote {
+  at: string;
+  /** "claude", "judge" or "you". */
+  by: string;
+  text: string;
+}
+
 export interface Card {
   id: number;
   title: string;
   state: CardState;
   lane?: string;
   tags?: string[];
+  rank?: number;
+  analyzed?: string;
+  notes?: CardNote[];
   created: string;
   updated: string;
   questions?: Question[];
@@ -547,6 +557,10 @@ export const api = {
     id: number,
     patch: { title?: string; body?: string; state?: CardState; lane?: string },
   ) => invoke<Card>("card_update", { path, id, ...patch }),
+  cardReorder: (path: string, ids: number[]) => invoke<void>("card_reorder", { path, ids }),
+  cardNote: (path: string, id: number, text: string) => invoke<Card>("card_note", { path, id, text }),
+  cardsAnalyze: (path: string, ids: number[]) =>
+    invoke<{ analyzed: { card: number; questions?: number; notes?: number; cost_usd?: number; error?: string }[] }>("cards_analyze", { path, ids }),
   cardAnswer: (path: string, id: number, question: number, answer: string) =>
     invoke<{ decision: string; card: Card }>("card_answer", { path, id, question, answer }),
 };
