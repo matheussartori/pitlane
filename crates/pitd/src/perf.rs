@@ -50,7 +50,13 @@ pub struct PerfConfig {
 
 impl Default for PerfConfig {
     fn default() -> Self {
-        Self { mode: Mode::Full, auto: false, away_minutes: 10, light_agents: 1, light_background: true }
+        Self {
+            mode: Mode::Full,
+            auto: false,
+            away_minutes: 10,
+            light_agents: 1,
+            light_background: true,
+        }
     }
 }
 
@@ -59,14 +65,27 @@ fn config_path(home: &Path) -> PathBuf {
 }
 
 pub fn load_config(home: &Path) -> PerfConfig {
-    std::fs::read_to_string(config_path(home)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    std::fs::read_to_string(config_path(home))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 /// "Agents at once" and "fewer while the Mac is loaded", from the desktop's Settings.
 fn desktop_limits(home: &Path) -> (u32, bool) {
-    let prefs = std::fs::read_to_string(home.join("desktop.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.get("prefs").cloned());
-    let max = prefs.as_ref().and_then(|p| p.get("max_agents")?.as_u64()).unwrap_or(3).clamp(1, 16) as u32;
-    let adaptive = prefs.as_ref().and_then(|p| p.get("adaptive_agents")?.as_bool()).unwrap_or(true);
+    let prefs = std::fs::read_to_string(home.join("desktop.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("prefs").cloned());
+    let max = prefs
+        .as_ref()
+        .and_then(|p| p.get("max_agents")?.as_u64())
+        .unwrap_or(3)
+        .clamp(1, 16) as u32;
+    let adaptive = prefs
+        .as_ref()
+        .and_then(|p| p.get("adaptive_agents")?.as_bool())
+        .unwrap_or(true);
     (max, adaptive)
 }
 
@@ -161,8 +180,18 @@ pub struct LiveSession {
 impl Perf {
     pub fn new(home: &Path) -> Self {
         let cfg = load_config(home);
-        let state = State { effective: cfg.mode, cfg, allowed: desktop_limits(home).0, snapshot: json!(null), ..Default::default() };
-        Self { home: home.to_owned(), enabled: AtomicBool::new(false), state: Mutex::new(state) }
+        let state = State {
+            effective: cfg.mode,
+            cfg,
+            allowed: desktop_limits(home).0,
+            snapshot: json!(null),
+            ..Default::default()
+        };
+        Self {
+            home: home.to_owned(),
+            enabled: AtomicBool::new(false),
+            state: Mutex::new(state),
+        }
     }
 
     pub fn enable(&self) {
@@ -206,7 +235,13 @@ impl Perf {
                 Mode::Full => "full",
                 Mode::Light => "light",
             };
-            push_event(&mut s, Event { kind, ..Default::default() });
+            push_event(
+                &mut s,
+                Event {
+                    kind,
+                    ..Default::default()
+                },
+            );
             s.effective = cfg.mode;
         }
         s.cfg = cfg.clone();
@@ -224,7 +259,8 @@ impl Perf {
         v["mode"] = serde_json::to_value(s.effective).unwrap_or_default();
         v["allowed"] = json!(s.allowed);
         v["history"] = serde_json::to_value(&s.history).unwrap_or_default();
-        v["events"] = serde_json::to_value(s.events.iter().rev().collect::<Vec<_>>()).unwrap_or_default();
+        v["events"] =
+            serde_json::to_value(s.events.iter().rev().collect::<Vec<_>>()).unwrap_or_default();
         v["governed"] = json!(self.enabled());
         v
     }
@@ -256,7 +292,14 @@ impl Perf {
             return false;
         }
         freeze(&pids);
-        s.holds.insert(id.to_owned(), Hold { why: Why::You, since: now(), pids });
+        s.holds.insert(
+            id.to_owned(),
+            Hold {
+                why: Why::You,
+                since: now(),
+                pids,
+            },
+        );
         true
     }
 
@@ -274,12 +317,27 @@ impl Perf {
 
     /// Logs a pause or resume done by hand (`paused_you`, `resumed_you`).
     pub fn log_manual(&self, kind: &'static str, card: u32, title: &str) {
-        push_event(&mut self.state.lock().unwrap(), Event { kind, card: Some(card), title: Some(title.to_owned()), ..Default::default() });
+        push_event(
+            &mut self.state.lock().unwrap(),
+            Event {
+                kind,
+                card: Some(card),
+                title: Some(title.to_owned()),
+                ..Default::default()
+            },
+        );
     }
 
     /// Resumes everything (the daemon is ending).
     pub fn release_all(&self) {
-        let holds: Vec<Hold> = self.state.lock().unwrap().holds.drain().map(|(_, h)| h).collect();
+        let holds: Vec<Hold> = self
+            .state
+            .lock()
+            .unwrap()
+            .holds
+            .drain()
+            .map(|(_, h)| h)
+            .collect();
         for h in holds {
             thaw(&h.pids);
         }
@@ -300,14 +358,25 @@ impl Perf {
 
         // Which mode.
         let mode = if s.cfg.auto {
-            if idle >= f64::from(s.cfg.away_minutes) * 60.0 { Mode::Full } else { Mode::Light }
+            if idle >= f64::from(s.cfg.away_minutes) * 60.0 {
+                Mode::Full
+            } else {
+                Mode::Light
+            }
         } else {
             s.cfg.mode
         };
         if mode != s.effective {
             let ev = match mode {
-                Mode::Full => Event { kind: "away", n: Some(u64::from(s.cfg.away_minutes)), ..Default::default() },
-                Mode::Light => Event { kind: "back", ..Default::default() },
+                Mode::Full => Event {
+                    kind: "away",
+                    n: Some(u64::from(s.cfg.away_minutes)),
+                    ..Default::default()
+                },
+                Mode::Light => Event {
+                    kind: "back",
+                    ..Default::default()
+                },
             };
             push_event(&mut s, ev);
             s.effective = mode;
@@ -332,7 +401,13 @@ impl Perf {
             s.calm_streak += 1;
             s.tight_streak = 0;
         }
-        let target = if critical { 1 } else if tight { cap.saturating_sub(1).max(1) } else { cap };
+        let target = if critical {
+            1
+        } else if tight {
+            cap.saturating_sub(1).max(1)
+        } else {
+            cap
+        };
         // A new cap (a mode or the setting changed) applies at once, unless memory says otherwise.
         if s.allowed == 0 || s.allowed > cap || (cap != s.last_cap && !tight) {
             s.allowed = cap;
@@ -358,15 +433,28 @@ impl Perf {
                 continue;
             };
             let pids = tree(pid as i32, &procs);
-            let mem: u64 = pids.iter().map(|p| footprint(*p).unwrap_or_else(|| procs.get(p).map_or(0, |x| x.rss))).sum();
-            let cpu: f64 = pids.iter().filter_map(|p| procs.get(p)).map(|x| x.cpu).sum();
+            let mem: u64 = pids
+                .iter()
+                .map(|p| footprint(*p).unwrap_or_else(|| procs.get(p).map_or(0, |x| x.rss)))
+                .sum();
+            let cpu: f64 = pids
+                .iter()
+                .filter_map(|p| procs.get(p))
+                .map(|x| x.cpu)
+                .sum();
             all_pids.extend(pids.iter().copied());
             agents.push((l, pids, mem, cpu));
         }
 
         // Pause what does not fit; resume what does.
-        let cards: Vec<&(&LiveSession, Vec<i32>, u64, f64)> = agents.iter().filter(|a| a.0.meta.kind == SessionKind::Run && a.0.meta.pid.is_some()).collect();
-        let working: Vec<_> = cards.iter().filter(|a| !s.holds.contains_key(&a.0.meta.id)).collect();
+        let cards: Vec<&(&LiveSession, Vec<i32>, u64, f64)> = agents
+            .iter()
+            .filter(|a| a.0.meta.kind == SessionKind::Run && a.0.meta.pid.is_some())
+            .collect();
+        let working: Vec<_> = cards
+            .iter()
+            .filter(|a| !s.holds.contains_key(&a.0.meta.id))
+            .collect();
         if self.enabled() && working.len() as u32 > allowed {
             let over = working.len() - allowed as usize;
             let by_mode = working.len() as u32 > cap;
@@ -380,30 +468,65 @@ impl Perf {
             for a in pick.into_iter().take(take) {
                 let why = if by_mode { Why::Mode } else { Why::Memory };
                 freeze(&a.1);
-                s.holds.insert(a.0.meta.id.clone(), Hold { why, since: now(), pids: a.1.clone() });
+                s.holds.insert(
+                    a.0.meta.id.clone(),
+                    Hold {
+                        why,
+                        since: now(),
+                        pids: a.1.clone(),
+                    },
+                );
                 let reason = match why {
-                    Why::Mode => format!("{} lets {} at once", mode_name(mode), plural(allowed, "card")),
+                    Why::Mode => format!(
+                        "{} lets {} at once",
+                        mode_name(mode),
+                        plural(allowed, "card")
+                    ),
                     _ => format!("memory is tight ({}% free)", sys.free_pct.round()),
                 };
                 let (kind, n) = match why {
                     Why::Mode => ("paused_mode", u64::from(allowed)),
                     _ => ("paused_memory", sys.free_pct.round() as u64),
                 };
-                push_event(&mut s, Event { kind, card: Some(a.0.meta.card), title: Some(a.0.meta.card_title.clone()), n: Some(n), ..Default::default() });
+                push_event(
+                    &mut s,
+                    Event {
+                        kind,
+                        card: Some(a.0.meta.card),
+                        title: Some(a.0.meta.card_title.clone()),
+                        n: Some(n),
+                        ..Default::default()
+                    },
+                );
                 notes.push((a.0.meta.id.clone(), format!("Paused by Performance: {reason}. Nothing is lost; it continues where it was when there is room.")));
             }
         } else if self.enabled() && (working.len() as u32) < allowed && !tight {
-            let mut held: Vec<_> = cards.iter().filter(|a| s.holds.get(&a.0.meta.id).is_some_and(|h| h.why != Why::You)).collect();
+            let mut held: Vec<_> = cards
+                .iter()
+                .filter(|a| s.holds.get(&a.0.meta.id).is_some_and(|h| h.why != Why::You))
+                .collect();
             held.sort_by_key(|a| s.holds[&a.0.meta.id].since);
-            if let Some(a) = held.first() {
-                if let Some(h) = s.holds.remove(&a.0.meta.id) {
-                    let mut pids = h.pids;
-                    pids.extend(a.1.iter().copied());
-                    thaw(&pids);
-                    let paused = now().saturating_sub(h.since);
-                    push_event(&mut s, Event { kind: "resumed", card: Some(a.0.meta.card), title: Some(a.0.meta.card_title.clone()), n: Some(paused), ..Default::default() });
-                    notes.push((a.0.meta.id.clone(), format!("Resumed by Performance after {}.", span(paused))));
-                }
+            if let Some(a) = held.first()
+                && let Some(h) = s.holds.remove(&a.0.meta.id)
+            {
+                let mut pids = h.pids;
+                pids.extend(a.1.iter().copied());
+                thaw(&pids);
+                let paused = now().saturating_sub(h.since);
+                push_event(
+                    &mut s,
+                    Event {
+                        kind: "resumed",
+                        card: Some(a.0.meta.card),
+                        title: Some(a.0.meta.card_title.clone()),
+                        n: Some(paused),
+                        ..Default::default()
+                    },
+                );
+                notes.push((
+                    a.0.meta.id.clone(),
+                    format!("Resumed by Performance after {}.", span(paused)),
+                ));
             }
         }
 
@@ -425,7 +548,10 @@ impl Perf {
         let keep_awake = self.enabled() && mode == Mode::Full && !sessions.is_empty();
         match (keep_awake, s.caffeinate.is_some()) {
             (true, false) => {
-                s.caffeinate = std::process::Command::new("/usr/bin/caffeinate").args(["-i", "-w", &std::process::id().to_string()]).spawn().ok();
+                s.caffeinate = std::process::Command::new("/usr/bin/caffeinate")
+                    .args(["-i", "-w", &std::process::id().to_string()])
+                    .spawn()
+                    .ok();
             }
             (false, true) => {
                 if let Some(mut c) = s.caffeinate.take() {
@@ -456,7 +582,7 @@ impl Perf {
                     "working"
                 };
                 let mut top: Vec<(&str, u64, f64)> = pids.iter().filter_map(|p| procs.get(p).map(|x| (x.name.as_str(), footprint(*p).unwrap_or(x.rss), x.cpu))).collect();
-                top.sort_by(|a, b| b.1.cmp(&a.1));
+                top.sort_by_key(|x| std::cmp::Reverse(x.1));
                 json!({
                     "id": m.id, "card": m.card, "title": m.card_title, "kind": m.kind, "repo": m.repo, "branch": m.branch,
                     "model": m.model, "started_at": m.started_at, "pid": m.pid, "state": state,
@@ -477,11 +603,21 @@ impl Perf {
             e.1 += p.cpu;
         }
         let mut apps: Vec<_> = apps.into_iter().collect();
-        apps.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-        let others: Vec<Value> = apps.iter().take(6).map(|(n, (m, c))| json!({ "name": n, "mem": m, "cpu": c })).collect();
+        apps.sort_by_key(|x| std::cmp::Reverse(x.1.0));
+        let others: Vec<Value> = apps
+            .iter()
+            .take(6)
+            .map(|(n, (m, c))| json!({ "name": n, "mem": m, "cpu": c }))
+            .collect();
 
         let t = now();
-        s.history.push_back(Sample { t, cpu: sys.cpu, mem_used: sys.mem_used, agents_mem, agents_cpu });
+        s.history.push_back(Sample {
+            t,
+            cpu: sys.cpu,
+            mem_used: sys.mem_used,
+            agents_mem,
+            agents_cpu,
+        });
         while s.history.len() > 180 {
             s.history.pop_front();
         }
@@ -518,15 +654,27 @@ fn mode_name(m: Mode) -> &'static str {
 }
 
 fn plural(n: u32, word: &str) -> String {
-    if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") }
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
 }
 
 fn span(secs: u64) -> String {
-    if secs < 60 { format!("{secs} s") } else if secs < 3600 { format!("{} min", secs / 60) } else { format!("{} h {} min", secs / 3600, secs % 3600 / 60) }
+    if secs < 60 {
+        format!("{secs} s")
+    } else if secs < 3600 {
+        format!("{} min", secs / 60)
+    } else {
+        format!("{} h {} min", secs / 3600, secs % 3600 / 60)
+    }
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 // ---- The Mac -------------------------------------------------------------------------------
@@ -556,7 +704,11 @@ fn system(procs: &HashMap<i32, Proc>) -> System {
     let p_cores = sysctl::<i32>("hw.perflevel0.physicalcpu").map_or(cores, |n| n.max(1) as u32);
     let mut avg = [0f64; 3];
     // SAFETY: getloadavg writes at most `nelem` doubles into the buffer we pass.
-    let load = if unsafe { libc::getloadavg(avg.as_mut_ptr(), 3) } >= 1 { avg[0] } else { 0.0 };
+    let load = if unsafe { libc::getloadavg(avg.as_mut_ptr(), 3) } >= 1 {
+        avg[0]
+    } else {
+        0.0
+    };
     let cpu = (procs.values().map(|p| p.cpu).sum::<f64>() / f64::from(cores)).clamp(0.0, 100.0);
     System {
         mem_total,
@@ -578,13 +730,24 @@ fn sysctl<T: Copy>(name: &str) -> Option<T> {
     let mut len = std::mem::size_of::<T>();
     // SAFETY: the kernel writes at most `len` bytes into `v`, which is `len` bytes long; we read
     // it only when the call succeeded and filled exactly that size.
-    let r = unsafe { libc::sysctlbyname(c.as_ptr(), v.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) };
+    let r = unsafe {
+        libc::sysctlbyname(
+            c.as_ptr(),
+            v.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
     (r == 0 && len == std::mem::size_of::<T>()).then(|| unsafe { v.assume_init() })
 }
 
 /// Every process: parent, CPU (% of one core), resident memory, name and the app it belongs to.
 fn processes() -> HashMap<i32, Proc> {
-    let Ok(out) = std::process::Command::new("/bin/ps").args(["-axo", "pid=,ppid=,pcpu=,rss=,comm="]).output() else {
+    let Ok(out) = std::process::Command::new("/bin/ps")
+        .args(["-axo", "pid=,ppid=,pcpu=,rss=,comm="])
+        .output()
+    else {
         return HashMap::new();
     };
     String::from_utf8_lossy(&out.stdout)
@@ -597,8 +760,21 @@ fn processes() -> HashMap<i32, Proc> {
             let rss: u64 = it.next()?.parse().ok()?;
             let comm = skip_fields(l, 4)?;
             let name = comm.rsplit('/').next().unwrap_or(comm).to_owned();
-            let app = comm.split('/').find(|c| c.ends_with(".app")).map(|a| a.trim_end_matches(".app").to_owned()).unwrap_or_else(|| name.clone());
-            Some((pid, Proc { ppid, cpu, rss: rss * 1024, name, app }))
+            let app = comm
+                .split('/')
+                .find(|c| c.ends_with(".app"))
+                .map(|a| a.trim_end_matches(".app").to_owned())
+                .unwrap_or_else(|| name.clone());
+            Some((
+                pid,
+                Proc {
+                    ppid,
+                    cpu,
+                    rss: rss * 1024,
+                    name,
+                    app,
+                },
+            ))
         })
         .collect()
 }
@@ -663,7 +839,11 @@ fn thaw(pids: &[i32]) {
 fn set_background(pid: i32, on: bool) {
     // SAFETY: setpriority on a process we own; failure (it ended) is harmless.
     unsafe {
-        libc::setpriority(libc::PRIO_DARWIN_PROCESS, pid as libc::id_t, if on { libc::PRIO_DARWIN_BG } else { 0 });
+        libc::setpriority(
+            libc::PRIO_DARWIN_PROCESS,
+            pid as libc::id_t,
+            if on { libc::PRIO_DARWIN_BG } else { 0 },
+        );
     }
 }
 
@@ -702,7 +882,10 @@ mod tests {
     }
 
     fn stat(pid: u32) -> String {
-        let o = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+        let o = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&o.stdout).trim().to_owned()
     }
 
@@ -711,7 +894,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let p = Perf::new(home.path());
         // A shell (the session) running a command (its tool).
-        let mut sh = std::process::Command::new("/bin/sh").args(["-c", "sleep 30 & wait"]).spawn().unwrap();
+        let mut sh = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30 & wait"])
+            .spawn()
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
         let kids = tree(sh.id() as i32, &processes());
         assert!(kids.len() >= 2, "the shell and its sleep");
@@ -729,6 +915,19 @@ mod tests {
         for k in kids {
             unsafe { libc::kill(k, libc::SIGKILL) };
         }
+    }
+
+    #[test]
+    fn a_tick_paints_the_mac() {
+        let home = tempfile::tempdir().unwrap();
+        let p = Perf::new(home.path());
+        assert!(p.tick(&[]).is_empty());
+        let v = p.snapshot();
+        assert!(v["system"]["mem_total"].as_u64().unwrap() > 0);
+        assert_eq!(v["agents"].as_array().unwrap().len(), 0);
+        assert_eq!(v["history"].as_array().unwrap().len(), 1);
+        assert!(v["others"].as_array().unwrap().len() > 0);
+        assert_eq!(v["mode"], "full");
     }
 
     #[test]

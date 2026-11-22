@@ -398,7 +398,8 @@ function AgentsTable(props: { agents: PerfAgent[]; memTotal: number; busy: strin
                       <Show when={a.state === "paused" && a.paused_by}>{(by) => <span class="muted"> {t(pausedBy[by()])}</span>}</Show>
                     </span>
                   </td>
-                  <td class="perf-procs">
+                  <td>
+                    <div class="perf-procs">
                     <Show when={a.top.length > 0} fallback={<span class="muted">{t("not started")}</span>}>
                       <For each={a.top}>
                         {(p) => (
@@ -411,6 +412,7 @@ function AgentsTable(props: { agents: PerfAgent[]; memTotal: number; busy: strin
                         <span class="muted">{t("+{n} more", { n: String(a.procs - a.top.length) })}</span>
                       </Show>
                     </Show>
+                    </div>
                   </td>
                   <td class="num">{pct(a.cpu)}</td>
                   <td class="num perf-mem">

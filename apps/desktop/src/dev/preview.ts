@@ -42,9 +42,55 @@ const failedTimeline = () => {
 
 let nextTerm = 3;
 
+// Performance: a 32 GB Mac with two cards working and one paused for the mode.
+const GB = 1024 ** 3;
+const perfCfg = { mode: "light", auto: true, away_minutes: 10, light_agents: 2, light_background: true };
+const perfHistory = () =>
+  Array.from({ length: 180 }, (_, i) => {
+    const w = Math.sin(i / 14) * 0.5 + 0.5;
+    return { t: now() - (179 - i) * 2, cpu: 30 + w * 35 + (i % 7), mem_used: (19 + w * 4) * GB, agents_mem: (4 + w * 3) * GB, agents_cpu: 120 + w * 260 };
+  });
+const perfSnap = () => ({
+  governed: true, mode: perfCfg.mode, config: perfCfg, allowed: perfCfg.mode === "full" ? 3 : perfCfg.light_agents, at: now(), cap: 2, max: 3, adaptive: true,
+  idle_secs: 42, tight: false, critical: false, background: perfCfg.mode === "light", awake: perfCfg.mode === "full",
+  system: { mem_total: 32 * GB, mem_used: 22.4 * GB, free_pct: 30, pressure: "normal", swap_used: 0.6 * GB, swap_total: 2 * GB, cpu: 46, cores: 12, p_cores: 8, load: 7.4 },
+  agents: [
+    { id: "3-live", card: 3, title: "Strip scripts from SVG avatars", kind: "run", repo: repo.path, branch: "fix/avatar-svg", model: "opus", started_at: now() - 900, pid: 4242,
+      state: "background", paused_by: null, paused_since: null, mem: 3.1 * GB, cpu: 212, procs: 9,
+      top: [{ name: "cargo", mem: 1.6 * GB, cpu: 180 }, { name: "claude", mem: 0.38 * GB, cpu: 3 }, { name: "node", mem: 0.31 * GB, cpu: 21 }, { name: "rustc", mem: 0.6 * GB, cpu: 8 }] },
+    { id: "4-live", card: 4, title: "Invite limits per workspace", kind: "run", repo: repo.path, branch: "feat/invite-limits", model: "opus", started_at: now() - 600, pid: 4300,
+      state: "background", paused_by: null, paused_since: null, mem: 1.2 * GB, cpu: 64, procs: 4,
+      top: [{ name: "node", mem: 0.7 * GB, cpu: 60 }, { name: "claude", mem: 0.41 * GB, cpu: 4 }] },
+    { id: "6-live", card: 6, title: "Kart drift tier 3", kind: "run", repo: repo.path, branch: "feat/kart-drift", model: "sonnet", started_at: now() - 300, pid: 4400,
+      state: "paused", paused_by: "mode", paused_since: now() - 140, mem: 0.9 * GB, cpu: 0, procs: 3,
+      top: [{ name: "claude", mem: 0.36 * GB, cpu: 0 }, { name: "npm", mem: 0.5 * GB, cpu: 0 }] },
+    { id: "j-1", card: 2, title: "Cookie banner copy", kind: "judge", repo: repo.path, branch: "feat/cookie-copy", model: "sonnet", started_at: now() - 60, pid: 4500,
+      state: "background", paused_by: null, paused_since: null, mem: 0.3 * GB, cpu: 2, procs: 1, top: [{ name: "claude", mem: 0.3 * GB, cpu: 2 }] },
+  ],
+  agents_mem: 5.5 * GB, agents_cpu: 278,
+  others: [{ name: "Google Chrome", mem: 6.2 * GB, cpu: 38 }, { name: "Pitlane", mem: 1.4 * GB, cpu: 6 }, { name: "Figma", mem: 1.1 * GB, cpu: 4 },
+    { name: "Slack", mem: 0.8 * GB, cpu: 1 }, { name: "WindowServer", mem: 0.6 * GB, cpu: 12 }, { name: "Finder", mem: 0.2 * GB, cpu: 0 }],
+  history: perfHistory(),
+  events: [
+    { t: now() - 140, kind: "paused_mode", card: 6, title: "Kart drift tier 3", n: 2 },
+    { t: now() - 700, kind: "back" },
+    { t: now() - 3600, kind: "resumed", card: 4, title: "Invite limits per workspace", n: 95 },
+    { t: now() - 3700, kind: "paused_memory", card: 4, title: "Invite limits per workspace", n: 9 },
+    { t: now() - 7200, kind: "away", n: 10 },
+  ],
+});
+
 export async function preview<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((r) => setTimeout(r, 250));
   switch (cmd) {
+    case "perf":
+      return perfSnap() as T;
+    case "perf_set":
+      Object.assign(perfCfg, (args?.config ?? {}) as object);
+      if (args?.config && "mode" in (args.config as object) && !("auto" in (args.config as object))) perfCfg.auto = false;
+      return { config: perfCfg } as T;
+    case "perf_hold":
+      return { changed: true } as T;
     case "settings":
       return { repos: [repo], last: repo.path } as T;
     case "select_repo":
