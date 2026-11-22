@@ -616,6 +616,25 @@ export function BoardView(props: {
                                 {card.notes!.length}
                               </span>
                             </Show>
+                            <Show when={card.state === "blocked" && (card.questions ?? []).every((q) => q.answer != null) && !liveRun(card.id) && props.repo}>
+                              <button
+                                type="button"
+                                class="btn btn-ghost btn-icon card-back"
+                                aria-label={t("Back to Backlog")}
+                                title={t("Back to Backlog: its next run picks up from your notes and its lane")}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void api
+                                    .cardUpdate(props.repo!, card.id, { state: "ready" })
+                                    .then(() => (toast({ tone: "done", title: t("#{id} back in Backlog", { id: card.id }) }), props.onChanged()))
+                                    .catch((err) => toast({ tone: "fail", title: t("Could not move #{id}", { id: card.id }), body: msg(err) }));
+                                }}
+                              >
+                                <Icon name="queued" small />
+                              </button>
+                            </Show>
                           </div>
                           <div class="card-title"><Linked text={card.title} /></div>
                           <Show when={p.why}>
@@ -838,17 +857,22 @@ export function CardSheet(props: {
     el.style.height = `${el.scrollHeight + 2}px`;
   };
 
-  async function save() {
+  async function save(to?: CardState) {
     setBusy(true);
     setError(null);
     try {
+      const next = to ?? state();
       await api.cardUpdate(props.repo, props.card.id, {
         title: title().trim() !== props.card.title ? title().trim() : undefined,
         body: body() !== props.card.body ? body() : undefined,
-        state: state() !== props.card.state ? state() : undefined,
+        state: next !== props.card.state ? next : undefined,
         lane: lane().trim() !== (props.card.lane ?? "") ? lane().trim() : undefined,
       });
-      toast({ tone: "done", title: t("#{id} saved", { id: props.card.id }) });
+      toast(
+        to
+          ? { tone: "done", title: t("#{id} back in Backlog", { id: props.card.id }), body: t("Its next run picks up from your notes and its lane.") }
+          : { tone: "done", title: t("#{id} saved", { id: props.card.id }) },
+      );
       props.onChanged();
       props.onClose();
     } catch (e) {
@@ -925,13 +949,24 @@ export function CardSheet(props: {
             <Icon name="trash" small /> {t("Delete")}
           </button>
           <span class="sheet-note">{props.card.file}</span>
+          <Show when={props.card.state === "blocked" && !live()}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              disabled={busy() || !title().trim()}
+              title={t("Save your changes and send it back to Backlog, to be worked again")}
+              onClick={() => void save("ready")}
+            >
+              <Icon name="queued" small /> {t("Back to Backlog")}
+            </button>
+          </Show>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
             {dirty() ? t("Cancel") : t("Close")}
           </button>
           <Show
             when={!dirty()}
             fallback={
-              <button type="button" class="btn btn-primary" disabled={busy() || !title().trim()} aria-busy={busy()} onClick={save}>
+              <button type="button" class="btn btn-primary" disabled={busy() || !title().trim()} aria-busy={busy()} onClick={() => void save()}>
                 <Show when={busy()}>
                   <Spinner />
                 </Show>

@@ -75,7 +75,8 @@ export function place(card: Card, yard: Yard | null): Placement {
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.production ?? "main" }) };
   if (card.state === "in-dev" || lane?.in_integration)
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.integration ?? "dev" }) };
-  if (card.state === "running" || lane)
+  // Ready or inbox with a lane: sent back to the backlog (from Blocked, say); its next run goes on in that lane.
+  if (card.state === "running" || (lane && card.state !== "ready" && card.state !== "inbox"))
     return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? t("Running") : t("In a lane") };
   return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]), why: about(card) };
 }

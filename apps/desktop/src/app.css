@@ -723,6 +723,9 @@ body[data-resizing] .pane { pointer-events: none; }
 .card[data-gap="before"] { box-shadow: 0 -5px 0 -3px var(--color-accent), var(--ring); }
 .card[data-gap="after"] { box-shadow: 0 5px 0 -3px var(--color-accent), var(--ring); }
 .card-notes { display: inline-flex; align-items: center; gap: 2px; margin-inline-start: auto; font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); }
+.card-back { margin-inline-start: auto; margin-block: -4px; opacity: 0; transition: opacity var(--dur-short) var(--ease-out); }
+.card-notes + .card-back { margin-inline-start: 0; }
+.card:hover .card-back, .card:focus-within .card-back, .card-back:focus-visible { opacity: 1; }
 
 /* ---------- Run all: one question at a time ---------- */
 .ask-one { display: grid; gap: var(--space-sm); padding-top: var(--space-2xs); }
