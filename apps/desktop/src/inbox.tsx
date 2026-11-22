@@ -364,30 +364,36 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
   }
   return (
     <div class="decision" data-editing={editing() || showTalk() ? "" : undefined}>
-      <dt>{props.q.text}</dt>
-      <dd>
-        {props.q.answer}
+      <dt class="decision-q">{inline(props.q.text)}</dt>
+      <dd class="decision-a">
+        <Icon name="done" small />
+        <span>{props.q.answer}</span>
+      </dd>
+      <dd class="decision-foot">
         <Show when={props.q.decision}>
           <span class="tag">{props.q.decision}</span>
         </Show>
         <span class="decision-actions">
           <button
             type="button"
-            class="btn btn-ghost decision-change"
+            class="btn decision-btn"
             aria-expanded={showTalk()}
             disabled={busy()}
             title={t("Ask Claude about it, or propose another way")}
             onClick={() => setTalkOpen(!showTalk())}
           >
+            <Icon name="spark" small />
             {turns() ? t("Talk ({n})", { n: turns() }) : t("Talk")}
           </button>
           <button
             type="button"
-            class="btn btn-ghost decision-change"
+            class="btn decision-btn"
             aria-expanded={editing()}
             disabled={busy()}
+            title={editing() ? undefined : t("Choose another answer")}
             onClick={() => setEditing(!editing())}
           >
+            <Icon name={editing() ? "close" : "edit"} small />
             {editing() ? t("Keep") : t("Change")}
           </button>
         </span>
@@ -571,15 +577,17 @@ export function InboxView(props: {
               {(g) => (
                 <section class="inbox-card" aria-label={t("Card {id}: {title}", { id: g.card.id, title: g.card.title })}>
                   <header class="inbox-card-head">
-                    <button type="button" class="card-link" onClick={() => props.onOpenCard(g.card.id)}>
+                    <button type="button" class="card-link" onClick={() => props.onOpenCard(g.card.id)} title={t("Open card #{id}", { id: g.card.id })}>
                       <span class="card-id">#{g.card.id}</span>
-                      {g.card.title}
+                      <span class="card-link-title">{g.card.title}</span>
                     </button>
-                    <span class="caption">
+                    <span class="inbox-count" data-open="">
+                      <Icon name="needs" small />
                       {t("{open} open of {total}", { open: g.qs.length, total: g.total })}
                     </span>
                   </header>
                   <Show when={g.decided.length > 0}>
+                    <p class="inbox-sub">{t("Decided so far")}</p>
                     <dl class="decided">
                       <For each={g.decided}>
                         {(d) => <DecisionItem repo={props.repo} card={g.card} q={d} onChanged={props.onChanged} />}
@@ -617,18 +625,21 @@ export function InboxView(props: {
         <Show when={settled().length > 0}>
           <section class="inbox-settled" aria-label={t("Decided, not started")}>
             <header class="inbox-settled-head">
-              <h2 class="cs-label">{t("Decided, not started")}</h2>
+              <h2 class="inbox-section-title">{t("Decided, not started")}</h2>
               <p class="caption">{t("Until a card starts, any decision can change: choose again, or talk it over with Claude.")}</p>
             </header>
             <For each={settled()}>
               {(c) => (
                 <section class="inbox-card" aria-label={t("Card {id}: {title}", { id: c.id, title: c.title })}>
                   <header class="inbox-card-head">
-                    <button type="button" class="card-link" onClick={() => props.onOpenCard(c.id)}>
+                    <button type="button" class="card-link" onClick={() => props.onOpenCard(c.id)} title={t("Open card #{id}", { id: c.id })}>
                       <span class="card-id">#{c.id}</span>
-                      {c.title}
+                      <span class="card-link-title">{c.title}</span>
                     </button>
-                    <span class="caption">{plural((c.questions ?? []).length, "{n} decision", "{n} decisions")}</span>
+                    <span class="inbox-count">
+                      <Icon name="done" small />
+                      {plural((c.questions ?? []).length, "{n} decision", "{n} decisions")}
+                    </span>
                   </header>
                   <dl class="decided">
                     <For each={c.questions ?? []}>

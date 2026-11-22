@@ -178,8 +178,18 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
     case "lane_diff":
       return {
         base: "8e924ea0", head: "951104d0",
-        files: [{ path: "README.md", added: 1, removed: 1 }],
-        patch: "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.\n",
+        files: [
+          { path: "README.md", added: 1, removed: 1 },
+          { path: "src/kart/drift.ts", added: 6, removed: 3 },
+          { path: "src/kart/drift.test.ts", added: 4, removed: 0 },
+          { path: "src/lobby/old-timer.ts", added: 0, removed: 3 },
+        ],
+        patch: [
+          "diff --git a/README.md b/README.md\nindex 1b5a4e9..3c1f0a2 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-demo\n+This is a demo repository for Pitlane.",
+          "diff --git a/src/kart/drift.ts b/src/kart/drift.ts\nindex 1..2 100644\n--- a/src/kart/drift.ts\n+++ b/src/kart/drift.ts\n@@ -10,8 +10,11 @@ export function drift(k: Kart) {\n   const speed = k.speed;\n-  const grip = 0.8;\n-  const angle = k.angle * grip;\n-  return angle;\n+  const grip = surfaceGrip(k.surface);\n+  const angle = k.angle * grip;\n+  if (k.tier >= 3) {\n+    return angle * 1.2;\n+  }\n+  return angle;\n }\n \n export const DRIFT_TIERS = 3;",
+          "diff --git a/src/kart/drift.test.ts b/src/kart/drift.test.ts\nnew file mode 100644\nindex 0000000..3\n--- /dev/null\n+++ b/src/kart/drift.test.ts\n@@ -0,0 +1,4 @@\n+import { drift } from './drift';\n+test('tier 3 drifts further', () => {\n+  expect(drift(kart(3))).toBeGreaterThan(drift(kart(2)));\n+});",
+          "diff --git a/src/lobby/old-timer.ts b/src/lobby/old-timer.ts\ndeleted file mode 100644\nindex 4..0000000\n--- a/src/lobby/old-timer.ts\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-export function timer() {\n-  return 0;\n-}",
+        ].join("\n") + "\n",
         truncated: false,
       } as T;
     case "plan":

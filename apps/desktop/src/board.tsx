@@ -754,7 +754,7 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 // ---------------------------------------------------------------- one card
 
 /** A note's age in words: "now", "12 min", "3 h", "2 d", then the date. */
-function ago(at: string, now: number): string {
+export function ago(at: string, now: number): string {
   const ts = Date.parse(at);
   if (Number.isNaN(ts)) return at;
   const m = Math.floor((now - ts) / 60000);
@@ -765,7 +765,7 @@ function ago(at: string, now: number): string {
   return new Date(ts).toLocaleDateString(locale(), { day: "numeric", month: "short" });
 }
 
-const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
+export const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
   claude: { name: "Claude", icon: "spark" },
   you: { name: "You", icon: "person" },
   judge: { name: "Judge", icon: "verify" },

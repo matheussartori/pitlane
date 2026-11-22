@@ -950,6 +950,9 @@ export default function App() {
                 <Match when={runView()}>
                   {(id) => (
                     <RunScreen
+                      repo={path()}
+                      card={(cards() ?? []).find((c) => c.id === (runs() ?? []).find((r) => r.id === id())?.card)}
+                      onOpenCard={(cid) => setSheet({ kind: "card", id: cid })}
                       meta={(runs() ?? []).find((r) => r.id === id())}
                       yard={yard()}
                       now={now()}

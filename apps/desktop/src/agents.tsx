@@ -770,7 +770,7 @@ function Diff(props: { change: { old: string; new: string; cut: number } }) {
   );
 }
 
-function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind: "tool-done" }> }) {
+export function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind: "tool-done" }> }) {
   const e = props.e;
   switch (e.kind) {
     case "text":

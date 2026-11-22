@@ -1,8 +1,12 @@
 // One run: what the agent is doing, live, beside the figures and its handoff.
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
-import { api, isLive, onRun, type RunEvent, type RunMeta, type RunState, type Yard } from "./api";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
+import { api, isLive, onRun, type Card, type RunEvent, type RunMeta, type RunState, type Yard } from "./api";
+import { Line } from "./agents";
 import { ApprovalBlock } from "./approvals";
-import { LaneTrack } from "./board";
+import { LaneTrack, ago, noteBy } from "./board";
+import { Counts, DiffViewer, statusLetter, statusWord, type ChangedFile } from "./diffview";
+import { Prose } from "./prose";
+import { parsePatch } from "./review";
 import { Icon, type IconName } from "./icons";
 import type { ChipState } from "./lane";
 import { locale, plural, t, tx } from "./i18n";
@@ -40,6 +44,9 @@ export const kTokens = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 
 export function RunScreen(props: {
+  repo: string;
+  card?: Card;
+  onOpenCard: (id: number) => void;
   meta: RunMeta | undefined;
   yard: Yard | null;
   now: number;
@@ -52,6 +59,8 @@ export function RunScreen(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [more, setMore] = createSignal(false);
+  const [side, setSide] = createSignal<"run" | "card">("run");
+  const [viewing, setViewing] = createSignal<string | null>(null);
   let list: HTMLDivElement | undefined;
   let stick = true;
 
@@ -117,6 +126,53 @@ export function RunScreen(props: {
   const startedAt = createMemo(() => ordered().findIndex((e) => e.kind === "started"));
   const openTool = createMemo(() => ordered().some((e) => e.kind === "tool" && !doneById().has(e.id)));
   const steps = (cmd: string) => cmd.split(/\s*(?:;|&&)\s*/).filter(Boolean);
+
+  // Tool lines read relative to the worktree; one copy per event, so the log keeps its rows.
+  const relCache = new WeakMap<RunEvent, RunEvent>();
+  const relative = (e: RunEvent): RunEvent => {
+    if (e.kind !== "tool" && e.kind !== "tool-done") return e;
+    let r = relCache.get(e);
+    if (!r) relCache.set(e, (r = { ...e, detail: rel(e.detail) }));
+    return r;
+  };
+  const doneRel = (id: string) => {
+    const d = doneById().get(id);
+    return d ? (relative(d) as Extract<RunEvent, { kind: "tool-done" }>) : undefined;
+  };
+  // The log as Claude Code shows it: results under their call, subagents' steps behind their Task.
+  const shownTools = createMemo(() => new Set(ordered().flatMap((e) => (e.kind === "tool" ? [e.id] : []))));
+  const logEvents = createMemo(() =>
+    ordered().filter((e, i) => {
+      if ("parent" in e && e.parent) return false;
+      if (e.kind === "quota" || e.kind === "tuned") return false;
+      if (e.kind === "tool-done" && shownTools().has(e.id)) return false;
+      // Setup notes matter until the agent starts; after that one line says it.
+      if (e.kind === "note" && startedAt() >= 0 && i < startedAt()) return false;
+      return true;
+    }).map(relative),
+  );
+
+  // What the lane changed in this run (from the commit it started on), with counts per file.
+  const diffKey = () => {
+    const m = props.meta;
+    if (!m?.branch) return null;
+    return { repo: props.repo, branch: m.branch, from: m.base_sha ?? undefined, files: (m.handoff?.files_changed ?? []).join("|"), state: m.state };
+  };
+  const [diff] = createResource(diffKey, (k) => api.laneDiff(k.repo, k.branch, k.from).catch(() => null));
+  const parsed = createMemo(() => (diff() ? parsePatch(diff()!.patch) : []));
+  const changed = createMemo<ChangedFile[]>(() => {
+    const d = diff();
+    const out: ChangedFile[] = [];
+    const seen = new Set<string>();
+    for (const f of d?.files ?? []) {
+      seen.add(f.path);
+      out.push({ path: f.path, added: f.added, removed: f.removed, status: parsed().find((p) => p.path === f.path)?.status ?? null });
+    }
+    // Files the agent reports outside this diff (a related repository, not committed yet).
+    for (const p of props.meta?.handoff?.files_changed ?? []) if (!seen.has(p)) out.push({ path: p, added: null, removed: null, status: null });
+    return out;
+  });
+  const totals = createMemo(() => changed().reduce((a, f) => ({ add: a.add + (f.added ?? 0), del: a.del + (f.removed ?? 0) }), { add: 0, del: 0 }));
 
   async function say(e: Event) {
     e.preventDefault();
@@ -186,7 +242,7 @@ export function RunScreen(props: {
       {(m) => (
         <div class="run-screen">
           <header class="screen-head">
-            <button type="button" class="btn btn-ghost btn-icon back" aria-label={t("Back to the board")} onClick={props.onBack}>
+            <button type="button" class="btn btn-icon back" aria-label={t("Back to the board")} title={t("Back to the board")} onClick={props.onBack}>
               <Icon name="chev" small />
             </button>
             <h1 class="title">
@@ -258,7 +314,7 @@ export function RunScreen(props: {
 
           <div class="run-body" data-live={isLive(m().state) ? "" : undefined}>
             <div
-              class="timeline"
+              class="timeline ag-log"
               ref={list}
               aria-live="polite"
               onScroll={(e) => {
@@ -266,59 +322,15 @@ export function RunScreen(props: {
                 stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
               }}
             >
-              <For each={ordered()}>
+              <For each={logEvents()}>
                 {(e) => (
-                  <Switch>
-                    <Match when={e.kind === "started" && e}>
-                      {(x) => <p class="tl-note">{t("Claude Code started with {model} in the lane’s worktree.", { model: x().model })}</p>}
-                    </Match>
-                    <Match when={e.kind === "text" && e}>{(x) => <p class="tl-text selectable">{x().text}</p>}</Match>
-                    <Match when={e.kind === "tool" && e}>
-                      {(x) => {
-                        const done = () => doneById().get(x().id);
-                        return (
-                          <div class="tl-tool" data-state={done() ? (done()!.ok ? "ok" : "fail") : "open"}>
-                            <span class="tl-tool-name">{x().name}</span>
-                            <code class="tl-tool-detail selectable" title={x().detail}>
-                              {rel(x().detail)}
-                            </code>
-                            <span class="tl-tool-mark">
-                              <Show when={done()} fallback={<Spinner />}>
-                                <Icon name={done()!.ok ? "done" : "fail"} small />
-                              </Show>
-                            </span>
-                            <Show when={done() && !done()!.ok}>
-                              <span class="tl-tool-fail selectable">{done()!.detail}</span>
-                            </Show>
-                          </div>
-                        );
-                      }}
-                    </Match>
-                    <Match when={e.kind === "said" && e}>
-                      {(x) => (
-                        <p class="tl-said selectable">
-                          <b>{t("You")}</b>
-                          {x().text}
-                        </p>
-                      )}
-                    </Match>
+                  <Switch fallback={<Line e={e} m={m()} done={e.kind === "tool" ? doneRel(e.id) : undefined} />}>
                     <Match when={e.kind === "approval" && e}>
                       {(x) => (
                         <p class="tl-note tl-asked" data-pending={m().waiting.some((w) => w.id === x().approval.id) ? "" : undefined}>
                           <Icon name="needs" small /> {x().approval.tool === "Bash" ? t("Asked to run") : t("Asked to use")}{" "}
                           <code>{rel(x().approval.detail || x().approval.tool)}</code>
                         </p>
-                      )}
-                    </Match>
-                    <Match when={e.kind === "proof" && e}>
-                      {(x) => (
-                        <div class="tl-tool" data-state={x().ok ? "ok" : "fail"}>
-                          <span class="tl-tool-name">{t("Check")}</span>
-                          <code class="tl-tool-detail selectable">{x().command}</code>
-                          <span class="tl-tool-mark">
-                            <Icon name={x().ok ? "done" : "fail"} small />
-                          </span>
-                        </div>
                       )}
                     </Match>
                     <Match when={e.kind === "judged" && e}>
@@ -344,9 +356,6 @@ export function RunScreen(props: {
                         </p>
                       )}
                     </Match>
-                    <Match when={e.kind === "note" && (startedAt() < 0 || ordered().indexOf(e) > startedAt()) && e}>
-                      {(x) => <p class="tl-note">{x().text}</p>}
-                    </Match>
                     <Match when={e.kind === "finished" && e}>
                       {(x) => (
                         <p class="tl-finished" data-ok={x().ok ? "" : undefined}>
@@ -355,8 +364,8 @@ export function RunScreen(props: {
                         </p>
                       )}
                     </Match>
-                    <Match when={e.kind === "exited" && e.state !== "done" && e}>
-                      {(x) => <p class="tl-note">{t("The agent exited: {state}.", { state: t(runStateView[x().state].label).toLowerCase() })}</p>}
+                    <Match when={e.kind === "exited" && e}>
+                      {(x) => (x().state !== "done" ? <p class="tl-note">{t("The agent exited: {state}.", { state: t(runStateView[x().state].label).toLowerCase() })}</p> : null)}
                     </Match>
                   </Switch>
                 )}
@@ -369,6 +378,21 @@ export function RunScreen(props: {
             </div>
 
             <aside class="run-side" aria-label={t("What this run did")}>
+              <div class="rs-tabs" role="tablist" aria-label={t("Beside the log")}>
+                <button type="button" role="tab" aria-selected={side() === "run"} onClick={() => setSide("run")}>
+                  {t("This run")}
+                </button>
+                <button type="button" role="tab" aria-selected={side() === "card"} onClick={() => setSide("card")}>
+                  {t("Card #{id}", { id: m().card })}
+                </button>
+              </div>
+              <Show when={side() === "card"}>
+                <RunCard card={props.card} now={props.now} onOpen={() => props.onOpenCard(m().card)} />
+              </Show>
+              <Show when={side() === "run"}>
+              <Show when={!m().handoff && changed().length > 0}>
+                <ChangedList files={changed()} totals={totals()} onPick={setViewing} />
+              </Show>
               <Show when={m().handoff}>
                 {(h) => {
                   const files = () => h().files_changed ?? [];
@@ -383,29 +407,12 @@ export function RunScreen(props: {
                         <Show when={tested()}>
                           <span class="rs-outcome-part">{h().tests?.passed ? t("checks pass") : t("checks fail")}</span>
                         </Show>
-                        <Show when={files().length > 0}>
-                          <span class="rs-outcome-part">{plural(files().length, "{n} file changed", "{n} files changed")}</span>
+                        <Show when={Math.max(files().length, changed().length) > 0}>
+                          <span class="rs-outcome-part">{plural(Math.max(files().length, changed().length), "{n} file changed", "{n} files changed")}</span>
                         </Show>
                       </div>
-                      <Show when={files().length > 0}>
-                        <section class="rs-sec">
-                          <h2 class="side-title">{t("What changed")}</h2>
-                          <ul class="rs-files">
-                            <For each={files()}>
-                              {(f) => {
-                                const cut = f.lastIndexOf("/");
-                                return (
-                                  <li>
-                                    <button type="button" class="rs-file" title={t("Open in Code")} onClick={() => props.onOpenFile(m().branch, f)}>
-                                      <span class="rs-file-name">{f.slice(cut + 1)}</span>
-                                      <span class="rs-file-dir">{cut > 0 ? f.slice(0, cut) : ""}</span>
-                                    </button>
-                                  </li>
-                                );
-                              }}
-                            </For>
-                          </ul>
-                        </section>
+                      <Show when={changed().length > 0}>
+                        <ChangedList files={changed()} totals={totals()} onPick={setViewing} />
                       </Show>
                       <Show when={tested()}>
                         <section class="rs-sec">
@@ -497,8 +504,26 @@ export function RunScreen(props: {
               <Show when={m().error && !m().next}>
                 <ErrorLine>{m().error}</ErrorLine>
               </Show>
+              </Show>
             </aside>
           </div>
+
+          <Show when={viewing()}>
+            {(start) => (
+              <DiffViewer
+                title={t("What changed")}
+                files={changed()}
+                diffs={parsed()}
+                truncated={!!diff()?.truncated}
+                start={start()}
+                onOpenInCode={(f) => {
+                  setViewing(null);
+                  props.onOpenFile(m().branch, f);
+                }}
+                onClose={() => setViewing(null)}
+              />
+            )}
+          </Show>
 
           <For each={m().waiting}>{(a, i) => <ApprovalBlock run={m().id} approval={a} keys={i() === 0} />}</For>
 
@@ -522,6 +547,117 @@ export function RunScreen(props: {
             </form>
           </Show>
         </div>
+      )}
+    </Show>
+  );
+}
+
+/** What changed, file by file: its mark (added, modified, deleted), the lines in and out. */
+function ChangedList(props: { files: ChangedFile[]; totals: { add: number; del: number }; onPick: (path: string) => void }) {
+  return (
+    <section class="rs-sec">
+      <h2 class="side-title rs-title">
+        {t("What changed")}
+        <Counts added={props.totals.add} removed={props.totals.del} />
+      </h2>
+      <ul class="rs-files rs-changed">
+        <For each={props.files}>
+          {(f) => {
+            const cut = f.path.lastIndexOf("/");
+            const st = f.status ?? "modified";
+            return (
+              <li>
+                <button type="button" class="rs-file rs-change" title={t("{status}: see the diff", { status: t(statusWord[st]) })} onClick={() => props.onPick(f.path)}>
+                  <span class="dv-status" data-status={st} aria-label={t(statusWord[st])}>
+                    {statusLetter[st]}
+                  </span>
+                  <span class="rs-file-name" data-status={st}>{f.path.slice(cut + 1)}</span>
+                  <Counts added={f.added} removed={f.removed} />
+                  <span class="rs-file-dir">{cut > 0 ? f.path.slice(0, cut) : ""}</span>
+                </button>
+              </li>
+            );
+          }}
+        </For>
+      </ul>
+    </section>
+  );
+}
+
+/** The card the run works on, as its sheet shows it: the spec, the decisions, the notes. */
+function RunCard(props: { card?: Card; now: number; onOpen: () => void }) {
+  const [full, setFull] = createSignal(false);
+  const [clipped, setClipped] = createSignal(false);
+  const measure = (el: HTMLDivElement) => requestAnimationFrame(() => setClipped(el.scrollHeight > el.clientHeight + 2));
+  const decided = () => (props.card?.questions ?? []).filter((q) => q.answer != null);
+  const notes = () => props.card?.notes ?? [];
+  return (
+    <Show when={props.card} fallback={<p class="side-hint">{t("The card is not on this board any more.")}</p>}>
+      {(c) => (
+        <>
+          <section class="rs-sec">
+            <h2 class="side-title rs-title">
+              {t("Spec")}
+              <button type="button" class="link-btn rs-more rs-open-card" onClick={props.onOpen}>
+                {t("Open card")}
+              </button>
+            </h2>
+            <Show when={c().body.trim()} fallback={<p class="side-hint">{t("This card has no spec, only its title.")}</p>}>
+              <div class="rs-spec" ref={measure} data-open={full() ? "" : undefined} data-clipped={clipped() ? "" : undefined}>
+                <Prose text={c().body} />
+              </div>
+              <Show when={clipped() || full()}>
+                <button type="button" class="link-btn rs-more" onClick={() => setFull(!full())}>
+                  {full() ? t("Less") : t("More")}
+                </button>
+              </Show>
+            </Show>
+          </section>
+          <Show when={decided().length > 0}>
+            <section class="rs-sec">
+              <h2 class="side-title">{t("Decisions")}</h2>
+              <ul class="rs-decisions">
+                <For each={decided()}>
+                  {(q) => (
+                    <li class="rs-decision">
+                      <p class="rs-decision-q">{q.text}</p>
+                      <p class="rs-decision-a">
+                        <Icon name="done" small />
+                        <span>{q.answer}</span>
+                      </p>
+                      <Show when={q.decision}>
+                        <span class="tag">{q.decision}</span>
+                      </Show>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </section>
+          </Show>
+          <section class="rs-sec">
+            <h2 class="side-title rs-title">
+              {t("Notes")} <span class="rs-count">{notes().length}</span>
+            </h2>
+            <Show when={notes().length > 0} fallback={<p class="side-hint">{t("No notes yet. Run all's analysis and each run add theirs here.")}</p>}>
+              <ol class="notes rs-notes">
+                <For each={notes()}>
+                  {(n) => (
+                    <li class="note" data-by={n.by}>
+                      <div class="note-head">
+                        <Icon name={noteBy[n.by]?.icon ?? "person"} small />
+                        <span class="note-by">{noteBy[n.by] ? t(noteBy[n.by]!.name) : n.by}</span>
+                        <span class="note-at" title={n.at}>
+                          {ago(n.at, props.now)}
+                        </span>
+                      </div>
+                      <Prose text={n.text} />
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
+          </section>
+        </>
       )}
     </Show>
   );

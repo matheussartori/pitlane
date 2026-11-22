@@ -1171,6 +1171,10 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
                 let _ = wv.eval(vscode::login_script(&r.password));
             }
         } else {
+            // The places may have come while the page was still loading (an eval then is lost, and
+            // the start script holds what was known when the view was made): give it them again.
+            let places = wv.app_handle().state::<CodeView>().places.lock().unwrap().clone();
+            let _ = wv.eval(vscode::places_script(&places));
             watch_ready(wv, rr.clone(), ff.clone(), expect.clone());
         }
     });

@@ -30,11 +30,16 @@
     m.setAttribute("role", "menu");
     m.style.left = r.left + "px";
     m.style.top = r.bottom + 4 + "px";
-    m.innerHTML = places
-      .map(function (p) {
-        return '<button type="button" role="menuitem" data-root="' + esc(p.root) + '" aria-current="' + (p.root === here) + '">' + (p.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-label">' + esc(p.label) + '</span><span class="pl-sub">' + (p.kind === "lane" ? "Lane worktree" : "Main checkout") + "</span></button>";
-      })
-      .join("");
+    function item(p) {
+      return '<button type="button" role="menuitem" data-root="' + esc(p.root) + '" aria-current="' + (p.root === here) + '">' + (p.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-label">' + esc(p.label) + '</span><span class="pl-sub">' + esc(p.root.replace(/^\/Users\/[^/]+/, "~")) + "</span></button>";
+    }
+    var repo = places.filter(function (p) { return p.kind !== "lane"; });
+    var lanes = places.filter(function (p) { return p.kind === "lane"; });
+    if (!repo.length) repo = [current()];
+    m.innerHTML =
+      '<div class="pl-head">Repository</div>' + repo.map(item).join("") +
+      '<div class="pl-head">Lane worktrees' + (lanes.length ? ' <span class="pl-count">' + lanes.length + "</span>" : "") + "</div>" +
+      (lanes.length ? lanes.map(item).join("") : '<p class="pl-empty">No lane has a worktree yet. A lane gets one when its card starts.</p>');
     m.addEventListener("click", function (e) {
       var b = e.target.closest("button[data-root]");
       if (!b) return;

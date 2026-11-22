@@ -12,20 +12,23 @@ const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.
 
 // ---------------------------------------------------------------- the diff
 
-interface DiffLine {
+export interface DiffLine {
   kind: "add" | "del" | "ctx" | "meta";
   text: string;
   old?: number;
   new?: number;
 }
-interface DiffHunk {
+export interface DiffHunk {
   head: string;
   lines: DiffLine[];
 }
-interface DiffFile {
+export interface DiffFile {
   path: string;
   hunks: DiffHunk[];
   binary: boolean;
+  /** Added, deleted, renamed (from `from`), or modified. */
+  status: "added" | "deleted" | "renamed" | "modified";
+  from?: string;
 }
 
 /** Unified diff text into files and hunks, with line numbers on both sides. */
@@ -38,12 +41,20 @@ export function parsePatch(patch: string): DiffFile[] {
   for (const raw of patch.split("\n")) {
     const header = /^diff --git a\/(.+) b\/(.+)$/.exec(raw);
     if (header) {
-      file = { path: header[2]!, hunks: [], binary: false };
+      file = { path: header[2]!, hunks: [], binary: false, status: header[1] !== header[2] ? "renamed" : "modified", from: header[1] !== header[2] ? header[1] : undefined };
       files.push(file);
       hunk = null;
       continue;
     }
     if (!file) continue;
+    if (!hunk && raw.startsWith("new file mode")) {
+      file.status = "added";
+      continue;
+    }
+    if (!hunk && raw.startsWith("deleted file mode")) {
+      file.status = "deleted";
+      continue;
+    }
     if (raw.startsWith("Binary files")) {
       file.binary = true;
       continue;
