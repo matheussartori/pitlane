@@ -114,6 +114,11 @@ impl Terms {
             }
         };
         cmd.env("SHELL", &shell);
+        // Pitlane opened from inside a Claude Code would hand its markers down: a claude typed or
+        // resumed here would think it is that one's child (and stop saving its transcript).
+        for k in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION"] {
+            cmd.env_remove(k);
+        }
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");

@@ -780,6 +780,7 @@ impl Supervisor {
         }
         cmd.current_dir(&prep.worktree)
             .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_CHILD_SESSION")
             // Performance may pause a session for a while: a request that went quiet then is
             // retried by Claude Code, not dropped.
             .env("CLAUDE_STREAM_IDLE_TIMEOUT_MS", crate::perf::STREAM_IDLE_MS)
@@ -1257,6 +1258,11 @@ impl Supervisor {
                 let stdin = {
                     let mut live = live.lock().unwrap();
                     let Some(l) = live.get_mut(&id) else { return };
+                    // A session the person opened (the Board's assistant) is theirs to end:
+                    // it waits for the next message until they stop it.
+                    if l.meta.kind == SessionKind::Assist {
+                        return;
+                    }
                     if l.results == 0 || l.results < l.sent {
                         return; // working again: its next result checks once more
                     }
@@ -1847,6 +1853,7 @@ impl Supervisor {
             ))
             .current_dir(&r.root)
             .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_CHILD_SESSION")
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -2108,8 +2115,6 @@ impl Supervisor {
             "Edit,Write,NotebookEdit,AskUserQuestion".into(),
             "--allowedTools".into(),
             tools.into(),
-            "--max-turns".into(),
-            "60".into(),
             "--append-system-prompt".into(),
             ASSIST_RULES.into(),
         ];
@@ -2128,7 +2133,8 @@ impl Supervisor {
             model: None,
             args,
             prompt: text,
-            limit: Duration::from_secs(30 * 60),
+            // No time limit: it ends when the person stops it.
+            limit: Duration::MAX,
             board: true,
             images: Vec::new(),
         };
@@ -2277,6 +2283,7 @@ impl Supervisor {
         }
         cmd.current_dir(&side.cwd)
             .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_CHILD_SESSION")
             // Performance may pause a session for a while: a request that went quiet then is
             // retried by Claude Code, not dropped.
             .env("CLAUDE_STREAM_IDLE_TIMEOUT_MS", crate::perf::STREAM_IDLE_MS)

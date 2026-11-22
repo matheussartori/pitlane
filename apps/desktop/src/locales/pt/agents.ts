@@ -118,6 +118,7 @@ export default {
   "Assistant": "Assistente",
   "{kind} · round {n}": "{kind} · rodada {n}",
   "Needs you": "Precisa de você",
+  "Waiting for you": "Esperando você",
   "you: {text}": "você: {text}",
   "Preparing the worktree": "Preparando o worktree",
   "Agents": "Agentes",

@@ -200,6 +200,8 @@ type Look = { icon: IconName; word: string; s: "work" | "needs" | "done" | "fail
 export function look(m: RunMeta): Look {
   if (live(m) && m.waiting.length > 0) return { icon: "needs", word: t("Needs you"), s: "needs" };
   if (m.state === "verifying") return { icon: "verify", word: t("Checking"), s: "work" };
+  // A session the person opened stays open between messages: answered, it waits for them.
+  if (live(m) && (timelines[m.id] ?? []).at(-1)?.kind === "finished") return { icon: "done", word: t("Waiting for you"), s: "done" };
   if (live(m)) return { icon: "run", word: t("Working"), s: "work" };
   if (m.state === "done") return { icon: "done", word: t("Done"), s: "done" };
   if (m.state === "stopped") return { icon: "stop", word: t("Stopped"), s: "stopped" };

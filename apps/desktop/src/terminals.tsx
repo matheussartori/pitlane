@@ -635,7 +635,7 @@ function guessSize(split?: Dir, part?: [number, number]): [number, number] {
   const ch = Math.ceil(st.font * 1.2) * 1.35;
   const t = activeTab();
   const focused = split && t ? document.querySelector<HTMLElement>(`[data-pane="${t.focus}"] .pane-host`) : null;
-  const box = focused ?? document.querySelector<HTMLElement>(".terms-panes") ?? document.querySelector<HTMLElement>(".terms");
+  const box = focused ?? document.querySelector<HTMLElement>(".terms-stage");
   const r = box?.getBoundingClientRect();
   // Off screen: the window less the rail, the tab list and the frame.
   let w = r?.width || window.innerWidth - 330;
