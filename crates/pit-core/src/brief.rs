@@ -125,7 +125,7 @@ fn mentions(text: &str) -> HashSet<String> {
         .filter(|w| w.len() >= 3)
         .filter(|w| {
             let ident = w.chars().all(|c| c.is_alphanumeric() || c == '_');
-            let mixed = w.chars().any(|c| c.is_uppercase()) && w.chars().any(|c| c.is_lowercase()) && !w.chars().next().is_some_and(|c| c.is_uppercase() && w[1..].chars().all(|c| c.is_lowercase()));
+            let mixed = w.chars().any(|c| c.is_uppercase()) && w.chars().any(|c| c.is_lowercase()) && !w.chars().next().is_some_and(|c| c.is_uppercase() && w.chars().skip(1).all(|c| c.is_lowercase()));
             (ident && (w.contains('_') || mixed)) || w.contains('/') || (w.contains('.') && !w.ends_with('.'))
         })
         .map(str::to_owned));
@@ -441,6 +441,8 @@ mod tests {
         assert!(mentions("Fix `laneDiff` in src/lanes.tsx and SHIP now").contains("laneDiff"));
         assert!(mentions("Fix `laneDiff` in src/lanes.tsx.").contains("src/lanes.tsx"));
         assert!(!mentions("The Board").contains("Board"));
+        // Words that start with a non-ASCII letter (Âmbar, Été) never split a char.
+        assert!(!mentions("Maré de Âmbar, Éclair_x e Ôla").contains("Âmbar"));
     }
 
     #[test]

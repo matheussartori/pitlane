@@ -537,7 +537,7 @@ impl Supervisor {
             .args(["--disallowedTools", "AskUserQuestion"])
             .args(["--max-turns", &prep.max_turns.to_string()])
             .arg("--append-system-prompt")
-            .arg(runs::RULES)
+            .arg(format!("{}{}", runs::RULES, pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))))
             .arg("--json-schema")
             .arg(runs::handoff_schema().to_string());
         // The model: the route's, the repository's, or else the one you use in Claude Code.
@@ -1277,7 +1277,7 @@ impl Supervisor {
         let mut cmd = Command::new(&self.cfg.claude_bin);
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
             .args(["--session-id", &self.get(&id)?.session_id])
-            .args(&side.args);
+            .args(with_language(&side.args, &self.cfg.home));
         // Whatever the session does not set comes from your Claude Code: model and effort.
         let set = side.args.iter().position(|a| a == "--model").and_then(|i| side.args.get(i + 1)).cloned();
         let (your_model, your_effort) = your_claude(side.config_dir.as_deref(), set.as_deref());
@@ -1762,6 +1762,17 @@ fn your_claude(config_dir: Option<&Path>, model: Option<&str>) -> (Option<String
         exact.or_else(by_alias).and_then(|k| level(&k))
     });
     (yours, effort)
+}
+
+/// A session's arguments with the language you chose for agents added to its system prompt.
+fn with_language(args: &[String], home: &Path) -> Vec<String> {
+    let rule = pit_core::language::rule(&pit_core::language::agent_language(home));
+    let mut out = args.to_vec();
+    match out.iter().position(|a| a == "--append-system-prompt") {
+        Some(i) if i + 1 < out.len() => out[i + 1].push_str(&rule),
+        _ => out.extend(["--append-system-prompt".into(), rule.trim_start().to_owned()]),
+    }
+    out
 }
 
 /// The repository's permission mode for Claude Code (`[run] permission_mode`, `auto` by default).

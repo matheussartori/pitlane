@@ -8,6 +8,7 @@ pub mod brief;
 pub mod cards;
 pub mod flow;
 pub mod index;
+pub mod language;
 pub mod git;
 pub mod lanes;
 pub mod plan;
