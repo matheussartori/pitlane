@@ -25,14 +25,33 @@ pub struct RelatedLane {
 pub fn roots(r: &Repo) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     for rel in &r.flow.project.repos {
-        let p = r.root.join(rel);
-        let Ok(p) = p.canonicalize() else { continue };
-        if p == r.root || !p.join(".git").exists() || out.contains(&p) {
+        let Some(p) = main_root(&r.root.join(rel)) else { continue };
+        if p == r.root || out.contains(&p) {
             continue;
         }
         out.push(p);
     }
     out
+}
+
+/// The main worktree of the git repository at `p`: `p` itself, or for a linked worktree (its
+/// `.git` is a file, `gitdir: <main>/.git/worktrees/<name>`) the repository it belongs to, so a
+/// worktree sitting next to its repository is never taken for a repository of its own.
+pub fn main_root(p: &Path) -> Option<PathBuf> {
+    let p = p.canonicalize().ok()?;
+    let git = p.join(".git");
+    if git.is_dir() {
+        return Some(p);
+    }
+    let text = std::fs::read_to_string(&git).ok()?;
+    let dir = PathBuf::from(text.trim().strip_prefix("gitdir:")?.trim());
+    let dir = if dir.is_absolute() { dir } else { p.join(dir) };
+    // <main>/.git/worktrees/<name> → <main>
+    let main = dir.parent()?.parent()?;
+    if main.file_name()? != ".git" {
+        return None;
+    }
+    main.parent()?.canonicalize().ok()
 }
 
 /// Opens a related repository with the same homes as `r`.
@@ -54,7 +73,7 @@ fn ensure_branch(rr: &Repo, branch: &str, from: Option<&str>) -> Result<PathBuf>
 /// each repository too (from a fresh base) when missing, so the lane can start from and land in
 /// it. `direct` works in `into` itself. A repository that fails is reported and skipped.
 pub fn prepare(r: &Repo, branch: &str, into: Option<&str>, direct: bool, note: &dyn Fn(String)) -> Vec<RelatedLane> {
-    let mut out = Vec::new();
+    let mut out: Vec<RelatedLane> = Vec::new();
     for root in roots(r) {
         let made = (|| -> Result<RelatedLane> {
             let rr = open(r, &root)?;
@@ -68,6 +87,7 @@ pub fn prepare(r: &Repo, branch: &str, into: Option<&str>, direct: bool, note: &
             Ok(RelatedLane { name: rr.name.clone(), root: rr.root.clone(), branch: branch.to_owned(), worktree })
         })();
         match made {
+            Ok(l) if out.iter().any(|o| o.root == l.root) => {}
             Ok(l) => {
                 note(format!("Also working in {} ({})", l.worktree.display(), l.name));
                 out.push(l);
@@ -102,8 +122,9 @@ pub fn mentioned(r: &Repo, text: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(parent) else { return Vec::new() };
     let mut out = Vec::new();
     for e in entries.flatten() {
-        let p = e.path();
-        if p == r.root || !p.join(".git").exists() || known.iter().any(|k| k == &p) {
+        // Only repositories of their own: a worktree of a repository is that repository.
+        let Some(p) = main_root(&e.path()) else { continue };
+        if p == r.root || known.contains(&p) || e.path().canonicalize().ok().as_ref() != Some(&p) {
             continue;
         }
         let name = e.file_name().to_string_lossy().into_owned();
@@ -130,4 +151,30 @@ pub fn add(r: &Repo, rels: &[String]) -> Result<()> {
         crate::flow::add_project_repo(at, rel).with_context(|| format!("could not add {rel}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap().status.success();
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test]
+    fn a_worktree_next_to_its_repository_is_that_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("games");
+        std::fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+        let wt = tmp.path().join("games-day");
+        git(&main, &["worktree", "add", "-q", "-b", "day", wt.to_str().unwrap()]);
+        let canon = main.canonicalize().unwrap();
+        assert_eq!(main_root(&main), Some(canon.clone()));
+        assert_eq!(main_root(&wt), Some(canon));
+        assert_eq!(main_root(&tmp.path().join("nope")), None);
+    }
 }

@@ -35,6 +35,18 @@ pub struct CardReport {
     pub files: Vec<FileChange>,
 }
 
+/// Work a run noticed outside its card's spec. The person turns it into a card from the report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Suggestion {
+    /// The card whose run raised it.
+    pub card: u32,
+    pub title: String,
+    pub body: String,
+    /// The card made from it, once made.
+    #[serde(default)]
+    pub made: Option<u32>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Finish {
     pub run: Option<String>,
@@ -58,6 +70,9 @@ pub struct Report {
     pub sessions: usize,
     pub cost_usd: f64,
     pub finish: Option<Finish>,
+    /// What the runs noticed beyond their cards, each ready to become a card.
+    #[serde(default)]
+    pub suggestions: Vec<Suggestion>,
 }
 
 pub fn dir(pitlane_home: &Path) -> PathBuf {
@@ -98,6 +113,7 @@ fn files_of(repo: &Repo, lane: &str, base: Option<&str>) -> Vec<FileChange> {
 pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: Option<String>, direct: bool, instructions: &str, finish: Option<Finish>) -> Result<Report> {
     let sessions = all_sessions(pitlane_home, &repo.root, since);
     let mut out = Vec::new();
+    let mut suggestions: Vec<Suggestion> = Vec::new();
     for &id in ids {
         let Ok(c) = cards::get(repo, id) else { continue };
         let mut runs: Vec<&RunMeta> = sessions.iter().filter(|m| m.card == id && m.kind == SessionKind::Run).collect();
@@ -111,6 +127,17 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
             Some(l) => files_of(repo, l, None),
             None => Vec::new(),
         };
+        for m in &runs {
+            let Some(list) = m.handoff.as_ref().and_then(|h| h.get("suggestions")).and_then(|v| v.as_array()) else { continue };
+            for x in list {
+                let (Some(title), Some(body)) = (x.get("title").and_then(|v| v.as_str()), x.get("body").and_then(|v| v.as_str())) else { continue };
+                let title = title.trim().to_owned();
+                if title.is_empty() || suggestions.iter().any(|s: &Suggestion| s.title.eq_ignore_ascii_case(&title)) {
+                    continue;
+                }
+                suggestions.push(Suggestion { card: id, title, body: body.trim().to_owned(), made: None });
+            }
+        }
         out.push(CardReport {
             id,
             title: c.title.clone(),
@@ -139,6 +166,7 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
         sessions: sessions.len(),
         cost_usd: sessions.iter().filter_map(|m| m.cost_usd).sum(),
         finish,
+        suggestions,
     };
     let d = dir(pitlane_home);
     std::fs::create_dir_all(&d)?;
@@ -152,6 +180,21 @@ fn file_of(id: &str) -> Result<String> {
         anyhow::bail!("no report {id}");
     }
     Ok(format!("{id}.json"))
+}
+
+/// Turns suggestion `index` of report `id` into a card in the backlog of `repo`, and records it.
+pub fn suggest_card(repo: &Repo, pitlane_home: &Path, id: &str, index: usize) -> Result<cards::Card> {
+    let path = dir(pitlane_home).join(file_of(id)?);
+    let mut r: Report = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let s = r.suggestions.get(index).ok_or_else(|| anyhow::anyhow!("report {id} has no suggestion {index}"))?;
+    if let Some(made) = s.made {
+        anyhow::bail!("this suggestion is card #{made} already");
+    }
+    let body = format!("{}\n\n_Suggested by the run on #{} (Run all of {})._", s.body, s.card, r.into.as_deref().unwrap_or(&r.repo_name));
+    let card = cards::add(repo, cards::NewCard { title: s.title.clone(), body, ..Default::default() })?;
+    r.suggestions[index].made = Some(card.id);
+    std::fs::write(&path, serde_json::to_string_pretty(&r)?)?;
+    Ok(card)
 }
 
 /// Deletes a report: its file waits in `reports/deleted/` so the app can undo.

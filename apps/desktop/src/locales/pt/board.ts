@@ -173,4 +173,9 @@ export default {
   "Drop screenshots here, pick them with Add, or paste with ⌘V.": "Solte capturas de tela aqui, escolha com Adicionar ou cole com ⌘V.",
   "Pasted image": "Imagem colada",
   "Remove": "Remover",
+  "Claude reads the cards made after Run all started; once their questions are answered they join the batch": "O Claude lê os cards criados depois que o Executar tudo começou; respondidas as perguntas, eles entram no lote",
+  "Analysing {n}": "Analisando {n}",
+  "Analyse {n} new": "Analisar {n} novos",
+  "Add {n} to the batch": "Adicionar {n} ao lote",
+  "Cards finished and committed in the branch they were asked for.": "Cards finalizados e commitados no branch pedido.",
 } as Record<string, string>;

@@ -4,6 +4,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
+import { Prose } from "./prose";
 import { ago } from "./lane";
 import { clock, money } from "./run";
 import { Spinner, toast } from "./ui";
@@ -11,7 +12,7 @@ import { Spinner, toast } from "./ui";
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 const when = (secs: number) => new Date(secs * 1000).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
 
-export function ReportsView(props: { reports: Report[] | null; now: number; onChanged: () => void }) {
+export function ReportsView(props: { reports: Report[] | null; now: number; onChanged: () => void; onCardMade?: () => void }) {
   const [picked, setPicked] = createSignal<string | null>(null);
   const report = createMemo(() => {
     const all = props.reports ?? [];
@@ -22,6 +23,22 @@ export function ReportsView(props: { reports: Report[] | null; now: number; onCh
       await api.printPage();
     } catch (e) {
       toast({ tone: "fail", title: t("Could not open the print dialog"), body: msg(e) });
+    }
+  };
+  const [making, setMaking] = createSignal<string | null>(null);
+  const makeCard = async (r: Report, index: number) => {
+    const key = `${r.id}:${index}`;
+    if (making()) return;
+    setMaking(key);
+    try {
+      const c = await api.reportSuggestCard(r.repo, r.id, index);
+      props.onChanged();
+      props.onCardMade?.();
+      toast({ tone: "done", title: t("#{id} is in the backlog", { id: c.id }), body: t("Analyse it on the Board; once its questions are answered it joins the next batch, or the one running.") });
+    } catch (e) {
+      toast({ tone: "fail", title: t("The card was not made"), body: msg(e) });
+    } finally {
+      setMaking(null);
     }
   };
   const remove = async (r: Report) => {
@@ -153,6 +170,42 @@ export function ReportsView(props: { reports: Report[] | null; now: number; onCh
                       )}
                     </For>
                   </section>
+                  <Show when={(r.suggestions?.length ?? 0) > 0}>
+                    <section class="report-sec">
+                      <h3>{t("Raised along the way")}</h3>
+                      <p class="report-meta">{t("Work the agents noticed outside what the cards asked for. Each becomes a card with its full spec.")}</p>
+                      <For each={r.suggestions}>
+                        {(s, i) => (
+                          <div class="report-card">
+                            <div class="report-card-head">
+                              <span class="report-card-title">{s.title}</span>
+                              <span class="report-state">{t("from #{id}", { id: s.card })}</span>
+                              <Show
+                                when={s.made == null}
+                                fallback={<span class="report-state" data-state="done">{t("Card #{id}", { id: s.made! })}</span>}
+                              >
+                                <button
+                                  type="button"
+                                  class="btn"
+                                  disabled={making() != null}
+                                  aria-busy={making() === `${r.id}:${i()}`}
+                                  onClick={() => void makeCard(r, i())}
+                                >
+                                  <Show when={making() === `${r.id}:${i()}`} fallback={<Icon name="plus" small />}>
+                                    <Spinner />
+                                  </Show>
+                                  {t("Make a card")}
+                                </button>
+                              </Show>
+                            </div>
+                            <div class="report-suggestion">
+                              <Prose text={s.body} />
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </section>
+                  </Show>
                   <Show when={r.finish}>
                     {(f) => (
                       <section class="report-sec">

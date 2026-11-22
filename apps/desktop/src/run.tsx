@@ -442,14 +442,6 @@ export function RunScreen(props: {
                           </Show>
                         </section>
                       </Show>
-                      <Show when={(h().next_steps?.length ?? 0) > 0}>
-                        <section class="rs-sec">
-                          <h2 class="side-title">{t("Next steps")}</h2>
-                          <ul class="side-list">
-                            <For each={h().next_steps}>{(s) => <li>{s}</li>}</For>
-                          </ul>
-                        </section>
-                      </Show>
                     </>
                   );
                 }}

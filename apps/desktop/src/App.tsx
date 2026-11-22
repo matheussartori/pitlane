@@ -232,6 +232,8 @@ export default function App() {
       const landed = next.filter((j) => wasOpen.has(j.id) && !isOpenJob(j));
       setJobs(next);
       for (const j of landed) {
+        // A card's lane in a related repository: its own lane's landing speaks for the card.
+        if (j.state === "done" && j.card_repo) continue;
         if (j.state === "done") toast({ tone: "done", title: t("{branch} is in {target}", { branch: j.branch, target: j.target }) });
         else
           toast({
@@ -401,6 +403,46 @@ export default function App() {
     } else analysed();
   }
 
+  /**
+   * A card made while Run all works: Claude reads it like the first batch, its questions are asked,
+   * and it joins the queue; it starts once they are answered, like every other card.
+   */
+  const [joining, setJoining] = createSignal<number[]>([]);
+  async function analyseInto(ids: number[]) {
+    const path = repo();
+    if (!path || phase() !== "working" || ids.length === 0 || joining().length > 0) return;
+    const token = session;
+    const fresh = ids.filter((id) => !(cards() ?? []).find((c) => c.id === id)?.analyzed);
+    setJoining(ids);
+    try {
+      if (fresh.length > 0) {
+        const r = await api.cardsAnalyze(path, fresh);
+        const failed = r.analyzed.filter((a) => a.error && a.error !== "stopped before it started");
+        if (failed.length > 0)
+          toast({ tone: "fail", title: t("Could not analyse {cards}", { cards: failed.map((f) => `#${f.card}`).join(", ") }), body: failed[0]!.error }, 0);
+      }
+    } catch (e) {
+      toast({ tone: "fail", title: t("The analysis did not run"), body: msg(e) }, 0);
+    } finally {
+      setJoining([]);
+    }
+    await loadCards();
+    if (!current_(token) || phase() !== "working") return;
+    const all = cards() ?? [];
+    const ok = ids.filter((id) => all.find((c) => c.id === id)?.analyzed && !queue().includes(id));
+    if (ok.length === 0) return;
+    sessionIds = [...sessionIds, ...ok.filter((id) => !sessionIds.includes(id))];
+    setQueue([...queue(), ...ok]);
+    const asking = openQuestions(all.filter((c) => ok.includes(c.id)));
+    toast({
+      tone: "done",
+      title: t("{cards} joined the batch", { cards: ok.map((x) => `#${x}`).join(", ") }),
+      body: asking.length > 0 ? t("Answer their questions and they start.") : t("They start as soon as there is room."),
+    });
+    if (asking.length > 0) setSheet({ kind: "questions" });
+    void advance();
+  }
+
   /** The analysis is over (and its questions answered or left for later): development is next. */
   function analysed() {
     setPhase("idle");
@@ -542,11 +584,40 @@ export default function App() {
         await loadRuns();
         void loadCards();
       }
-      // Nothing left to start and nothing working: once every card of the batch landed (or
-      // stopped short of review), the closing step and the report. Cards in review keep it open.
-      if (left.length === 0 && !(runs() ?? []).some((r) => isLive(r.state))) {
+      // Nothing working and nothing landing: whatever is still waiting waits on something that will
+      // not move by itself. Run all never stalls in silence: each such card goes to Blocked with why,
+      // and the batch closes. A blocked card the person frees later still starts while it is open.
+      const idle = !(runs() ?? []).some((r) => isLive(r.state)) && !jobs().some(isOpenJob);
+      if (started.length === 0 && idle && room > 0) {
+        const now = cards() ?? [];
+        const why = (id: number): string | null => {
+          const c = now.find((x) => x.id === id);
+          if (!c || c.state === "blocked" || c.state === "done" || c.state === "in-dev") return null;
+          if (c.state === "review") return t("Its work did not land in {into}. See the run and the notes above.", { into: into ?? t("its branch") });
+          if (c.state === "running" || c.state === "verifying") return t("Its run ended without handing the card back.");
+          // Open questions are yours already (Needs you): the batch waits for the answers.
+          if ((c.questions ?? []).some((x) => x.answer == null)) return null;
+          const held = holdNote(id, now, []) ?? planNote(plan(), id, now);
+          return held ? `${held}.` : null;
+        };
+        const stuck = [...new Set([...left, ...sessionIds])].map((id) => [id, why(id)] as const).filter((x): x is readonly [number, string] => x[1] != null);
+        for (const [id, reason] of stuck) {
+          if (!current_(token)) return;
+          try {
+            await api.cardNote(path, id, t("Run all could not take this card further: {why} It waits for you in Blocked; the rest of the batch went on.", { why: reason }));
+            await api.cardUpdate(path, id, { state: "blocked" });
+          } catch {
+            /* the card changed meanwhile: the next pass looks again */
+          }
+        }
+        if (stuck.length > 0) {
+          toast({ tone: "info", title: t("{cards} went to Blocked", { cards: stuck.map(([id]) => `#${id}`).join(", ") }), body: t("Each says why. The rest of the batch went on.") }, 0);
+          await loadCards();
+        }
+        if (!current_(token)) return;
         const waiting = (cards() ?? []).filter((c) => sessionIds.includes(c.id) && (c.state === "running" || c.state === "verifying" || c.state === "review"));
-        if (waiting.length === 0) void finishBatch();
+        const startable = queue().filter((id) => (cards() ?? []).find((c) => c.id === id)?.state !== "blocked");
+        if (waiting.length === 0 && startable.length === 0) void finishBatch();
       }
     } finally {
       advancing = false;
@@ -1035,6 +1106,8 @@ export default function App() {
                     }}
                     onNew={() => setSheet({ kind: "new-card" })}
                     onAnalyse={(ids) => void analyse(ids)}
+                    onJoin={(ids) => void analyseInto(ids)}
+                    joining={joining()}
                     onStartDev={(ids) => setSheet({ kind: "run-all", ids })}
                     onFinish={() => void finishBatch()}
                     onStopAll={stopRunAll}
@@ -1062,7 +1135,7 @@ export default function App() {
                   </div>
                 </Match>
                 <Match when={tab() === "reports"}>
-                  <ReportsView reports={reports()} now={now()} onChanged={() => void loadReports()} />
+                  <ReportsView reports={reports()} now={now()} onChanged={() => void loadReports()} onCardMade={() => void loadCards()} />
                 </Match>
                 <Match when={tab() === "performance"}>
                   <PerformanceView onOpen={openRun} />

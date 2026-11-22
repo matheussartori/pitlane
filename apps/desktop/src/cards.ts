@@ -17,7 +17,7 @@ export const columnEmpty: Record<Column, string> = {
   needs: "Cards with open questions or a lane waiting on you show here.",
   backlog: "New and ready cards wait here.",
   progress: "Cards being worked on, in a lane or by an agent.",
-  landed: "Cards whose lane reached dev or main.",
+  landed: "Cards finished and committed in the branch they were asked for.",
 };
 
 export const stateLabel: Record<CardState, string> = {
@@ -54,6 +54,9 @@ export function place(card: Card, yard: Yard | null): Placement {
   if (open.length > 0)
     return { column: "needs", chip: "needs", icon: "needs", label: plural(open.length, "{n} question", "{n} questions"), why: open[0]!.text };
   if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: t("Blocked"), why: firstLine(card.body) };
+  // Landed in the branch it was asked for (Run all's Into): done, whatever its own lane waits on.
+  if (card.target && (card.state === "done" || card.state === "in-dev"))
+    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target }) };
   if (lane && yard && group(lane) === "waiting") {
     const n = next(lane, yard);
     const label = lane.status === "contaminated" ? t("Mixed with {name}", { name: yard.integration ?? "integration" }) : t("Lane needs you");
@@ -69,9 +72,9 @@ export function place(card: Card, yard: Yard | null): Placement {
     return { column: "needs", chip: "needs", icon: "review", label: t("Ready to review") };
   if (card.state === "verifying") return { column: "progress", chip: "running", icon: "verify", label: t("Checking") };
   if (card.state === "done" || lane?.in_production)
-    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: yard?.production ?? "main" }) };
+    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.production ?? "main" }) };
   if (card.state === "in-dev" || lane?.in_integration)
-    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: yard?.integration ?? "dev" }) };
+    return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.integration ?? "dev" }) };
   if (card.state === "running" || lane)
     return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? t("Running") : t("In a lane") };
   return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]) };

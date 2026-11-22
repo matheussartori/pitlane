@@ -235,6 +235,8 @@ export interface Report {
   sessions: number;
   cost_usd: number;
   finish: Finish | null;
+  /** What the runs noticed beyond their cards; `made` is the card made from it. */
+  suggestions?: { card: number; title: string; body: string; made: number | null }[];
 }
 
 export interface CardList {
@@ -298,7 +300,10 @@ export interface Handoff {
   files_changed?: string[];
   commits?: string[];
   tests?: { command?: string; passed?: boolean; notes?: string };
-  next_steps?: string[];
+  /** Only with status partial: what the card still needs. */
+  left?: string[];
+  /** Work noticed outside the card's spec; the report turns each into a card. */
+  suggestions?: { title: string; body: string }[];
 }
 
 export interface RunMeta {
@@ -537,6 +542,8 @@ export interface ShipJob {
   conflicts: string[];
   error: string | null;
   card: number | null;
+  /** For a lane in a related repository: the repository whose board holds the card. */
+  card_repo?: string | null;
 }
 
 export const isOpenJob = (j: ShipJob) => j.state === "queued" || j.state === "shipping";
@@ -721,6 +728,7 @@ export const api = {
     invoke<Report>("report_create", { path, cards, since, into, direct, instructions, finish }),
   reports: (path: string) => invoke<Report[]>("reports_list", { path }),
   reportDelete: (id: string) => invoke<void>("report_delete", { id }),
+  reportSuggestCard: (path: string, id: string, index: number) => invoke<Card>("report_suggest_card", { path, id, index }),
   reportRestore: (id: string) => invoke<void>("report_restore", { id }),
   printPage: () => invoke<void>("print_page"),
   cardsForget: (path: string, ids: number[]) => invoke<{ notes: number; questions: number }>("cards_forget", { path, ids }),

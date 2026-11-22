@@ -2418,36 +2418,14 @@ impl Supervisor {
                     return Ok(serde_json::json!({ "card": card, "landed_in": branch }));
                 }
                 // The related repositories' lanes go first; the card moves when this one lands.
-                if let Some(l) = &last
-                    && !l.related.is_empty()
-                {
-                    for rl in &l.related {
-                        let ahead = Repo::open(&rl.root, &home_dir(), &self.cfg.home)
-                            .ok()
-                            .and_then(|rr| {
-                                let t = c
-                                    .target
-                                    .clone()
-                                    .unwrap_or_else(|| rr.flow.flow.integration.clone());
-                                rr.git
-                                    .run(&["rev-list", "--count", &format!("{t}..{}", rl.branch)])
-                                    .ok()?
-                                    .trim()
-                                    .parse::<u32>()
-                                    .ok()
-                            });
-                        if ahead != Some(0) {
-                            self.enqueue_for(
-                                &rl.root,
-                                &rl.branch,
-                                c.target.as_deref(),
-                                Some((card, repo.clone())),
-                            )?;
-                        }
-                    }
-                }
-                let job = self.enqueue(&repo, &branch, c.target.as_deref())?;
-                Ok(serde_json::json!({ "card": card, "job": job, "shipped_to": job.target }))
+                let related = last.as_ref().map(|l| l.related.clone()).unwrap_or_default();
+                self.land_card(&repo, &c, &related)?;
+                let job = self
+                    .queue_list(Some(&r.root))
+                    .into_iter()
+                    .find(|j| j.repo == r.root && j.branch == branch && j.state.is_open());
+                let to = job.as_ref().map(|j| j.target.clone()).or_else(|| c.target.clone());
+                Ok(serde_json::json!({ "card": card, "job": job, "shipped_to": to }))
             }
         }
     }
@@ -2474,10 +2452,16 @@ impl Supervisor {
         related: &[pit_core::related::RelatedLane],
     ) -> Result<()> {
         let lane = c.lane.clone().context("this card has no lane to ship")?;
+        let mut seen: Vec<PathBuf> = Vec::new();
         for l in related {
             let Ok(rr) = Repo::open(&l.root, &home_dir(), &self.cfg.home) else {
                 continue;
             };
+            // A repository listed twice (a worktree of it next to it) lands once.
+            if seen.contains(&rr.root) {
+                continue;
+            }
+            seen.push(rr.root.clone());
             let target = c
                 .target
                 .clone()
@@ -2487,7 +2471,7 @@ impl Supervisor {
                 .run(&["rev-list", "--count", &format!("{target}..{}", l.branch)])
                 .ok()
                 .and_then(|n| n.trim().parse::<u32>().ok());
-            if ahead == Some(0) {
+            if ahead == Some(0) || self.in_line(&rr.root, &l.branch) {
                 continue;
             }
             self.enqueue_for(
@@ -2497,8 +2481,21 @@ impl Supervisor {
                 Some((c.id, repo.to_path_buf())),
             )?;
         }
-        self.enqueue(repo, &lane, c.target.as_deref())?;
+        // This repository's lane last, even with no commits of its own: its landing moves the card.
+        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        if !self.in_line(&r.root, &lane) {
+            self.enqueue(repo, &lane, c.target.as_deref())?;
+        }
         Ok(())
+    }
+
+    /// Whether `branch` of `root` already has an open job in the merge queue.
+    fn in_line(&self, root: &Path, branch: &str) -> bool {
+        self.queue
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|j| j.repo == root && j.branch == branch && j.state.is_open())
     }
 
     /// `card`: the card and the repository whose board holds it, for a related repository's lane.
@@ -2573,7 +2570,8 @@ impl Supervisor {
         let q = self.queue.lock().unwrap();
         let mine: Vec<_> = q
             .iter()
-            .filter(|j| repo.is_none_or(|r| j.repo == r))
+            // A card's lanes in its related repositories count as this repository's.
+            .filter(|j| repo.is_none_or(|r| j.repo == r || j.card_repo.as_deref() == Some(r)))
             .cloned()
             .collect();
         let mut open: Vec<_> = mine.iter().filter(|j| j.state.is_open()).cloned().collect();
@@ -3478,8 +3476,11 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
             status.unwrap_or("done"),
             summary.trim()
         );
+        // What the card still needs (older runs called it next_steps), only when it is not finished.
         let next: Vec<&str> = h
-            .get("next_steps")
+            .get("left")
+            .or_else(|| h.get("next_steps"))
+            .filter(|_| status == Some("partial"))
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();

@@ -715,6 +715,12 @@ async fn report_delete(id: String) -> CmdResult<()> {
     blocking(move || pit_core::report::delete(&default_homes().1, &id)).await
 }
 
+/// A report's suggestion becomes a card in the backlog.
+#[tauri::command]
+async fn report_suggest_card(path: String, id: String, index: usize) -> CmdResult<CardOut> {
+    blocking(move || Ok(pit_core::report::suggest_card(&open(&path)?, &default_homes().1, &id, index)?.into())).await
+}
+
 #[tauri::command]
 async fn report_restore(id: String) -> CmdResult<()> {
     blocking(move || pit_core::report::restore(&default_homes().1, &id)).await
@@ -1533,6 +1539,7 @@ pub fn run() {
             reports_list,
             report_delete,
             report_restore,
+            report_suggest_card,
             print_page,
             board_assist,
             run_decide,

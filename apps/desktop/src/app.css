@@ -945,6 +945,8 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .report-files li { display: flex; gap: var(--space-xs); min-width: 0; }
 .report-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-2); }
 .report-add { color: var(--color-done); }
+.report-card-head .btn { flex: none; align-self: center; }
+.report-suggestion { color: var(--color-ink-2); font-size: var(--text-sm); min-width: 0; overflow-wrap: anywhere; }
 .report-del { color: var(--color-fail); }
 @media (max-width: 720px) { .reports-body { grid-template-columns: 1fr; } .reports-list { position: static; } }
 
@@ -953,7 +955,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
   body * { visibility: hidden !important; }
   .report-doc, .report-doc * { visibility: visible !important; }
   .report-doc { position: absolute; inset: 0 auto auto 0; width: 100%; max-width: none; padding: 0; color: #111; background: #fff; }
-  .report-actions { display: none; }
+  .report-actions, .report-card-head .btn { display: none; }
   .report-meta, .report-card-meta, .report-sec h3, .report-state, .report-path { color: #555 !important; }
   .report-summary, .report-card-title, .report-title { color: #111 !important; }
   .report-add { color: #186a3b !important; }

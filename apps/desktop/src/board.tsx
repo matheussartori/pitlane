@@ -270,6 +270,10 @@ export function BoardView(props: {
   onChanged: () => void;
   /** Claude reads the backlog cards not analysed yet (questions, notes, order). */
   onAnalyse: (ids: number[]) => void;
+  /** While Run all works: backlog cards outside its queue (new ones) are analysed and join it. */
+  onJoin: (ids: number[]) => void;
+  /** Cards being analysed to join the running batch. */
+  joining: number[];
   /** Every backlog card analysed: choose where the work lands, then start. */
   onStartDev: (ids: number[]) => void;
   onStopAll: () => void;
@@ -407,6 +411,8 @@ export function BoardView(props: {
   };
 
   const unanalysed = () => backlog().filter(({ card }) => !card.analyzed);
+  /** While Run all works: backlog cards it does not have yet (made after it started). */
+  const outside = () => (props.phase === "working" ? backlog().filter(({ card }) => !props.queued.includes(card.id) && !props.joining.includes(card.id)).map(({ card }) => card) : []);
   /** Backlog cards that carry something of Claude's: the analysis, its notes, its open questions. */
   const remembered = () => backlog().map(({ card }) => card).filter(hasMemory);
   const [forgetting, setForgetting] = createSignal<number[] | null>(null);
@@ -513,6 +519,25 @@ export function BoardView(props: {
                           <Spinner />
                         </Show>
                         {runLabel()}
+                      </button>
+                    </Show>
+                    <Show when={col === "backlog" && (outside().length > 0 || props.joining.length > 0)}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost col-action"
+                        disabled={props.joining.length > 0}
+                        aria-busy={props.joining.length > 0}
+                        title={t("Claude reads the cards made after Run all started; once their questions are answered they join the batch")}
+                        onClick={() => props.onJoin(outside().map((c) => c.id))}
+                      >
+                        <Show when={props.joining.length > 0} fallback={<Icon name="search" small />}>
+                          <Spinner />
+                        </Show>
+                        {props.joining.length > 0
+                          ? t("Analysing {n}", { n: props.joining.length })
+                          : outside().some((c) => !c.analyzed)
+                            ? t("Analyse {n} new", { n: outside().length })
+                            : t("Add {n} to the batch", { n: outside().length })}
                       </button>
                     </Show>
                     <Show when={col === "backlog" && props.phase === "idle" && props.repo && remembered().length > 0}>

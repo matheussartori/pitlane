@@ -516,7 +516,13 @@ pub fn handoff_schema() -> Value {
             "commits": { "type": "array", "items": { "type": "string" }, "description": "Short shas with their subject." },
             "tests": { "type": "object", "properties": {
                 "command": { "type": "string" }, "passed": { "type": "boolean" }, "notes": { "type": "string" } } },
-            "next_steps": { "type": "array", "items": { "type": "string" } },
+            "left": { "type": "array", "items": { "type": "string" },
+                "description": "Only with status partial: what this card's spec still needs, for the next session on it. Never process steps (merging, pushing, removing worktrees or branches, running the batch's gate, deploying): Pitlane and the person already decided those." },
+            "suggestions": { "type": "array", "description": "Work you noticed that is outside this card's spec and worth doing: a bug nearby, a follow-up feature, a missing test or asset. Not process steps (merge, push, gate, cleanup, commit something) and not what the card asked for. The person may turn each into a card that another session works from alone.",
+                "items": { "type": "object", "properties": {
+                    "title": { "type": "string", "description": "A card title, short." },
+                    "body": { "type": "string", "description": "The card's spec, complete on its own: what to do and why, where in the code (files, functions), what you found, and how to verify it." } },
+                    "required": ["title", "body"] } },
             "questions": { "type": "array", "description": "Only with status blocked, and only for a big call the spec and decisions do not settle: every such question at once, each with options and the one you recommend. Anything smaller you decide and record with the note tool.",
                 "items": { "type": "object", "properties": {
                     "text": { "type": "string" },

@@ -433,12 +433,6 @@ export function ReviewScreen(props: {
               <section class="walkthrough" aria-label={t("What the agent says it did")}>
                 <h2 class="side-title">{t("What changed")}</h2>
                 <p class="selectable">{h()?.summary ?? t("The agent left no summary.")}</p>
-                <Show when={(h()?.next_steps?.length ?? 0) > 0}>
-                  <h3 class="side-sub">{t("It suggests next")}</h3>
-                  <ul class="side-list">
-                    <For each={h()?.next_steps}>{(s) => <li>{s}</li>}</For>
-                  </ul>
-                </Show>
               </section>
               <Show when={round() > 0 && props.run?.base_sha}>
                 <div class="seg" role="group" aria-label={t("Diff range")}>

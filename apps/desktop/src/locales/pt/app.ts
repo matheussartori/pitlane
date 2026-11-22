@@ -94,4 +94,13 @@ export default {
   "Hide the Tower": "Esconder a Torre",
   "⌘T new": "⌘T novo",
   "⌥4 · ⌘T new": "⌥4 · ⌘T novo",
+  "Its work did not land in {into}. See the run and the notes above.": "O trabalho dele não entrou em {into}. Veja a execução e as notas acima.",
+  "its branch": "o branch dele",
+  "Its run ended without handing the card back.": "A execução terminou sem devolver o card.",
+  "Run all could not take this card further: {why} It waits for you in Blocked; the rest of the batch went on.": "O Executar tudo não conseguiu levar este card adiante: {why} Ele espera você em Bloqueado; o resto do lote seguiu.",
+  "{cards} went to Blocked": "{cards} foram para Bloqueado",
+  "Each says why. The rest of the batch went on.": "Cada um diz o porquê. O resto do lote seguiu.",
+  "{cards} joined the batch": "{cards} entraram no lote",
+  "Answer their questions and they start.": "Responda as perguntas e eles começam.",
+  "They start as soon as there is room.": "Eles começam assim que houver espaço.",
 } as Record<string, string>;
