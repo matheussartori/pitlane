@@ -85,10 +85,17 @@
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab {
   margin: 4px 2px;
   height: calc(100% - 8px) !important;
-  border-radius: 6px;
+  padding-inline: 10px 6px !important;
+  border-radius: 7px;
   border: 0 !important;
   font-size: 12.5px;
 }
+/* The chip is shorter than the bar, so its label must not take the bar's line height: centre it in the chip. */
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab { display: flex !important; align-items: center !important; }
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .tab-label,
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .monaco-icon-label { height: auto !important; line-height: 20px !important; display: flex !important; align-items: center !important; }
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .monaco-icon-label::before { height: 20px !important; background-position: center !important; }
+.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .tab-actions { display: flex; align-items: center; height: 100%; }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab:not(.active):hover { background-color: var(--pl-hover) !important; }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab.active { background-color: var(--pl-active) !important; }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab::after,
@@ -102,7 +109,7 @@
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .monaco-icon-label.italic .label-name,
 .monaco-workbench .part.editor > .content .editor-group-container > .title .title-label .label-name { font-style: normal !important; }
 .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab .label-name { font-size: 13px; font-weight: 500; letter-spacing: 0; }
-.monaco-workbench .part.editor > .content .editor-group-container > .title .breadcrumbs-control { font-size: 12px; }
+.monaco-workbench .part.editor > .content .editor-group-container > .title .breadcrumbs-control { font-size: 12px; padding-block: 2px; }
 
 /* Status bar: Pitlane's meta line, small and muted on the panel's ground, whatever state VS Code
    colours it for (no folder, debugging, a remote, focus). */

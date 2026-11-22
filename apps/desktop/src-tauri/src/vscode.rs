@@ -147,7 +147,7 @@ fn first_settings(pitlane_home: &Path) -> Result<()> {
 }
 
 /// Pitlane's layout for VS Code, in the spirit of Cursor's: no title bar (the activity bar on the
-/// side, no menu), compact tabs, thin icons (Fluent for the workbench, Symbols for files), Geist
+/// side, no menu), roomy tab chips, thin icons (Fluent for the workbench, Symbols for files), Geist
 /// Mono. A key is set when it is missing or still holds an earlier Pitlane default; a value you
 /// chose stays.
 fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
@@ -159,7 +159,7 @@ fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
         ("window.commandCenter", json!(true), vec![json!(false)]),
         ("window.menuBarVisibility", json!("hidden"), vec![json!("compact")]),
         ("window.title", json!("${activeEditorShort}"), vec![]),
-        ("window.density.editorTabHeight", json!("compact"), vec![]),
+        ("window.density.editorTabHeight", json!("default"), vec![json!("compact")]), // 35px bar: the tab chips get room to read
         ("workbench.activity.showAccounts", json!(true), vec![json!(false)]),
         // Flat, so Pitlane's own shapes apply (the modern UI floats rounded panels on a backdrop).
         ("workbench.experimental.modernUI", json!(false), vec![]),
