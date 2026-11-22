@@ -41,7 +41,10 @@ export interface Placement {
 }
 
 export function laneOf(card: Card, yard: Yard | null): Lane | undefined {
-  return card.lane ? yard?.lanes.find((l) => l.branch === card.lane) : undefined;
+  // Worked directly in its target (Run all's "directly"), the branch is shared, not the card's:
+  // what that branch holds or where it landed says nothing about this card, so its state decides.
+  if (!card.lane || card.lane === card.target) return undefined;
+  return yard?.lanes.find((l) => l.branch === card.lane);
 }
 
 export function place(card: Card, yard: Yard | null): Placement {
