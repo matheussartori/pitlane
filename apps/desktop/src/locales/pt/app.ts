@@ -93,4 +93,5 @@ export default {
   "Show the Tower": "Mostrar a Torre",
   "Hide the Tower": "Esconder a Torre",
   "⌘T new": "⌘T novo",
+  "⌥4 · ⌘T new": "⌥4 · ⌘T novo",
 } as Record<string, string>;

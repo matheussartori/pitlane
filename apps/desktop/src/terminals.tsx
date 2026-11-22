@@ -149,7 +149,7 @@ interface Live {
 }
 
 const live = new Map<number, Live>();
-const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number }>({ tabs: [], active: null, side: "left", font: 12 });
+const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number }>({ tabs: [], active: null, side: "left", font: 13 });
 const [meta, setMeta] = createStore<Record<number, Meta>>({});
 const [screenOn, setScreenOn] = createSignal(false);
 let nextTab = 1;
@@ -494,7 +494,7 @@ export async function startTerminals() {
     },
   );
   const saved = loadSaved();
-  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, saved.font || 12)) });
+  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || saved.font === 12 ? 13 : saved.font)) }); // 12 was the old default: it moves to 13 with the Warp-like pass
   let existing: TermInfo[] = [];
   try {
     existing = await terms.list();

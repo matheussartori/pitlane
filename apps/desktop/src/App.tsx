@@ -724,10 +724,10 @@ export default function App() {
         } else if ((e.key === "c" || e.key === "C") && (tab() === "board" || tab() === "inbox")) {
           e.preventDefault();
           setSheet({ kind: "new-card" });
-        } else if (/^Digit[1-6]$/.test(e.code) && e.altKey) {
+        } else if (/^Digit[1-8]$/.test(e.code) && e.altKey) {
           // e.code: on macOS Option+1 types ¡, so e.key is no use here.
           e.preventDefault();
-          setTab((["inbox", "board", "lanes", "ledger", "reports", "performance"] as const)[Number(e.code.slice(5)) - 1]!);
+          setTab((["inbox", "board", "lanes", "terminal", "code", "ledger", "reports", "performance"] as const)[Number(e.code.slice(5)) - 1]!);
         }
       }
       if (e.key === "Escape") setMenu(false);
@@ -837,15 +837,10 @@ export default function App() {
           <RailItem icon="inbox" label="Inbox" keys="⌥1" current={here("inbox")} onClick={() => setTab("inbox")} count={asking()} hot />
           <RailItem icon="board" label="Board" keys="⌥2" current={here("board")} onClick={() => setTab("board")} />
           <RailItem icon="lanes" label="Lanes" keys="⌥3" current={here("lanes")} onClick={() => setTab("lanes")} count={needs()} hot />
-          <RailItem icon="ledger" label="Ledger" keys="⌥4" current={here("ledger")} onClick={() => setTab("ledger")} />
-          <RailItem icon="note" label="Reports" keys="⌥5" current={here("reports")} onClick={() => setTab("reports")} />
-          <RailItem icon="gauge" label="Performance" keys="⌥6" current={here("performance")} onClick={() => setTab("performance")} />
-          <div class="navrail-sep" />
-          <RailItem icon="code" label="Code" current={here("code")} onClick={() => setTab("code")} />
           <RailItem
             icon="term"
             label="Terminal"
-            keys="⌘T new"
+            keys="⌥4 · ⌘T new"
             current={here("terminal")}
             onClick={() => setTab("terminal")}
             count={terminalsWanting() + agentsWanting()}
@@ -853,6 +848,11 @@ export default function App() {
             live={agentsWorking() > 0}
             liveLabel={plural(agentsWorking(), "{n} agent working", "{n} agents working")}
           />
+          <RailItem icon="code" label="Code" keys="⌥5" current={here("code")} onClick={() => setTab("code")} />
+          <div class="navrail-sep" />
+          <RailItem icon="ledger" label="Ledger" keys="⌥6" current={here("ledger")} onClick={() => setTab("ledger")} />
+          <RailItem icon="note" label="Reports" keys="⌥7" current={here("reports")} onClick={() => setTab("reports")} />
+          <RailItem icon="gauge" label="Performance" keys="⌥8" current={here("performance")} onClick={() => setTab("performance")} />
         </div>
         <div class="navrail-foot">
           <Show when={quota() && quota()!.events.length > 0 ? quota() : null}>
