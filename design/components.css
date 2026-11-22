@@ -67,9 +67,9 @@
 
 /* ---------- Switch and check ---------- */
 .switch { appearance: none; width: 28px; height: 16px; margin: 0; border-radius: var(--radius-pill); background: var(--color-rule-strong); position: relative; cursor: pointer; flex-shrink: 0; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--color-ink); transition: transform var(--dur-short) var(--ease-in-out); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: oklch(99% 0 0); box-shadow: 0 1px 2px oklch(0% 0 0 / 0.25); transition: transform var(--dur-short) var(--ease-in-out); } /* a white knob in both modes, as macOS draws it */
 .switch:checked { background: var(--color-accent); }
-.switch:checked::after { transform: translateX(12px); background: var(--color-accent-ink); }
+.switch:checked::after { transform: translateX(12px); }
 .switch:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .switch:disabled { opacity: 0.55; cursor: not-allowed; }
 .check { appearance: none; width: 14px; height: 14px; margin: 0; border-radius: var(--radius-sm); box-shadow: var(--ring-strong); background: var(--color-paper-sunk); cursor: pointer; display: grid; place-content: center; flex-shrink: 0; }
