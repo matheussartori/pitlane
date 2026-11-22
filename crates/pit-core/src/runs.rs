@@ -591,7 +591,8 @@ pub fn handoff_schema() -> Value {
 pub const RULES: &str = "You are running inside Pitlane, on one card, in a git worktree made for it. \
 Work only inside the current directory and the related repositories' worktrees the briefing lists, if any. Commit your work on the current branch with clear messages; \
 never push, never switch branches, never create branches or worktrees (in any repository; Pitlane makes \
-them), and merge only when Pitlane asks you to bring a branch in. Read the card's spec and decisions before you start. \
+them), and merge only when Pitlane asks you to bring a branch in. The project context in the briefing, written by the \
+person, overrides these git rules where it says otherwise (what to push, deploy or merge, and where). Read the card's spec and decisions before you start. \
 Nobody is watching this run: the person answered every question during the analysis, pressed Run and walked away, \
 so never stop to ask. Decide how to do the work yourself (worktrees, branches, commits, tests, file layout, naming, \
 what to measure, small calls on scope) from the spec, the decisions and the code: take the option you would have \
@@ -636,6 +637,12 @@ pub fn briefing(repo: &Repo, card: &Card) -> String {
         for n in &card.notes {
             b.push_str(&format!("- {} ({}): {}\n", n.by, n.at, n.text.trim().replace('\n', "\n  ")));
         }
+    }
+    let ctx = cards::project_context(repo);
+    if !ctx.is_empty() {
+        b.push_str("\n## Project context\n\nWritten by the person for every card of this project. It holds for this card too, and where it says otherwise it overrides the general rules on pushing, merging and deploying.\n\n");
+        b.push_str(&ctx);
+        b.push('\n');
     }
     if let Ok(d) = std::fs::read_to_string(cards::decisions_path(repo))
         && !d.trim().is_empty()

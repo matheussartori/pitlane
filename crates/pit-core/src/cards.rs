@@ -17,6 +17,7 @@ use crate::lanes::now_secs;
 
 pub const CARDS_DIR: &str = "cards";
 pub const DECISIONS: &str = "decisions.md";
+pub const CONTEXT: &str = "context.md";
 const LOCK: &str = ".lock";
 /// Where cards lived before the board moved out of the repository; adopted on open.
 const LEGACY_CARDS: &str = ".pitlane/cards";
@@ -346,6 +347,31 @@ pub fn image_bytes(repo: &Repo, card: &Card) -> Vec<(&'static str, Vec<u8>)> {
 /// The project's decisions file, beside the cards.
 pub fn decisions_path(repo: &Repo) -> PathBuf {
     repo.board.join(DECISIONS)
+}
+
+/// What the person wrote about the project for every session (repositories, how branches land,
+/// what may be pushed or deployed), beside the cards: never in the repository.
+pub fn context_path(repo: &Repo) -> PathBuf {
+    repo.board.join(CONTEXT)
+}
+
+/// The project context, trimmed; empty when there is none.
+pub fn project_context(repo: &Repo) -> String {
+    fs::read_to_string(context_path(repo)).map(|t| t.trim().to_owned()).unwrap_or_default()
+}
+
+/// Replaces the project context; an empty text removes the file.
+pub fn set_project_context(repo: &Repo, text: &str) -> Result<()> {
+    let path = context_path(repo);
+    let text = text.trim();
+    if text.is_empty() {
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).with_context(|| format!("could not remove {}", path.display())),
+            _ => return Ok(()),
+        }
+    }
+    fs::create_dir_all(&repo.board)?;
+    fs::write(&path, format!("{text}\n")).with_context(|| format!("could not write {}", path.display()))
 }
 
 /// A repository's board folder: keyed by its remote's URL, so moving or re-cloning the folder keeps

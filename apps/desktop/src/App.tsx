@@ -19,7 +19,7 @@ import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from 
 import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
-import { CleanSheet, NewLaneSheet, RunAllSheet, ShipSheet, type RunAllChoice } from "./sheets";
+import { CleanSheet, NewLaneSheet, ProjectSheet, RunAllSheet, ShipSheet, type RunAllChoice } from "./sheets";
 import { Toasts, dismissable, installTips, toast } from "./ui";
 import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
@@ -32,6 +32,7 @@ type SheetState =
   | { kind: "card"; id: number }
   | { kind: "new-card" }
   | { kind: "accounts" }
+  | { kind: "project" }
   | { kind: "questions" }
   | { kind: "run-all"; ids: number[] }
   | null;
@@ -896,6 +897,19 @@ export default function App() {
                     <Icon name="person" small />
                     {t("Accounts")}
                   </div>
+                  <div
+                    class="menu-item"
+                    role="menuitem"
+                    tabindex="0"
+                    onClick={() => {
+                      setMenu(false);
+                      setSheet({ kind: "project" });
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && (setMenu(false), setSheet({ kind: "project" }))}
+                  >
+                    <Icon name="note" small />
+                    {t("Project context")}
+                  </div>
                 </Show>
                 <div class="menu-item" role="menuitem" tabindex="0" onClick={addRepo} onKeyDown={(e) => e.key === "Enter" && addRepo()}>
                   <Icon name="plus" small />
@@ -1205,6 +1219,9 @@ export default function App() {
                 onStop={stopRunAll}
               />
             )}
+          </Show>
+          <Show when={sheet()?.kind === "project" && repo()}>
+            {(path) => <ProjectSheet repo={path()} repoName={current()?.name ?? t("This repository")} onClose={() => setSheet(null)} />}
           </Show>
           <Show when={sheet()?.kind === "accounts" && repo()}>
             {(path) => (

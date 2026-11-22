@@ -918,6 +918,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .board-ask-field::placeholder { color: var(--color-muted); }
 .field-label-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); }
 .run-all-after { min-height: 84px; resize: vertical; font: inherit; line-height: 1.45; padding-block: var(--space-xs); }
+.project-context { min-height: 280px; resize: vertical; line-height: 1.5; padding-block: var(--space-xs); font-size: var(--text-sm); }
 .card-analysis { display: inline-flex; align-items: center; gap: var(--space-3xs); font-size: var(--text-xs); color: var(--color-muted); }
 .card-analysis[data-on] { color: var(--color-done); }
 .ag-asks { display: grid; gap: var(--space-xs); margin-top: var(--space-sm); font-family: var(--font-body); }

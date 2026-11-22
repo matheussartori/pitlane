@@ -2578,6 +2578,36 @@ impl Supervisor {
         branch: &str,
         to: Option<&str>,
     ) -> Result<pit_core::queue::ShipJob> {
+        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        if !r.flow.flow.is_trunk(branch) {
+            // The same lane in the project's related repositories goes with it, ahead of it, so a
+            // stage (dev, main) always gets the whole change and never half of it.
+            let target = match to {
+                Some(t) => t.to_owned(),
+                None => actions::plan_ship(&r, branch, None, false)?.target,
+            };
+            let mut with: Vec<Repo> = Vec::new();
+            for root in pit_core::related::roots(&r) {
+                let Ok(rr) = pit_core::related::open(&r, &root) else { continue };
+                if rr.git.rev_parse(&format!("refs/heads/{branch}"))?.is_none() || self.in_line(&rr.root, branch) {
+                    continue;
+                }
+                let into = if rr.remote_sha(&target)?.is_some() {
+                    rr.remote_ref(&target)
+                } else if rr.git.rev_parse(&format!("refs/heads/{target}"))?.is_some() {
+                    target.clone()
+                } else {
+                    bail!("{} has {branch} but no {target}: create {target} there first, so both repositories ship together", rr.name);
+                };
+                let ahead = rr.git.run(&["rev-list", "--count", &format!("{into}..{branch}")])?;
+                if ahead.trim() != "0" {
+                    with.push(rr);
+                }
+            }
+            for rr in with {
+                self.enqueue_for(&rr.root, branch, Some(&target), None)?;
+            }
+        }
         self.enqueue_for(repo, branch, to, None)
     }
 

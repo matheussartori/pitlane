@@ -80,6 +80,7 @@ export default {
   "Add a git repository to see each branch, its worktree and where it has really landed.": "Adicione um repositório git para ver cada branch, seu worktree e onde ele realmente chegou.",
   "The order was not saved": "A ordem não foi salva",
   "This repository": "Este repositório",
+  "Project context": "Contexto do projeto",
   "{n} waiting": "{n} esperando",
   "working": "trabalhando",
   "Inbox": "Caixa de entrada",

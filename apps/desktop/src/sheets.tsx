@@ -548,3 +548,96 @@ export function RunAllSheet(props: {
     </Sheet>
   );
 }
+
+// ---------------------------------------------------------------- Project
+
+/**
+ * What every session of this project should know and the board cannot say: the repositories it
+ * spans, how their branches land together, what may be pushed or deployed. Kept beside the board,
+ * never in the repository; runs, analyses and the closing session all read it.
+ */
+export function ProjectSheet(props: { repo: string; repoName: string; onClose: () => void }) {
+  const [saved, { mutate: setSaved }] = createResource(() => props.repo, (p) => api.projectContext(p).catch(() => ""));
+  const [text, setText] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  const value = () => text() ?? saved() ?? "";
+  const dirty = () => text() !== null && text()!.trim() !== (saved() ?? "").trim();
+  const [repos, { mutate: setRepos }] = createResource(() => props.repo, (p) => api.projectRepos(p).catch(() => [] as string[]));
+  let ref: HTMLTextAreaElement | undefined;
+  async function dropRepo(rel: string) {
+    try {
+      setRepos(await api.projectRepoRemove(props.repo, rel));
+    } catch (e) {
+      toast({ tone: "fail", title: t("{name} is still on the list", { name: rel }), body: msg(e) }, 0);
+    }
+  }
+  async function save() {
+    setBusy(true);
+    try {
+      setSaved(await api.projectContextSet(props.repo, value()));
+      setText(null);
+      props.onClose();
+    } catch (e) {
+      toast({ tone: "fail", title: t("The project context was not saved"), body: msg(e) }, 0);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Sheet
+      title={t("{name}: project context", { name: props.repoName })}
+      wide
+      onClose={props.onClose}
+      dirty={dirty}
+      foot={
+        <>
+          <button type="button" class="btn btn-ghost" onClick={props.onClose}>
+            {t("Cancel")}
+          </button>
+          <button type="button" class="btn btn-primary" disabled={busy() || !dirty()} onClick={() => void save()}>
+            {busy() ? <Spinner /> : null} {t("Save")}
+          </button>
+        </>
+      }
+    >
+      <div class="field">
+        <span class="field-label-row">
+          <label class="field-label" for="project-context">
+            {t("Context for every session")}
+          </label>
+          <Dictate field={() => ref} value={value} onChange={setText} />
+        </span>
+        <textarea
+          id="project-context"
+          ref={ref}
+          class="input input-mono project-context"
+          rows="16"
+          placeholder={t("E.g. the games live in ../amity-games: push the lane there before publishing it to the dev channel. Never merge into main.")}
+          value={value()}
+          onInput={(e) => setText(e.currentTarget.value)}
+        />
+        <span class="field-help">
+          {t("Every run, analysis and closing session of this project reads it. It can allow what the general rules forbid, like pushing a lane or deploying to dev. Kept with the board on this Mac, not in the repository.")}
+        </span>
+      </div>
+      <Show when={(repos() ?? []).length > 0}>
+        <div class="field">
+          <span class="field-label">{t("Also works in")}</span>
+          <ul class="run-all-repos">
+            <For each={repos()}>
+              {(rel) => (
+                <li>
+                  <span class="input-mono">{rel}</span>
+                  <button type="button" class="btn btn-ghost btn-icon" aria-label={t("Take {name} off the list", { name: rel })} title={t("Take {name} off the list", { name: rel })} onClick={() => void dropRepo(rel)}>
+                    <Icon name="close" small />
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+          <span class="field-help">{t("Each lane gets the same branch in these repositories, lands there with it, and ships to dev and main together with it.")}</span>
+        </div>
+      </Show>
+    </Sheet>
+  );
+}

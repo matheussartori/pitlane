@@ -727,6 +727,8 @@ export const api = {
   /** Sibling repositories this project also works in (flow.toml's [project] repos). */
   projectRepos: (path: string) => invoke<string[]>("project_repos", { path }),
   projectRepoRemove: (path: string, rel: string) => invoke<string[]>("project_repo_remove", { path, rel }),
+  projectContext: (path: string) => invoke<string>("project_context", { path }),
+  projectContextSet: (path: string, text: string) => invoke<string>("project_context_set", { path, text }),
   /** `autopilot`: Run all's cards, which fix, continue and land on their own. */
   runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null, autopilot = false) =>
     invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions, autopilot }),

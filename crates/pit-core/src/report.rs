@@ -385,6 +385,11 @@ pub fn read_digest(stdout: &str) -> Result<Digest> {
 pub fn finish_prompt(repo: &Repo, ids: &[u32], instructions: &str, into: Option<&str>) -> String {
     let mut p = String::from("Every card of this batch has been worked. Now do what the person asked for when it is all done.\n\n## What they asked\n\n");
     p.push_str(instructions.trim());
+    let ctx = cards::project_context(repo);
+    if !ctx.is_empty() {
+        p.push_str("\n\n## Project context\n\nWritten by the person for every session of this project (how its repositories land, what may be pushed or deployed):\n\n");
+        p.push_str(&ctx);
+    }
     p.push_str("\n\n## The batch\n\n");
     if let Some(t) = into {
         p.push_str(&format!("The work was aimed at the branch {t}.\n\n"));

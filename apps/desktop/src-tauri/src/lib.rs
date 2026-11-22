@@ -509,6 +509,22 @@ async fn project_repos(path: String) -> CmdResult<Vec<String>> {
     blocking(move || Ok(open(&path)?.flow.project.repos.clone())).await
 }
 
+/// What the person wrote about the project for every session (`context.md` beside the board).
+#[tauri::command]
+async fn project_context(path: String) -> CmdResult<String> {
+    blocking(move || Ok(cards::project_context(&open(&path)?))).await
+}
+
+#[tauri::command]
+async fn project_context_set(path: String, text: String) -> CmdResult<String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        cards::set_project_context(&repo, &text)?;
+        Ok(cards::project_context(&repo))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn project_repo_remove(path: String, rel: String) -> CmdResult<Vec<String>> {
     blocking(move || {
@@ -1637,6 +1653,8 @@ pub fn run() {
             card_talk_stop,
             project_repos,
             project_repo_remove,
+            project_context,
+            project_context_set,
             capacity,
             card_attach,
             card_detach,
