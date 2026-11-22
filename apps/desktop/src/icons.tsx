@@ -39,6 +39,8 @@ const paths: Record<string, () => JSX.Element> = {
   board: () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9.5 4.5v15M14.5 4.5v15" /></>),
   lanes: () => (<><path d="M4 7h16M4 12h16M4 17h10" /></>),
   ledger: () => (<><path d="M6.5 4.5h11a1 1 0 0 1 1 1v14h-12a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z" /><path d="M4.5 17.5a2 2 0 0 1 2-2h12M9 9h6" /></>),
+  gauge: () => (<><path d="M4.5 17a8 8 0 1 1 15 0" /><path d="M12 13l3.5-4" /><circle cx="12" cy="13" r="1.2" /></>),
+  pause: () => <path d="M9 6.5v11M15 6.5v11" />,
   settings: () => (<><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>),
   folder: () => <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
 };
