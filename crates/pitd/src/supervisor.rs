@@ -536,8 +536,14 @@ impl Supervisor {
             .arg(runs::RULES)
             .arg("--json-schema")
             .arg(runs::handoff_schema().to_string());
-        if let Some(m) = choice.model.as_ref().or(prep.model.as_ref()) {
+        // The model: the route's, the repository's, or else the one you use in Claude Code.
+        let picked = choice.model.clone().or(prep.model.clone());
+        let (your_model, your_effort) = your_claude(choice.config_dir.as_deref(), picked.as_deref());
+        if let Some(m) = picked.as_ref().or(your_model.as_ref()) {
             cmd.args(["--model", m]);
+        }
+        if let Some(e) = &your_effort {
+            cmd.args(["--effort", e]);
         }
         // The account: its own Claude Code directory, where you signed in. Pitlane only points at it.
         if let Some(dir) = &choice.config_dir {
@@ -1029,7 +1035,8 @@ impl Supervisor {
             .choices(&r.root, &home_dir(), &self.cfg.home)?
             .into_iter()
             .find(|c| c.kind != accounts::Kind::ApiKey);
-        let model = r.flow.verify.judge_model.clone();
+        // The repository's model for agents, else yours (the judge's model is for judging).
+        let model = r.flow.run.model.clone();
         let batch: Vec<cards::Card> = ids.into_iter().filter_map(|id| cards::get(&r, id).ok()).collect();
         let todo: Vec<cards::Card> = batch.iter().filter(|c| c.analyzed.is_none() && c.state != CardState::Done).cloned().collect();
         let gate = Arc::clone(&self.analysis_gate);
@@ -1260,6 +1267,19 @@ impl Supervisor {
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
             .args(["--session-id", &self.get(&id)?.session_id])
             .args(&side.args);
+        // Whatever the session does not set comes from your Claude Code: model and effort.
+        let set = side.args.iter().position(|a| a == "--model").and_then(|i| side.args.get(i + 1)).cloned();
+        let (your_model, your_effort) = your_claude(side.config_dir.as_deref(), set.as_deref());
+        if !side.args.iter().any(|a| a == "--model")
+            && let Some(m) = your_model
+        {
+            cmd.args(["--model", &m]);
+        }
+        if !side.args.iter().any(|a| a == "--effort")
+            && let Some(e) = your_effort
+        {
+            cmd.args(["--effort", &e]);
+        }
         // Like a run: what no rule allows (a read outside the repository, say) is asked to a
         // person in Pitlane, instead of being denied with nobody to ask.
         if let Some(pit) = &self.cfg.pit_bin {
@@ -1704,6 +1724,35 @@ markdown that says what and why, with acceptance in a line or two. Read the code
 update an existing card instead when it is the same work. When they ask to change, annotate or delete cards, do that. End with a \
 one-line summary per card you added or changed (#id and title).";
 
+/// The model and effort you chose in Claude Code (`/model`), from the account's settings.json:
+/// Pitlane starts sessions with project settings only, so it passes these on itself. `model` is
+/// the one the session will use when Pitlane already picked one; the effort is yours for that
+/// model (`modelSettings.<id>.effortLevel`, matched by alias: `opus` finds `claude-opus-5-5`).
+/// Only these values are read; nothing about the login.
+fn your_claude(config_dir: Option<&Path>, model: Option<&str>) -> (Option<String>, Option<String>) {
+    let dir = config_dir
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from))
+        .unwrap_or_else(|| home_dir().join(".claude"));
+    let Ok(v) = fs::read_to_string(dir.join("settings.json")).map_err(anyhow::Error::from).and_then(|t| Ok(serde_json::from_str::<Value>(&t)?)) else {
+        return (None, None);
+    };
+    let yours = v.get("model").and_then(Value::as_str).filter(|x| !x.is_empty()).map(str::to_owned);
+    let Some(m) = model.map(str::to_owned).or_else(|| yours.clone()) else { return (None, None) };
+    let effort = v.get("modelSettings").and_then(Value::as_object).and_then(|all| {
+        let level = |k: &String| all.get(k)?.get("effortLevel")?.as_str().map(str::to_owned);
+        // The exact id, else the newest id that contains the alias.
+        let exact = all.keys().find(|k| **k == m).cloned();
+        let by_alias = || {
+            let mut ks: Vec<&String> = all.keys().filter(|k| k.contains(m.as_str())).collect();
+            ks.sort();
+            ks.last().map(|k| (*k).clone())
+        };
+        exact.or_else(by_alias).and_then(|k| level(&k))
+    });
+    (yours, effort)
+}
+
 /// The repository's permission mode for Claude Code (`[run] permission_mode`, `auto` by default).
 fn mode_for(repo: &Path) -> String {
     Repo::open(repo, &home_dir(), &pit_core::default_homes().1).map(|r| r.flow.run.permission_mode).unwrap_or_else(|_| "auto".into())
@@ -1936,4 +1985,24 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
 
 fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
+#[cfg(test)]
+mod your_claude_tests {
+    use super::*;
+
+    #[test]
+    fn reads_your_model_and_its_effort() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(
+            d.path().join("settings.json"),
+            r#"{"model":"opus","modelSettings":{"claude-opus-5-5":{"effortLevel":"medium"},"claude-fable-5-2":{"effortLevel":"xhigh"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(your_claude(Some(d.path()), None), (Some("opus".into()), Some("medium".into())));
+        // A model Pitlane picked gets your effort for that model.
+        assert_eq!(your_claude(Some(d.path()), Some("fable")).1, Some("xhigh".into()));
+        assert_eq!(your_claude(Some(d.path()), Some("sonnet")).1, None);
+        assert_eq!(your_claude(Some(&d.path().join("none")), None), (None, None));
+    }
 }

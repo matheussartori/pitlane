@@ -32,7 +32,7 @@ pub struct VerifyCfg {
 
 impl Default for VerifyCfg {
     fn default() -> Self {
-        Self { commands: Vec::new(), judge: true, judge_model: Some("sonnet".into()), max_rounds: 3 }
+        Self { commands: Vec::new(), judge: true, judge_model: None, max_rounds: 3 }
     }
 }
 
@@ -299,7 +299,7 @@ clone_deps = []             # copy-on-write clones, e.g. ["node_modules"]
 [verify]
 commands    = []            # checks after each run, in the lane's worktree, e.g. ["npm test", "npm run lint"]
 judge       = true          # a separate Claude Code session reviews the diff against the spec
-judge_model = "sonnet"
+# judge_model = "sonnet"   # empty: the model you use in Claude Code
 max_rounds  = 3             # "ask for changes" rounds before the card comes back to you
 
 [run]

@@ -290,7 +290,7 @@ function Agents(props: { repo: string | null; repoName: string }) {
                   <Toggle id="f-judge" label="A second opinion" on={fl().verify.judge} onChange={(v) => void set("verify", "judge", v)} />
                 </Row>
                 <Row label="Its model" for="f-jmodel">
-                  <input id="f-jmodel" class="input input-mono set-input" placeholder="sonnet" value={fl().verify.judge_model ?? ""} disabled={!fl().verify.judge} onChange={(e) => void set("verify", "judge_model", e.currentTarget.value.trim())} />
+                  <input id="f-jmodel" class="input input-mono set-input" placeholder="your Claude Code model" value={fl().verify.judge_model ?? ""} disabled={!fl().verify.judge} onChange={(e) => void set("verify", "judge_model", e.currentTarget.value.trim())} />
                 </Row>
                 <Row label="Rounds of changes at most" help="After that, the card comes back to you." for="f-rounds">
                   <input id="f-rounds" class="input input-mono set-input set-num" inputmode="numeric" value={fl().verify.max_rounds} onChange={(e) => void set("verify", "max_rounds", num(e.currentTarget.value, fl().verify.max_rounds))} />
