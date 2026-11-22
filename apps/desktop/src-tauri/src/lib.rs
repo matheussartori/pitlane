@@ -367,7 +367,24 @@ async fn cards_list(path: String) -> CmdResult<CardList> {
 
 #[tauri::command]
 async fn card_add(path: String, title: String, body: String) -> CmdResult<CardOut> {
-    blocking(move || Ok(cards::add(&open(&path)?, NewCard { title, body, ..Default::default() })?.into())).await
+    blocking(move || {
+        let repo = open(&path)?;
+        let card = cards::add(&repo, NewCard { title, body, ..Default::default() })?;
+        describe_later(&repo.root, card.id, true);
+        Ok(card.into())
+    })
+    .await
+}
+
+/// Asks the daemon for Claude's title (when `title`) and summary of a card, in the background:
+/// the card is there at once, and the board shows them when they arrive.
+fn describe_later(root: &std::path::Path, id: u32, title: bool) {
+    let root = root.to_owned();
+    std::thread::spawn(move || {
+        if let Err(e) = call(serde_json::json!({ "op": "describe", "repo": root, "card": id, "title": title })) {
+            eprintln!("pitlane: no summary for card #{id}: {e:#}");
+        }
+    });
 }
 
 /// `lane`: a branch to link, an empty string to unlink, absent to leave as is.
@@ -389,7 +406,14 @@ async fn card_update(
             tags: None,
             target: None,
         };
-        Ok(cards::update(&open(&path)?, id, patch)?.into())
+        let repo = open(&path)?;
+        let before = cards::get(&repo, id)?.body;
+        let card = cards::update(&repo, id, patch)?;
+        // A new spec gets a new summary (the title stays yours).
+        if card.body.trim() != before.trim() {
+            describe_later(&repo.root, id, false);
+        }
+        Ok(card.into())
     })
     .await
 }
@@ -519,6 +543,22 @@ async fn card_image(path: String, id: u32, file: String) -> CmdResult<String> {
             anyhow::bail!("bad image name {file}");
         }
         let bytes = std::fs::read(cards::images_dir(&open(&path)?, id).join(&file))?;
+        Ok(format!("data:{ty};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    })
+    .await
+}
+
+/// A screenshot a run's tool gave back (`runs/<run>/shots/<file>`), as a data URL.
+#[tauri::command]
+async fn run_shot(run: String, file: String) -> CmdResult<String> {
+    blocking(move || {
+        use base64::Engine as _;
+        let ok = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !s.contains("..");
+        if !ok(&run) || !ok(&file) {
+            anyhow::bail!("bad screenshot name {run}/{file}");
+        }
+        let ty = cards::image_type(&file).ok_or_else(|| anyhow::anyhow!("{file} is not an image"))?;
+        let bytes = std::fs::read(pit_core::runs::runs_dir(&default_homes().1).join(&run).join("shots").join(&file))?;
         Ok(format!("data:{ty};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
     })
     .await
@@ -1520,6 +1560,7 @@ pub fn run() {
             card_attach,
             card_detach,
             card_image,
+            run_shot,
             card_reorder,
             card_delete,
             cards_forget,

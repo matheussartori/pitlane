@@ -195,6 +195,8 @@ export interface Card {
   notes?: CardNote[];
   /** Attached screenshots, by file name; Claude gets them with the spec. */
   images?: string[];
+  /** A few lines on what it is about, written by Claude (Sonnet) when it was made or its spec changed. */
+  summary?: string;
   created: string;
   updated: string;
   questions?: Question[];
@@ -402,6 +404,7 @@ export type RunEvent =
   | { kind: "text"; text: string; parent?: string }
   | { kind: "tool"; id: string; name: string; detail: string; parent?: string; change?: { old: string; new: string; cut: number } }
   | { kind: "tool-done"; id: string; ok: boolean; detail: string; parent?: string; lines?: number }
+  | { kind: "shot"; tool: string; file: string; parent?: string }
   | { kind: "said"; text: string }
   | { kind: "tuned"; model?: string; effort?: string }
   | { kind: "quota"; window: string; used: number; resets_at: number }
@@ -678,7 +681,7 @@ export interface Capacity {
 
 export interface FlowFile {
   flow: { base: string; integration: string; production: string; remote: string; naming: string[]; stale_days: number };
-  run: { allow: string[]; max_turns: number; model: string | null; branch_prefix: string; brief: boolean };
+  run: { allow: string[]; max_turns: number; model: string | null; branch_prefix: string; brief: boolean; browser: boolean };
   verify: { commands: string[]; judge: boolean; judge_model: string | null; max_rounds: number };
   ship?: { check: string | null };
 }
@@ -777,6 +780,7 @@ export const api = {
   cardDetach: (path: string, id: number, file: string) => invoke<Card>("card_detach", { path, id, file }),
   /** A data URL of one of the card's images. */
   cardImage: (path: string, id: number, file: string) => invoke<string>("card_image", { path, id, file }),
+  runShot: (run: string, file: string) => invoke<string>("run_shot", { run, file }),
   /** Choose again on an answered question; its decision is rewritten in place. */
   cardReanswer: (path: string, id: number, question: number, answer: string) =>
     invoke<{ decision: string; card: Card }>("card_reanswer", { path, id, question, answer }),

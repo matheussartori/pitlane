@@ -275,6 +275,14 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lines: Option<usize>,
     },
+    /// An image a tool gave back (a browser screenshot, a PNG it read), kept in the run's
+    /// `shots/` folder as `file`. `tool` is the call that made it.
+    Shot {
+        tool: String,
+        file: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
     /// A message from the person, sent while the agent works.
     Said { text: String },
     /// The model or effort changed while the session lives (`/model`, `/effort`).
@@ -491,6 +499,44 @@ fn tool_change(name: &str, input: &Value) -> Option<Change> {
     Some(Change { old, new, cut: a + b })
 }
 
+/// An image a tool gave back: the call's id, the subagent's parent, the file extension, the bytes.
+pub struct ToolImage {
+    pub tool: String,
+    pub parent: Option<String>,
+    pub ext: &'static str,
+    pub bytes: Vec<u8>,
+}
+
+/// The images inside a stream-json line's tool results (Claude Code drops them from the text).
+pub fn tool_images(v: &Value) -> Vec<ToolImage> {
+    use base64::Engine as _;
+    if v.get("type").and_then(Value::as_str) != Some("user") {
+        return Vec::new();
+    }
+    let parent = v.get("parent_tool_use_id").and_then(Value::as_str).filter(|p| !p.is_empty()).map(str::to_owned);
+    let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else { return Vec::new() };
+    let mut out = Vec::new();
+    for b in blocks.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result")) {
+        let tool = b.get("tool_use_id").and_then(Value::as_str).unwrap_or_default();
+        let Some(items) = b.get("content").and_then(Value::as_array) else { continue };
+        for i in items.iter().filter(|i| i.get("type").and_then(Value::as_str) == Some("image")) {
+            let src = i.get("source").unwrap_or(&Value::Null);
+            let ext = match src.get("media_type").and_then(Value::as_str) {
+                Some("image/png") => "png",
+                Some("image/jpeg") => "jpg",
+                Some("image/gif") => "gif",
+                Some("image/webp") => "webp",
+                _ => continue,
+            };
+            let Some(data) = src.get("data").and_then(Value::as_str) else { continue };
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()) {
+                out.push(ToolImage { tool: tool.to_owned(), parent: parent.clone(), ext, bytes });
+            }
+        }
+    }
+    out
+}
+
 fn content_text(c: Option<&Value>) -> String {
     match c {
         Some(Value::String(s)) => s.clone(),
@@ -503,6 +549,13 @@ fn first_line(s: &str) -> String {
     let line = s.lines().find(|l| !l.trim().is_empty()).unwrap_or_default().trim();
     if line.chars().count() > 400 { format!("{}…", line.chars().take(399).collect::<String>()) } else { line.to_owned() }
 }
+
+/// Added to a run's rules when the repository turns the browser on (`[run] browser`).
+pub const BROWSER_RULES: &str = "\n\nYou have a headless browser (the browser tools). When your change shows on a page \
+(a web app, a component, a style), open it there, take a screenshot of the result (browser_take_screenshot), and \
+fix what looks wrong before you finish; the person sees every screenshot in the run. If the app needs a dev server, \
+start it in the background and stop it when you are done. Screenshot nothing else: no secrets, no pages outside \
+this project.";
 
 /// The JSON Schema every run ends with. It feeds the review, and its questions go to the Inbox.
 pub fn handoff_schema() -> Value {
@@ -746,6 +799,21 @@ mod tests {
         assert!(rule_allows("Bash(pwd)", "Bash", &bash("pwd")));
         assert!(rule_allows("WebFetch", "WebFetch", &json!({})));
         assert!(!rule_allows("WebFetch", "Bash", &bash("curl x")));
+    }
+
+    #[test]
+    fn keeps_the_images_tool_results_carry() {
+        let png = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"\x89PNGfake");
+        let u = json!({"type":"user","parent_tool_use_id":"task1","message":{"content":[{"type":"tool_result","tool_use_id":"t9","content":[
+            {"type":"text","text":"Took the screenshot"},
+            {"type":"image","source":{"type":"base64","media_type":"image/png","data":png}},
+            {"type":"image","source":{"type":"base64","media_type":"image/tiff","data":png}}]}]}});
+        let shots = tool_images(&u);
+        assert_eq!(shots.len(), 1);
+        assert_eq!((shots[0].tool.as_str(), shots[0].parent.as_deref(), shots[0].ext), ("t9", Some("task1"), "png"));
+        assert_eq!(shots[0].bytes, b"\x89PNGfake");
+        assert!(matches!(&read_claude_line(&u)[0], RunEvent::ToolDone { detail, .. } if detail == "Took the screenshot"));
+        assert!(tool_images(&json!({"type":"assistant"})).is_empty());
     }
 
     #[test]

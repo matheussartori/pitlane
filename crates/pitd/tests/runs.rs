@@ -228,6 +228,7 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
             RunEvent::Tool { .. } => "tool",
             RunEvent::ToolDone { .. } => "tool-done",
             RunEvent::Said { .. } => "said",
+            RunEvent::Shot { .. } => "shot",
             RunEvent::Tuned { .. } => "tuned",
             RunEvent::Quota { .. } => "quota",
             RunEvent::Finished { .. } => "finished",

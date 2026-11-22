@@ -780,6 +780,7 @@ fn print_event(e: &RunEvent) {
         RunEvent::Tool { name, detail, .. } => println!("  {} {}", paint(MUTED, name), paint(MUTED, detail)),
         RunEvent::ToolDone { ok: false, detail, .. } => println!("    {} {}", paint(FAIL, "✕"), paint(MUTED, detail)),
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
+        RunEvent::Shot { file, .. } => println!("    {} {}", paint(MUTED, "screenshot"), paint(MUTED, file)),
         RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
         RunEvent::Tuned { model, effort } => println!(
             "{}",

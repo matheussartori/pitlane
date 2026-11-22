@@ -210,11 +210,14 @@ pub struct RunCfg {
     /// classifier lets safe actions through and blocks risky ones, so agents rarely stop to ask;
     /// `acceptEdits` or `default` ask more.
     pub permission_mode: String,
+    /// Give agents a headless browser (Playwright's MCP server) to open what they change and take
+    /// screenshots, shown in the run. Off by default: it starts Chrome and fetches the server with npx.
+    pub browser: bool,
 }
 
 impl Default for RunCfg {
     fn default() -> Self {
-        Self { allow: Vec::new(), max_turns: 150, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into() }
+        Self { allow: Vec::new(), max_turns: 150, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into(), browser: false }
     }
 }
 
@@ -359,6 +362,7 @@ max_turns   = 150
 branch_prefix = "feat/"     # a card without a lane runs on feat/<id>-<slug>
 brief = true                # tell the agent where to look, from Pitlane's index of the repository
 permission_mode = "auto"    # Claude Code's mode for every session: auto (asks rarely), acceptEdits or default
+browser = false             # a headless browser for agents: they open what they change and screenshot it
 # model     = "sonnet"
 "#;
 

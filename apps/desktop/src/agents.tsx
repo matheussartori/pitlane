@@ -2,7 +2,8 @@
 // card, with the subagents each one opens. Shown in the Terminal screen and in a dock on the
 // Board. You can write to a session while it works and stop it with Ctrl+C. A session closes
 // itself a moment after it ends, unless you talked to it.
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount } from "solid-js";
+import { Portal } from "solid-js/web";
 import { createStore, reconcile } from "solid-js/store";
 import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
@@ -93,8 +94,8 @@ export async function stopAllAgents(): Promise<void> {
 function StopAll() {
   return (
     <Show when={agentsWorking() > 0}>
-      <button type="button" class="btn btn-ghost ag-stop-all" title={t("Stop every agent Pitlane started")} onClick={() => void stopAllAgents()}>
-        <Icon name="stop" small /> {t("Stop all")}
+      <button type="button" class="pane-btn ag-stop-all" aria-label={t("Stop all")} data-tip={t("Stop every agent Pitlane started")} onClick={() => void stopAllAgents()}>
+        <Icon name="stop" small />
       </button>
     </Show>
   );
@@ -252,6 +253,24 @@ function since(m: RunMeta): string {
 
 // ---------------------------------------------------------------- the list in the Terminal screen
 
+/** A session's state as one colored mark (a spinner while it works); the word shows on hover. */
+function StateMark(props: { s: Look["s"] | Subagent["state"]; icon: IconName; word: string }) {
+  return (
+    <span class="ag-state" data-s={props.s} data-tip={props.word} aria-label={props.word} role="img">
+      <Show when={props.s === "work"} fallback={<Icon name={props.icon} small />}>
+        <span class="ag-spin" />
+      </Show>
+    </span>
+  );
+}
+
+const SUB_LOOK: Record<Subagent["state"], { icon: IconName; word: () => string }> = {
+  work: { icon: "run", word: () => t("Working") },
+  done: { icon: "done", word: () => t("Done") },
+  fail: { icon: "fail", word: () => t("Failed") },
+  ended: { icon: "stop", word: () => t("Ended") },
+};
+
 export function AgentList(props: { compact: boolean }) {
   return (
     <Show when={agentGroups().length > 0}>
@@ -262,7 +281,7 @@ export function AgentList(props: { compact: boolean }) {
             {(m) => (
               <div class="tt ag-chip" data-active={selected()?.id === m.id ? "" : undefined}>
                 <button type="button" role="tab" class="tt-main" aria-selected={selected()?.id === m.id} onClick={() => selectAgent(m.id)}>
-                  <span class="ag-dot" data-s={look(m).s} />
+                  <StateMark s={look(m).s} icon={look(m).icon} word={look(m).word} />
                   <span class="tt-name">
                     #{m.card} {kindLabel(m)}
                   </span>
@@ -276,7 +295,9 @@ export function AgentList(props: { compact: boolean }) {
           <div class="ag-head">
             <span class="terms-title">{t("Agents")}</span>
             <Show when={agentsWorking() > 0}>
-              <span class="ag-working">{t("{n} working", { n: agentsWorking() })}</span>
+              <span class="ag-working" data-tip={t("{n} working", { n: agentsWorking() })}>
+                <span class="ag-spin" /> {agentsWorking()}
+              </span>
             </Show>
             <span class="ag-bar-fill" />
             <StopAll />
@@ -327,14 +348,14 @@ function SessionRow(props: { m: RunMeta }) {
   onMount(() => void ensureTimeline(props.m.id));
   return (
     <div class="tt ag-row" data-active={active() ? "" : undefined} data-ended={live(props.m) ? undefined : ""}>
-      <button type="button" role="tab" class="tt-main" aria-selected={active()} title={lastLine(props.m)} onClick={() => selectAgent(props.m.id)}>
-        <span class="ag-dot" data-s={l().s} />
+      <button type="button" role="tab" class="tt-main" aria-selected={active()} onClick={() => selectAgent(props.m.id)}>
+        <StateMark s={l().s} icon={l().icon} word={l().word} />
         <span class="tt-text">
-          <span class="tt-name">{kindLabel(props.m)}</span>
+          <span class="ag-row-head">
+            <span class="tt-name">{kindLabel(props.m)}</span>
+            <span class="ag-time">{since(props.m)}</span>
+          </span>
           <span class="tt-sub">{lastLine(props.m)}</span>
-        </span>
-        <span class="tt-status ag-status" data-s={l().s}>
-          {l().word}
         </span>
       </button>
       <Show when={!live(props.m)}>
@@ -350,13 +371,10 @@ function SubRow(props: { m: RunMeta; s: Subagent }) {
   const active = () => selected()?.id === props.m.id && selected()?.sub === props.s.id;
   return (
     <div class="tt ag-row ag-sub" style={{ "--depth": String(props.s.depth) }} data-active={active() ? "" : undefined}>
-      <button type="button" role="tab" class="tt-main" aria-selected={active()} title={props.s.label} onClick={() => selectAgent(props.m.id, props.s.id)}>
-        <span class="ag-dot" data-s={props.s.state} />
+      <button type="button" role="tab" class="tt-main" aria-selected={active()} onClick={() => selectAgent(props.m.id, props.s.id)}>
+        <StateMark s={props.s.state} icon={SUB_LOOK[props.s.state].icon} word={SUB_LOOK[props.s.state].word()} />
         <span class="tt-text">
           <span class="tt-name ag-sub-name">{props.s.label}</span>
-        </span>
-        <span class="tt-status ag-status" data-s={props.s.state}>
-          {props.s.state === "work" ? t("Working") : props.s.state === "done" ? t("Done") : props.s.state === "fail" ? t("Failed") : t("Ended")}
         </span>
       </button>
     </div>
@@ -743,6 +761,9 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
 
 /** Claude Code's names for its tools, as its own terminal shows them. */
 const TOOL_LABEL: Record<string, string> = { Edit: "Update", MultiEdit: "Update", Grep: "Search", WebFetch: "Fetch", WebSearch: "Web search", NotebookEdit: "Update" };
+// The browser's tools (`mcp__browser__browser_take_screenshot`) read as "Browser · take screenshot".
+const toolLabel = (name: string) =>
+  name.startsWith("mcp__browser__browser_") ? `${t("Browser")} · ${name.slice(22).replace(/_/g, " ")}` : t(TOOL_LABEL[name] ?? name);
 
 /** What a finished tool came to, in one line, the way Claude Code sums it up. */
 function resultLine(name: string, d: Extract<RunEvent, { kind: "tool-done" }>): string {
@@ -767,6 +788,34 @@ function Diff(props: { change: { old: string; new: string; cut: number } }) {
         <div class="cc-more">… {plural(props.change.cut, "{n} more line", "{n} more lines")}</div>
       </Show>
     </div>
+  );
+}
+
+/** A screenshot a tool gave back, under its call: a thumbnail that opens full size. */
+function Shot(props: { run: string; file: string }) {
+  const [src] = createResource(() => [props.run, props.file] as const, ([r, f]) => api.runShot(r, f).catch(() => ""));
+  const [big, setBig] = createSignal(false);
+  const key = (ev: KeyboardEvent) => ev.key === "Escape" && setBig(false);
+  createEffect(() => (big() ? window.addEventListener("keydown", key) : window.removeEventListener("keydown", key)));
+  onCleanup(() => window.removeEventListener("keydown", key));
+  return (
+    <Show when={src()}>
+      {(u) => (
+        <div class="cc-shot">
+          <span class="cc-sign">⎿</span>
+          <button type="button" class="cc-shot-thumb" title={t("Open full size")} onClick={() => setBig(true)}>
+            <img src={u()} alt={t("Screenshot")} loading="lazy" />
+          </button>
+          <Show when={big()}>
+            <Portal>
+              <div class="shot-view" role="dialog" aria-label={t("Screenshot")} onClick={() => setBig(false)}>
+                <img src={u()} alt={t("Screenshot")} />
+              </div>
+            </Portal>
+          </Show>
+        </div>
+      )}
+    </Show>
   );
 }
 
@@ -799,7 +848,7 @@ export function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, 
           <div class="cc-call">
             <span class="cc-dot" data-s={d ? (d.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
             <span>
-              <b class="cc-name">{t(TOOL_LABEL[e.name] ?? e.name)}</b>
+              <b class="cc-name">{toolLabel(e.name)}</b>
               <Show when={e.detail}>
                 <span class="cc-arg">({e.detail})</span>
               </Show>
@@ -818,6 +867,8 @@ export function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, 
       ) : (
         <div class="ag-line ag-fail">  ✕ {e.detail}</div>
       );
+    case "shot":
+      return <Shot run={props.m.id} file={e.file} />;
     case "said":
       return (
         <div class="ag-line ag-said">
@@ -981,13 +1032,10 @@ export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () =
                 return (
                   <button type="button" class="ag-cell" data-ended={live(m) ? undefined : ""} onClick={() => props.onOpen(m.id)}>
                     <span class="ag-cell-head">
-                      <span class="ag-dot" data-s={look(m).s} />
+                      <StateMark s={look(m).s} icon={look(m).icon} word={look(m).word} />
                       <span class="ag-num">#{m.card}</span>
                       <span class="ag-cell-kind">{kindLabel(m)}</span>
                       <span class="ag-bar-fill" />
-                      <span class="ag-status" data-s={look(m).s}>
-                        {look(m).word}
-                      </span>
                     </span>
                     <span class="ag-cell-title">{m.card_title}</span>
                     <span class="ag-cell-last">

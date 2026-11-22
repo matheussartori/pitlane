@@ -163,6 +163,27 @@ impl Supervisor {
         runs::runs_dir(&self.cfg.home).join(id)
     }
 
+    /// Keeps the images a line's tool results carry (screenshots) in the run's `shots/` folder
+    /// and shows each one in the log.
+    fn keep_shots(&self, id: &str, v: &Value) {
+        let shots = runs::tool_images(v);
+        if shots.is_empty() {
+            return;
+        }
+        let dir = self.dir(id).join("shots");
+        if fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let mut n = fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
+        for s in shots {
+            n += 1;
+            let file = format!("{n:04}.{}", s.ext);
+            if fs::write(dir.join(&file), &s.bytes).is_ok() {
+                self.emit(id, RunEvent::Shot { tool: s.tool, file, parent: s.parent });
+            }
+        }
+    }
+
     /// Runs left open by a daemon that went away are marked interrupted.
     pub fn recover(&self) -> Result<usize> {
         let mut n = 0;
@@ -687,7 +708,14 @@ impl Supervisor {
             &mode,
         ])
         .arg("--allowedTools")
-        .arg(prep.tools.join(","))
+        .arg(
+            prep.tools
+                .iter()
+                .cloned()
+                .chain(prep.browser.then(|| BROWSER_TOOLS.to_owned()))
+                .collect::<Vec<_>>()
+                .join(","),
+        )
         // Nobody is watching a run: it decides, notes the choice, or ends blocked.
         .args(["--disallowedTools", "AskUserQuestion"])
         .args(prep.related.iter().flat_map(|l| {
@@ -699,8 +727,9 @@ impl Supervisor {
         .args(["--max-turns", &prep.max_turns.to_string()])
         .arg("--append-system-prompt")
         .arg(format!(
-            "{}{}",
+            "{}{}{}",
             runs::RULES,
+            if prep.browser { runs::BROWSER_RULES } else { "" },
             pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))
         ))
         .arg("--json-schema")
@@ -735,8 +764,11 @@ impl Supervisor {
         );
         if let Some(pit) = &self.cfg.pit_bin {
             // Anything no rule allows is asked to a person, through Pitlane, and waits for them.
-            let mcp = serde_json::json!({ "mcpServers": { "pitlane_run": {
+            let mut mcp = serde_json::json!({ "mcpServers": { "pitlane_run": {
                 "command": pit, "args": ["mcp", "--approve", &id] } } });
+            if prep.browser {
+                mcp["mcpServers"]["browser"] = browser_server();
+            }
             cmd.args(["--mcp-config", &mcp.to_string()])
                 .args([
                     "--permission-prompts",
@@ -838,6 +870,7 @@ impl Supervisor {
                         }
                         me.emit(&id, ev);
                     }
+                    me.keep_shots(&id, &v);
                 }
             })
         };
@@ -1784,6 +1817,54 @@ impl Supervisor {
         )
     }
 
+    /// Claude's title and summary for a card just made (`title`) or whose spec changed (summary
+    /// only). Always Sonnet, no tools, about a cent; written on the card when it is back, unless
+    /// the spec changed meanwhile.
+    pub async fn describe(self: &Arc<Self>, repo: PathBuf, id: u32, title: bool) -> Result<Value> {
+        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let card = cards::get(&r, id)?;
+        let routing = Routing::load(&self.cfg.home)?;
+        // Never the API key, like the analysis: a summary is not worth a paid token without a yes.
+        let choice = routing
+            .choices(&r.root, &home_dir(), &self.cfg.home)?
+            .into_iter()
+            .find(|c| c.kind != accounts::Kind::ApiKey);
+        let system = format!(
+            "{}{}",
+            pit_core::describe::RULES,
+            pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))
+        );
+        let mut cmd = Command::new(&self.cfg.claude_bin);
+        cmd.args(["-p", "--output-format", "json", "--model", pit_core::describe::MODEL])
+            .args(["--setting-sources", "project,local", "--tools", "", "--max-turns", "2"])
+            .args(["--append-system-prompt", &system])
+            .args(["--json-schema", &pit_core::describe::schema(title).to_string()])
+            .arg(pit_core::describe::prompt(&card, title))
+            .current_dir(&r.root)
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        if let Some(dir) = choice.as_ref().and_then(|c| c.config_dir.as_ref()) {
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
+        let out = tokio::time::timeout(Duration::from_secs(120), cmd.output())
+            .await
+            .context("the description took over two minutes")?
+            .with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
+        let d = pit_core::describe::read(&String::from_utf8_lossy(&out.stdout))?;
+        let card = cards::describe(
+            &r,
+            id,
+            &card.body,
+            d.title.as_deref().filter(|_| title),
+            &d.summary,
+        )?;
+        Ok(serde_json::json!({ "card": card.id, "title": card.title, "summary": card.summary }))
+    }
+
     async fn analyst(
         &self,
         repo: &Path,
@@ -2261,6 +2342,7 @@ impl Supervisor {
                     ok = done.or(ok);
                     self.emit(&id, ev);
                 }
+                self.keep_shots(&id, &v);
             }
             let status = match status {
                 Some(s) => s,
@@ -3217,6 +3299,8 @@ struct Prepared {
     tools: Vec<String>,
     max_turns: u32,
     model: Option<String>,
+    /// The repository turned the headless browser on (`[run] browser`).
+    browser: bool,
     /// The card's images, sent with the briefing.
     images: Vec<(&'static str, Vec<u8>)>,
     /// The same branch in the project's related repositories.
@@ -3439,7 +3523,17 @@ fn prepare(
         tools,
         max_turns: r.flow.run.max_turns,
         model: r.flow.run.model.clone(),
+        browser: r.flow.run.browser,
     })
+}
+
+/// Playwright's MCP server, pinned, headless and with a throwaway profile: the agent's browser
+/// when the repository turns it on. Its tools are `mcp__browser__*`.
+const BROWSER_MCP: &str = "@playwright/mcp@0.0.84";
+const BROWSER_TOOLS: &str = "mcp__browser";
+
+fn browser_server() -> Value {
+    serde_json::json!({ "command": "npx", "args": ["-y", BROWSER_MCP, "--headless", "--isolated"] })
 }
 
 fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Result<()> {

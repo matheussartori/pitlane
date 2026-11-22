@@ -324,6 +324,9 @@ function Agents(props: { repo: string | null; repoName: string }) {
                 <Row label="Map of where to look" help="Each run’s first message lists the files and symbols most likely involved, from the repository’s index." for="f-brief">
                   <Toggle id="f-brief" label="Map of where to look" on={fl().run.brief} onChange={(v) => void set("run", "brief", v)} />
                 </Row>
+                <Row label="Browser and screenshots" help="Agents get a headless browser: they open what they change and take screenshots, shown in the run. Starts Chrome and fetches Playwright’s server with npx." for="f-browser">
+                  <Toggle id="f-browser" label="Browser and screenshots" on={fl().run.browser} onChange={(v) => void set("run", "browser", v)} />
+                </Row>
                 <Row label="Branch prefix" help="For the branch a card gets when it has none: feat/ gives feat/41-avatar-limit." for="f-prefix">
                   <input id="f-prefix" class="input input-mono set-input" value={fl().run.branch_prefix} onChange={(e) => void set("run", "branch_prefix", e.currentTarget.value.trim())} />
                 </Row>
