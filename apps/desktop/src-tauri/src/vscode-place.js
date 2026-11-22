@@ -46,6 +46,14 @@
       close();
       if (b.dataset.root !== here) location.href = "pitlane://place?root=" + encodeURIComponent(b.dataset.root);
     });
+    m.addEventListener("keydown", function (e) {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      var all = Array.prototype.slice.call(m.querySelectorAll("button[data-root]"));
+      var i = all.indexOf(document.activeElement);
+      var next = all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length];
+      if (next) next.focus();
+    });
     (document.querySelector(".monaco-workbench") || document.body).appendChild(m);
     var first = m.querySelector('[aria-current="true"]') || m.querySelector("button");
     if (first) first.focus();
@@ -59,15 +67,34 @@
       btn.id = "pitlane-place";
       btn.type = "button";
       btn.title = "Choose the folder: the repository or a lane's worktree";
+      // VS Code's title bar handles presses on itself (dragging, focus): keep ours from it.
+      btn.addEventListener("pointerdown", function (e) {
+        e.stopPropagation();
+      });
+      btn.addEventListener("mousedown", function (e) {
+        e.stopPropagation();
+      });
       btn.addEventListener("click", function (e) {
+        e.preventDefault();
         e.stopPropagation();
         open(btn);
       });
+      btn.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (!document.getElementById("pitlane-places")) open(btn);
+        }
+      });
       title.insertBefore(btn, title.firstChild);
     }
+    // Redrawn only when the place changes. (Comparing innerHTML never matched, the browser writes
+    // SVG back differently, so the button's insides were replaced on every mutation, forever: the
+    // press landed on a node gone by the release, and no click ever came.)
     var c = current();
-    var html = (c.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-name">' + esc(c.label) + "</span>" + icons.chev;
-    if (btn.innerHTML !== html) btn.innerHTML = html;
+    var key = c.kind + "\n" + c.root + "\n" + c.label;
+    if (btn.dataset.key === key) return;
+    btn.dataset.key = key;
+    btn.innerHTML = (c.kind === "lane" ? icons.branch : icons.folder) + '<span class="pl-name">' + esc(c.label) + "</span>" + icons.chev;
   }
   window.__pitlaneSetPlaces = function (p) {
     places = p || [];

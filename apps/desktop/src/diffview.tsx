@@ -5,6 +5,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { DiffFile, DiffHunk } from "./review";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
+import { DIFF_FILES_W, Grip } from "./layout";
 
 export type FileStatus = DiffFile["status"];
 
@@ -176,7 +177,8 @@ export function DiffViewer(props: {
       }}
       onClick={(e) => e.target === ref && props.onClose()}
     >
-      <div class="dv-layout">
+      <div class="dv-layout" style={{ "--side-w": `${DIFF_FILES_W.get()}px` }}>
+        <Grip size={DIFF_FILES_W} edge="right" label={t("Resize the file list")} style={{ right: "auto", left: "calc(var(--side-w) - 5px)" }} />
         <nav class="dv-files" aria-label={t("Changed files")}>
           <p class="dv-files-head">
             {props.title}

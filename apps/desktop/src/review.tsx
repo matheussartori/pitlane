@@ -7,6 +7,7 @@ import { Icon } from "./icons";
 import { plural, t } from "./i18n";
 import { clock, elapsed, money } from "./run";
 import { ErrorLine, Spinner, toast } from "./ui";
+import { Grip, REVIEW_SIDE_W } from "./layout";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -428,7 +429,8 @@ export function ReviewScreen(props: {
             </Show>
           </p>
 
-          <div class="review-body">
+          <div class="review-body" style={{ "--side-w": `${REVIEW_SIDE_W.get()}px` }}>
+            <Grip size={REVIEW_SIDE_W} edge="left" label={t("Resize the side column")} style={{ left: "auto", right: "calc(var(--side-w) + var(--space-lg) / 2 - 5px)" }} />
             <div class="review-main">
               <section class="walkthrough" aria-label={t("What the agent says it did")}>
                 <h2 class="side-title">{t("What changed")}</h2>

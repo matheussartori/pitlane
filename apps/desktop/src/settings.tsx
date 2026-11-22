@@ -9,6 +9,7 @@ import { prefs, setPrefs } from "./prefs";
 import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalSide, terminalPrefs } from "./terminals";
 import { t } from "./i18n";
 import { toast } from "./ui";
+import { resetLayout } from "./layout";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 const shortPath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
@@ -218,6 +219,20 @@ function General() {
             <option value="system">{t("System default")}</option>
             <For each={AGENT_LANGUAGES}>{([v, label]) => <option value={v}>{label}</option>}</For>
           </select>
+        </Row>
+      </Group>
+      <Group title={t("Layout")}>
+        <Row label={t("Panel sizes")} help={t("Sidebars, side columns and the agents’ share above the terminals keep the size you drag them to. This puts every divider back.")}>
+          <button
+            type="button"
+            class="btn"
+            onClick={() => {
+              resetLayout();
+              toast({ tone: "done", title: t("Panel sizes back to their defaults") });
+            }}
+          >
+            <Icon name="undo" small /> {t("Reset sizes")}
+          </button>
         </Row>
       </Group>
       <Group title="Notifications" note="Sent by macOS, only while Pitlane is not in front. The marks inside Pitlane stay either way.">

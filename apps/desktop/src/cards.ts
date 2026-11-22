@@ -53,7 +53,7 @@ export function place(card: Card, yard: Yard | null): Placement {
 
   if (open.length > 0)
     return { column: "needs", chip: "needs", icon: "needs", label: plural(open.length, "{n} question", "{n} questions"), why: open[0]!.text };
-  if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: t("Blocked"), why: firstLine(card.body) };
+  if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: t("Blocked"), why: about(card) };
   // Landed in the branch it was asked for (Run all's Into): done, whatever its own lane waits on.
   if (card.target && (card.state === "done" || card.state === "in-dev"))
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target }) };
@@ -77,7 +77,12 @@ export function place(card: Card, yard: Yard | null): Placement {
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.integration ?? "dev" }) };
   if (card.state === "running" || lane)
     return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? t("Running") : t("In a lane") };
-  return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]) };
+  return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]), why: about(card) };
+}
+
+/** What the card is about, for its tile: Claude's summary, else the spec's first line. */
+export function about(card: Card): string | undefined {
+  return card.summary?.trim() || firstLine(card.body);
 }
 
 function firstLine(body: string): string | undefined {

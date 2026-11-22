@@ -20,7 +20,8 @@ import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, RunAllSheet, ShipSheet, type RunAllChoice } from "./sheets";
-import { Toasts, dismissable, toast } from "./ui";
+import { Toasts, dismissable, installTips, toast } from "./ui";
+import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
 
 type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "terminal" | "settings";
@@ -681,6 +682,7 @@ export default function App() {
   }
 
   onMount(() => {
+    installTips();
     void startTerminals();
     void startAgents();
     // Boot without holding the listeners below: the first fetch can be slow or offline.
@@ -957,7 +959,7 @@ export default function App() {
 
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
       <div class="panel">
-      <div class="body" data-tower={towerHere() ? "" : undefined}>
+      <div class="body" data-tower={towerHere() ? "" : undefined} style={{ "--tower-w": `${TOWER_W.get()}px` }}>
         <main class="main" data-flush={(tab() === "terminal" || tab() === "code" || tab() === "settings") && !runView() && reviewView() == null ? "" : undefined}>
           <Show
             when={tab() !== "settings"}

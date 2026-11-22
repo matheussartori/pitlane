@@ -800,7 +800,11 @@ impl Supervisor {
                 .unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned())
         } else {
             fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
-            prep.briefing.clone()
+            format!(
+                "{}{}",
+                prep.briefing,
+                pit_core::language::reminder(&pit_core::language::agent_language(&self.cfg.home))
+            )
         };
         let line = if resuming {
             runs::claude_user_line(&first)
@@ -1829,17 +1833,18 @@ impl Supervisor {
             .choices(&r.root, &home_dir(), &self.cfg.home)?
             .into_iter()
             .find(|c| c.kind != accounts::Kind::ApiKey);
-        let system = format!(
-            "{}{}",
-            pit_core::describe::RULES,
-            pit_core::language::rule(&pit_core::language::agent_language(&self.cfg.home))
-        );
+        let language = pit_core::language::agent_language(&self.cfg.home);
+        let system = format!("{}{}", pit_core::describe::RULES, pit_core::language::rule(&language));
         let mut cmd = Command::new(&self.cfg.claude_bin);
         cmd.args(["-p", "--output-format", "json", "--model", pit_core::describe::MODEL])
             .args(["--setting-sources", "project,local", "--tools", "", "--max-turns", "2"])
             .args(["--append-system-prompt", &system])
             .args(["--json-schema", &pit_core::describe::schema(title).to_string()])
-            .arg(pit_core::describe::prompt(&card, title))
+            .arg(format!(
+                "{}{}",
+                pit_core::describe::prompt(&card, title),
+                pit_core::language::reminder(&language)
+            ))
             .current_dir(&r.root)
             .env_remove("CLAUDECODE")
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
@@ -2290,7 +2295,14 @@ impl Supervisor {
                 .write_all(
                     format!(
                         "{}\n",
-                        runs::claude_user_line_with(&side.prompt, &side.images)
+                        runs::claude_user_line_with(
+                            &format!(
+                                "{}{}",
+                                side.prompt,
+                                pit_core::language::reminder(&pit_core::language::agent_language(&self.cfg.home))
+                            ),
+                            &side.images
+                        )
                     )
                     .as_bytes(),
                 )

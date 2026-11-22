@@ -6,6 +6,7 @@ pub mod actions;
 pub mod analyze;
 pub mod brief;
 pub mod cards;
+pub mod describe;
 pub mod flow;
 pub mod index;
 pub mod language;

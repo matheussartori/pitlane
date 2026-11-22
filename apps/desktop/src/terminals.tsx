@@ -19,6 +19,15 @@ import { openInCode } from "./code";
 import { t } from "./i18n";
 import { Icon } from "./icons";
 import { dismissable, toast } from "./ui";
+import { Grip, size } from "./layout";
+
+/** The sidebar's width, and how much of it the agents take above the terminals (most of it). */
+const SIDE_W = size("terms.side", { def: 260, min: 180, max: () => Math.round(window.innerWidth * 0.45) });
+const AGENTS_H = size("terms.agents", {
+  def: () => Math.round((window.innerHeight - 38) * 0.68),
+  min: 80,
+  max: () => window.innerHeight - 38 - 120,
+});
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -1334,11 +1343,21 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
   };
 
   return (
-    <div class="terms" data-side={st.side} data-empty={st.tabs.length === 0 && agentGroups().length === 0 ? "" : undefined}>
+    <div
+      class="terms"
+      data-side={st.side}
+      data-empty={st.tabs.length === 0 && agentGroups().length === 0 ? "" : undefined}
+      style={st.side === "left" ? { "--side-w": `${SIDE_W.get()}px` } : undefined}
+    >
       <Show when={st.tabs.length > 0 || agentGroups().length > 0}>
         <div class="terms-tabs" data-agents={agentGroups().length > 0 ? "" : undefined}>
-          <div class="ag-side">
-            <AgentList compact={st.side === "top"} />
+          <div class="ag-side-wrap" style={st.side === "left" && st.tabs.length > 0 ? { height: `${AGENTS_H.get()}px` } : undefined}>
+            <div class="ag-side">
+              <AgentList compact={st.side === "top"} />
+            </div>
+            <Show when={st.side === "left" && st.tabs.length > 0}>
+              <Grip size={AGENTS_H} edge="bottom" label={t("Resize agents and terminals")} />
+            </Show>
           </div>
           <div class="terms-head">
             <Show when={st.side === "left"}>
@@ -1377,6 +1396,9 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
           <div class="terms-list" role="tablist" aria-label={t("Terminals")} aria-orientation={st.side === "left" ? "vertical" : "horizontal"} data-tablist data-drop={drag()?.over?.kind === "list" ? "" : undefined}>
             <For each={st.tabs}>{(t, i) => <TabRow tab={t} index={i()} />}</For>
           </div>
+          <Show when={st.side === "left"}>
+            <Grip size={SIDE_W} edge="right" label={t("Resize the sidebar")} />
+          </Show>
         </div>
       </Show>
       <div class="terms-stage">

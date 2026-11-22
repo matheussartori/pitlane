@@ -11,6 +11,7 @@ import { Icon, type IconName } from "./icons";
 import type { ChipState } from "./lane";
 import { locale, plural, t, tx } from "./i18n";
 import { ErrorLine, Spinner, toast } from "./ui";
+import { Grip, RUN_SIDE_W } from "./layout";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -62,6 +63,22 @@ export function RunScreen(props: {
   const [side, setSide] = createSignal<"run" | "card">("run");
   const [viewing, setViewing] = createSignal<string | null>(null);
   let list: HTMLDivElement | undefined;
+
+  // Escape closes the diff viewer when one is open, else the screen (like Back). Not while a
+  // dialog or menu takes it, nor while you type in the reply box.
+  const onEscape = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+    if (document.querySelector("dialog[open]")) return;
+    const el = e.target as HTMLElement | null;
+    // A terminal's Escape belongs to what runs in it (vim, Claude Code).
+    if (el?.closest(".xterm")) return;
+    if (el && (el.isContentEditable || ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.value))) return;
+    e.preventDefault();
+    if (viewing()) setViewing(null);
+    else props.onBack();
+  };
+  window.addEventListener("keydown", onEscape);
+  onCleanup(() => window.removeEventListener("keydown", onEscape));
   let stick = true;
 
   const add = (pairs: [number, RunEvent][]) =>
@@ -312,7 +329,8 @@ export function RunScreen(props: {
             <ErrorLine>{error()}</ErrorLine>
           </Show>
 
-          <div class="run-body" data-live={isLive(m().state) ? "" : undefined}>
+          <div class="run-body" data-live={isLive(m().state) ? "" : undefined} style={{ "--side-w": `${RUN_SIDE_W.get()}px` }}>
+            <Grip size={RUN_SIDE_W} edge="left" label={t("Resize the side column")} style={{ left: "auto", right: "calc(var(--side-w) + var(--space-lg) / 2 - 5px)" }} />
             <div
               class="timeline ag-log"
               ref={list}

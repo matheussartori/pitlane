@@ -12,6 +12,7 @@ import { refreshAgents } from "./agents";
 import { DecisionItem, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+import { CARD_SIDE_W, Grip } from "./layout";
 import { locale, plural, t } from "./i18n";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -966,6 +967,7 @@ export function CardSheet(props: {
     >
       <div
         class="cs-grid"
+        style={{ "--side-w": `${CARD_SIDE_W.get()}px` }}
         onPaste={(e) => {
           const files = imagesIn(e.clipboardData);
           if (!files.length) return;
@@ -1097,6 +1099,7 @@ export function CardSheet(props: {
           </Show>
         </div>
 
+        <Grip size={CARD_SIDE_W} edge="left" label={t("Resize the side column")} style={{ left: "auto", right: "calc(var(--side-w) - 5px)" }} />
         <aside class="cs-side">
           <div class="field">
             <label class="field-label" for="card-state">
@@ -1265,7 +1268,7 @@ export function NewCardSheet(props: { repo: string; onDone: (id: number) => void
             value={body()}
             onInput={(e) => setBody(e.currentTarget.value)}
           />
-          <span class="field-help">{t("Saved to this repository's board in ~/.pitlane, the same in every branch and worktree.")}</span>
+          <span class="field-help">{t("Claude (Sonnet) turns your title and spec into the card's title and a short summary for the board, in a few seconds. Saved to this repository's board in ~/.pitlane.")}</span>
         </div>
         <div class="field">
           <div class="field-head">

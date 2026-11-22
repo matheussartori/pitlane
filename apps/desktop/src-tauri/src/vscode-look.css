@@ -166,6 +166,8 @@
   background: transparent;
   -webkit-app-region: no-drag;
 }
+#pitlane-place { position: relative; z-index: 10; pointer-events: auto; }
+#pitlane-place > * { pointer-events: none; }
 #pitlane-place:hover { background: var(--pl-active); }
 #pitlane-place:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: -1px; }
 #pitlane-place .pl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

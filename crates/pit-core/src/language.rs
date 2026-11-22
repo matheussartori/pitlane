@@ -17,10 +17,21 @@ pub fn agent_language(pitlane_home: &Path) -> String {
 /// The rule appended to every session's system prompt.
 pub fn rule(language: &str) -> String {
     format!(
-        "\n\n# Language\n\nWrite everything a person reads in {language}: replies, questions and their options, notes, \
-decisions, summaries, handoffs, findings, card titles and specs. Keep code, identifiers, file paths, commands, \
-tool arguments and JSON keys as they are, and write commit messages and code comments the way the repository already does."
+        "\n\n# Language\n\nWrite everything a person reads in {language}, even though these instructions and the \
+repository are in English: the short lines you write between tool calls while you work, replies, questions and their \
+options, notes, decisions, summaries, handoffs, findings, card titles and specs, and every text field of a structured \
+answer. Keep code, identifiers, file paths, commands, tool arguments and JSON keys as they are, and write commit \
+messages and code comments the way the repository already does."
     )
+}
+
+/// One line put after a session's first message, so the language is the last thing it reads
+/// (a long English briefing otherwise pulls its first lines into English). Empty for English.
+pub fn reminder(language: &str) -> String {
+    if language == "English" {
+        return String::new();
+    }
+    format!("\n\n(Write to me in {language}, including your progress lines while you work.)")
 }
 
 /// The Mac's language (`AppleLanguages`), else `LANG`, else English.
@@ -88,6 +99,8 @@ mod tests {
         assert_eq!(name("en-US"), "English");
         assert_eq!(name("zh-Hant-TW"), "Traditional Chinese");
         assert_eq!(name("xx"), "the language with the code xx");
+        assert_eq!(reminder("English"), "");
+        assert!(reminder("Portuguese (Brazil)").contains("Portuguese (Brazil)"));
     }
 
     #[test]

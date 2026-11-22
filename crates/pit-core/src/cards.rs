@@ -152,6 +152,10 @@ pub struct Card {
     /// analysis get them with the spec.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
+    /// A few lines on what the card is about, written by Claude (Sonnet) when the card is made
+    /// or its spec changes; the board shows it instead of the spec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     pub created: String,
     pub updated: String,
     /// Kept last: TOML wants tables after plain values.
@@ -554,6 +558,7 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         after: Vec::new(),
         areas: Vec::new(),
         images: Vec::new(),
+        summary: None,
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
@@ -577,6 +582,10 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
         card.title = t.trim().to_owned();
     }
     if let Some(b) = patch.body {
+        // The summary told the old spec: the board shows the spec until a new one is written.
+        if b.trim() != card.body.trim() {
+            card.summary = None;
+        }
         card.body = b;
     }
     if let Some(s) = patch.state {
@@ -626,6 +635,24 @@ pub fn mark_analyzed(repo: &Repo, id: u32, after: Vec<u32>, areas: Vec<String>) 
     card.analyzed = Some(timestamp(now_secs()));
     card.after = after.into_iter().filter(|a| *a != id).collect();
     card.areas = areas.into_iter().map(|a| a.trim().to_lowercase()).filter(|a| !a.is_empty()).collect();
+    write(&card)?;
+    Ok(card)
+}
+
+/// Writes what Claude made of a new or changed card: the summary the board shows and, when
+/// given, the title. Nothing changes when the spec moved on since Claude read it (`body` is the
+/// spec it read): a newer description will come for it.
+pub fn describe(repo: &Repo, id: u32, body: &str, title: Option<&str>, summary: &str) -> Result<Card> {
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    if card.body.trim() != body.trim() {
+        return Ok(card);
+    }
+    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        card.title = t.to_owned();
+    }
+    let summary = summary.trim();
+    card.summary = (!summary.is_empty()).then(|| summary.to_owned());
     write(&card)?;
     Ok(card)
 }
@@ -982,6 +1009,7 @@ mod tests {
             after: Vec::new(),
             areas: Vec::new(),
             images: Vec::new(),
+            summary: None,
             created: "2026-11-20T10:00:00Z".into(),
             updated: "2026-11-20T10:00:00Z".into(),
             questions: vec![Question {

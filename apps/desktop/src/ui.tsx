@@ -11,7 +11,11 @@ export function dismissable(box: () => HTMLElement | undefined, open: () => bool
     if (open() && b && !b.contains(e.target as Node)) close();
   };
   const onKey = (e: KeyboardEvent) => {
-    if (open() && e.key === "Escape") close();
+    // The Escape is the menu's: what is behind it (a screen that closes on Escape) never sees it.
+    if (open() && e.key === "Escape") {
+      e.preventDefault();
+      close();
+    }
   };
   const onBlur = () => open() && close();
   document.addEventListener("pointerdown", onDown, true);
@@ -26,6 +30,52 @@ export function dismissable(box: () => HTMLElement | undefined, open: () => bool
 
 export function Spinner() {
   return <span class="spinner" role="status" aria-label={t("Working")} />;
+}
+
+/** Tooltips for any element with `data-tip`: one floating label, placed in the window (never
+ *  clipped by a scrolling list), after a short hover or at once on keyboard focus. Install once. */
+let tipsInstalled = false;
+export function installTips() {
+  if (tipsInstalled) return;
+  tipsInstalled = true;
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  tip.setAttribute("role", "tooltip");
+  document.body.append(tip);
+  let timer = 0;
+  let on: HTMLElement | null = null;
+  const show = (el: HTMLElement) => {
+    const text = el.dataset.tip;
+    if (!text || !el.isConnected) return;
+    tip.textContent = text;
+    tip.dataset.on = "";
+    const r = el.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    const below = r.bottom + 6 + h <= window.innerHeight;
+    const x = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    tip.style.left = `${x}px`;
+    tip.style.top = `${below ? r.bottom + 6 : r.top - 6 - h}px`;
+  };
+  const hide = () => {
+    window.clearTimeout(timer);
+    on = null;
+    delete tip.dataset.on;
+  };
+  document.addEventListener("pointerover", (e) => {
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]") ?? null;
+    if (el === on) return;
+    hide();
+    if (!el) return;
+    on = el;
+    timer = window.setTimeout(() => on === el && show(el), 350);
+  });
+  document.addEventListener("focusin", (e) => {
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>("[data-tip]") ?? null;
+    hide();
+    if (el?.matches(":focus-visible")) (on = el), show(el);
+  });
+  for (const ev of ["pointerdown", "scroll", "blur", "focusout"] as const) window.addEventListener(ev, hide, true);
 }
 
 /** Native <dialog>: Escape and focus trapping come free; a click outside closes it too. Unmount

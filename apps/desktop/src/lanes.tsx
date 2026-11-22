@@ -6,6 +6,7 @@ import { clock, elapsed } from "./run";
 import { Icon } from "./icons";
 import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, syncView, track, worktreeName, type Group } from "./lane";
 import { ErrorLine, Spinner } from "./ui";
+import { Grip, TOWER_W } from "./layout";
 import { lang, plural, t, tx } from "./i18n";
 
 export interface LanesProps {
@@ -483,6 +484,7 @@ export function Tower(props: {
     ).length ?? 0;
   return (
     <aside class="tower-pane" aria-label={t("Tower")}>
+      <Grip size={TOWER_W} edge="left" label={t("Resize the Tower")} />
       <div class="panel-head">
         <span class="panel-title">{t("Tower")}</span>
         <span class="panel-meta">{props.yard ? plural(props.yard.lanes.length, "{n} lane", "{n} lanes") : ""}</span>

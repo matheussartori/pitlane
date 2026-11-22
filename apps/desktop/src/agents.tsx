@@ -9,6 +9,7 @@ import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
 import { plural, t, tx } from "./i18n";
 import { toast } from "./ui";
+import { registerSize } from "./layout";
 import { ApprovalBlock } from "./approvals";
 import { Prose } from "./prose";
 
@@ -936,6 +937,7 @@ const DOCK_H_KEY = "pitlane.agents.dock.h";
 const DOCK_H = { min: 64, def: 132 };
 const dockMax = () => Math.round(window.innerHeight * 0.6);
 const [dockH, setDockH] = createSignal(readDockH());
+registerSize(DOCK_H_KEY, () => setDockH(DOCK_H.def));
 function readDockH(): number {
   try {
     const v = Number(localStorage.getItem(DOCK_H_KEY));

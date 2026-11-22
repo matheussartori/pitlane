@@ -151,4 +151,15 @@ export default {
   "An API key always asks first.": "Uma chave de API sempre pergunta antes.",
   "Add an account": "Adicionar uma conta",
   "Copy": "Copiar",
+  // layout.tsx and the Layout group
+  "Panel sizes": "Tamanho dos painéis",
+  "Sidebars, side columns and the agents’ share above the terminals keep the size you drag them to. This puts every divider back.": "Barras laterais, colunas e o espaço dos agentes acima dos terminais guardam o tamanho que você arrastar. Isto volta todas as divisões ao padrão.",
+  "Reset sizes": "Restaurar tamanhos",
+  "Panel sizes back to their defaults": "Tamanhos dos painéis de volta ao padrão",
+  "Drag to resize · double click for the default": "Arraste para redimensionar · clique duplo volta ao padrão",
+  "Resize agents and terminals": "Redimensionar agentes e terminais",
+  "Resize the sidebar": "Redimensionar a barra lateral",
+  "Resize the Tower": "Redimensionar a Torre",
+  "Resize the side column": "Redimensionar a coluna lateral",
+  "Resize the file list": "Redimensionar a lista de arquivos",
 } as Record<string, string>;

@@ -166,6 +166,7 @@ export default {
   "analysed {when}": "analisado {when}",
   "Create card": "Criar card",
   "One line, in your words": "Uma linha, com suas palavras",
+  "Claude (Sonnet) turns your title and spec into the card's title and a short summary for the board, in a few seconds. Saved to this repository's board in ~/.pitlane.": "O Claude (Sonnet) junta seu título e a spec no título do card e num resumo curto para o quadro, em alguns segundos. Salvo no quadro deste repositório em ~/.pitlane.",
   "Optional: goal, acceptance criteria, how to verify": "Opcional: objetivo, critérios de aceite, como verificar",
   "Saved to this repository's board in ~/.pitlane, the same in every branch and worktree.": "Salvo no quadro deste repositório em ~/.pitlane, o mesmo em todo branch e worktree.",
   "Images": "Imagens",
