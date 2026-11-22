@@ -191,7 +191,7 @@ body { background: var(--color-frame); }
 .board-scroll > .board-screen > .board { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); padding-inline: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); overflow: hidden; } /* room for the columns' scroll gutters, so the board itself never scrolls sideways */
 .board .col { display: flex; flex-direction: column; min-height: 0; gap: 0; padding-bottom: 0; }
 .board .col-head { flex: none; position: relative; z-index: 1; }
-.col-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow-x: hidden; gap: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); padding: var(--space-3xs) var(--space-xs) var(--space-xs); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--color-rule-strong) transparent; scrollbar-gutter: stable; }
+.col-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow-x: hidden; gap: var(--space-xs); margin-inline: calc(-1 * var(--space-xs)); padding: var(--space-xs) var(--space-xs) var(--space-md); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--color-rule-strong) transparent; scrollbar-gutter: stable; }
 /* A rule under the head once the column has scrolled, so cards slide under it, not into it. */
 .col-head:has(+ .col-body[data-scrolled]) { box-shadow: 0 1px 0 var(--color-rule-strong); }
 /* Short screens: back to one page scroll, columns at their natural height. */
@@ -808,6 +808,34 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-input[data-off] .ag-prompt { color: var(--color-muted); }
 .ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) 12.5px/1 var(--font-mono); outline: none; }
 .ag-field::placeholder { color: var(--color-muted); }
+.ag-pane { grid-template-rows: auto minmax(0, 1fr) auto auto; }
+.ag-input { position: relative; }
+/* The model and effort, always in sight under the prompt, as Claude Code's status line. */
+.ag-status { display: flex; align-items: center; gap: var(--space-2xs, 4px); min-width: 0; padding: 0 var(--space-sm) var(--space-xs); background: var(--color-paper); }
+.ag-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding-inline: 8px; border: 0; border-radius: var(--radius-sm, 6px); background: none; color: var(--color-ink-2); font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); white-space: nowrap; cursor: pointer; }
+.ag-chip:hover:not(:disabled) { background: var(--color-paper-sunk); color: var(--color-ink); }
+.ag-chip:disabled { cursor: default; color: var(--color-muted); }
+.ag-chip-model { color: var(--color-ink); font-weight: var(--weight-strong); }
+.ag-chip-mark { color: var(--color-accent-text); }
+.ag-status[data-off] .ag-chip-model, .ag-status[data-off] .ag-chip-mark { color: var(--color-muted); }
+.ag-effort { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
+.ag-effort i { width: 3px; border-radius: 1px; background: var(--color-rule); }
+.ag-effort i:nth-child(1) { height: 3px; } .ag-effort i:nth-child(2) { height: 5px; } .ag-effort i:nth-child(3) { height: 7px; } .ag-effort i:nth-child(4) { height: 8.5px; } .ag-effort i:nth-child(5) { height: 10px; }
+.ag-effort[data-level="low"] i:nth-child(-n+1),
+.ag-effort[data-level="medium"] i:nth-child(-n+2),
+.ag-effort[data-level="default"] i:nth-child(-n+2),
+.ag-effort[data-level="high"] i:nth-child(-n+3),
+.ag-effort[data-level="xhigh"] i:nth-child(-n+4),
+.ag-effort[data-level="max"] i { background: var(--color-accent-text); }
+.ag-status[data-off] .ag-effort i { background: var(--color-rule); }
+.ag-status-hint { font: var(--text-xs)/1 var(--font-body); color: var(--color-muted); white-space: nowrap; }
+/* Slash commands open above the prompt, like Claude Code's. */
+.ag-suggest { position: absolute; left: var(--space-sm); right: var(--space-sm); bottom: calc(100% + 4px); z-index: 5; display: grid; padding: 4px; border: 1px solid var(--color-rule); border-radius: var(--radius-md, 8px); background: var(--color-paper); box-shadow: var(--shadow-pop, 0 8px 24px rgb(0 0 0 / 0.18)); }
+.ag-suggest-item { display: flex; align-items: baseline; gap: var(--space-sm); min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--radius-sm, 6px); background: none; text-align: left; color: var(--color-ink-2); cursor: pointer; }
+.ag-suggest-item[aria-selected="true"] { background: var(--color-paper-sunk); color: var(--color-ink); }
+.ag-suggest-label { flex-shrink: 0; min-width: 12ch; font: var(--weight-strong) 12.5px/1.2 var(--font-mono); color: var(--color-accent-text); }
+.ag-suggest-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); }
+.ag-suggest-on { margin-left: auto; flex-shrink: 0; font-size: var(--text-xs); color: var(--color-muted); }
 
 /* The Board with its dock: the cards scroll above, the dock is a pane of its own at the foot. */
 .main:has(.board-pane) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
