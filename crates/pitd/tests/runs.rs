@@ -13,7 +13,8 @@ use pitd::{Config, Supervisor};
 use tempfile::TempDir;
 
 /// One result per user message, like the real CLI; exits when stdin closes.
-/// FAKE_MODE=slow waits on SIGINT before answering; FAKE_MODE=ask ends blocked with a question.
+/// FAKE_MODE=slow waits on SIGINT before answering; FAKE_MODE=ask ends blocked with a question;
+/// FAKE_MODE=ask-done finishes and asks anyway.
 const FAKE: &str = r#"#!/bin/bash
 # The judge, a side session: one prompt line on stdin, one result. FAKE_VERDICT picks the verdict.
 if [[ " $* " == *" --permission-prompts none "* ]]; then
@@ -35,6 +36,8 @@ while IFS= read -r line; do
     sleep 0.5
     if [ "$FAKE_MODE" = "ask" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"blocked","summary":"Need a limit.","questions":[{"text":"Which limit?","options":["256 KB","1 MB"],"recommended":0}]}}'
+    elif [ "$FAKE_MODE" = "ask-done" ]; then
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"done","summary":"Did it.","questions":[{"text":"Also the studio?","options":["No","Yes"],"recommended":0}]}}'
     else
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":1200,"total_cost_usd":0.05,"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":3},"structured_output":{"status":"done","summary":"Did it."}}'
     fi
@@ -191,6 +194,31 @@ async fn a_blocked_handoff_asks_in_the_inbox() {
     assert_eq!(open, 1, "the agent's question is in the Inbox");
     // And a card with open questions does not start.
     assert!(s.start(fx.repo.clone(), id, None, Default::default()).unwrap_err().to_string().contains("open question"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_finished_run_does_not_ask() {
+    let fx = fx();
+    let id = card(&fx, "Loading screen");
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: {
+            let wrapper = fx.fake.with_file_name("fake-ask-done");
+            fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=ask-done exec {} \"$@\"\n", fx.fake.display())).unwrap();
+            Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+            wrapper.to_string_lossy().into_owned()
+        },
+        pit_bin: None,
+    });
+    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let end = wait_end(&s, &meta.id).await;
+    assert_eq!(end.state, RunState::Done);
+    let (state, open) = card_state(&fx, id);
+    assert_eq!(state, CardState::Review);
+    assert_eq!(open, 0, "nothing lands in the Inbox after Run");
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::get(&r, id).unwrap();
+    assert!(c.notes.iter().any(|n| n.text.contains("Decided without asking: Also the studio? Went with: No")));
 }
 
 #[tokio::test(flavor = "multi_thread")]

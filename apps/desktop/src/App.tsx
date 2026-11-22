@@ -8,7 +8,7 @@ import { LedgerView } from "./ledger";
 import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
 import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, holdNote, planNote } from "./board";
-import { openQuestions } from "./cards";
+import { keepUnchanged, openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
@@ -159,7 +159,7 @@ export default function App() {
     try {
       const r = await api.cards(path);
       if (gen !== cardsGen || path !== repo()) return;
-      setCards(r.cards);
+      setCards((old) => keepUnchanged(old, r.cards));
       setProblems(r.problems);
     } catch (e) {
       if (gen === cardsGen) setProblems([msg(e)]);

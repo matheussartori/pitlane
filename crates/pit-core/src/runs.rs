@@ -478,7 +478,7 @@ pub fn handoff_schema() -> Value {
             "tests": { "type": "object", "properties": {
                 "command": { "type": "string" }, "passed": { "type": "boolean" }, "notes": { "type": "string" } } },
             "next_steps": { "type": "array", "items": { "type": "string" } },
-            "questions": { "type": "array", "description": "Only when blocked: every question at once, each with options and the one you recommend.",
+            "questions": { "type": "array", "description": "Only with status blocked, and only for a big call the spec and decisions do not settle: every such question at once, each with options and the one you recommend. Anything smaller you decide and record with the note tool.",
                 "items": { "type": "object", "properties": {
                     "text": { "type": "string" },
                     "options": { "type": "array", "items": { "type": "string" } },
@@ -492,8 +492,14 @@ pub fn handoff_schema() -> Value {
 pub const RULES: &str = "You are running inside Pitlane, on one card, in a git worktree made for it. \
 Work only inside the current directory. Commit your work on the current branch with clear messages; \
 never push, never switch branches, never merge. Read the card's spec and decisions before you start. \
-If a decision is missing and you cannot proceed safely, stop and report status \"blocked\" with all your \
-questions at once, each with options and the one you recommend. As you learn something the next session on this \
+Nobody is watching this run: the person answered every question during the analysis, pressed Run and walked away, \
+so never stop to ask. Decide how to do the work yourself (worktrees, branches, commits, tests, file layout, naming, \
+what to measure, small calls on scope) from the spec, the decisions and the code: take the option you would have \
+recommended and record the choice and why with the note tool, so the review can see it. Report status \"blocked\" \
+only for a big call the spec and decisions do not settle and that would be costly to undo (a different product \
+behaviour, deleting or migrating data, a public API or schema change, spending money); finish everything that does \
+not depend on it first, then put every such question in the handoff, each with options and the one you recommend. \
+As you learn something the next session on this \
 card would need (where the code is, a choice you made and why, what is left), add it with the note tool, short and \
 one finding per note. End every run with the structured handoff.";
 

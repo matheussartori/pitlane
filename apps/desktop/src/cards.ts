@@ -112,8 +112,10 @@ export interface OpenQuestion {
 
 export function openQuestions(cards: Card[]): OpenQuestion[] {
   return cards.flatMap((card) => {
+    const cached = asked.get(card);
+    if (cached) return cached;
     const open = (card.questions ?? []).filter((q) => q.answer == null);
-    return open.map((q, i) => ({
+    const qs = open.map((q, i) => ({
       card,
       id: q.id,
       text: q.text,
@@ -122,5 +124,22 @@ export function openQuestions(cards: Card[]): OpenQuestion[] {
       index: i + 1,
       of: open.length,
     }));
+    asked.set(card, qs);
+    return qs;
   });
+}
+
+// One list per card object: with keepUnchanged, a re-read that changed nothing hands the lists
+// the same questions, so they keep their DOM (and whatever is being typed into it).
+const asked = new WeakMap<Card, OpenQuestion[]>();
+
+/** The fresh cards, reusing each old object whose content did not change. */
+export function keepUnchanged(old: Card[] | null, fresh: Card[]): Card[] {
+  if (!old) return fresh;
+  const before = new Map(old.map((c) => [c.id, c]));
+  const next = fresh.map((c) => {
+    const o = before.get(c.id);
+    return o && JSON.stringify(o) === JSON.stringify(c) ? o : c;
+  });
+  return next.length === old.length && next.every((c, i) => c === old[i]) ? old : next;
 }

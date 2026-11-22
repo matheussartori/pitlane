@@ -531,6 +531,8 @@ impl Supervisor {
         cmd.args(["--setting-sources", "project,local", "--permission-mode", &mode_for(&repo)])
             .arg("--allowedTools")
             .arg(prep.tools.join(","))
+            // Nobody is watching a run: it decides, notes the choice, or ends blocked.
+            .args(["--disallowedTools", "AskUserQuestion"])
             .args(["--max-turns", &prep.max_turns.to_string()])
             .arg("--append-system-prompt")
             .arg(runs::RULES)
@@ -1121,6 +1123,8 @@ impl Supervisor {
             mode_for(&r.root),
             "--allowedTools".into(),
             tools.join(","),
+            "--disallowedTools".into(),
+            "AskUserQuestion".into(),
             "--max-turns".into(),
             "80".into(),
         ];
@@ -1969,8 +1973,15 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
     }
     if let Some(qs) = m.handoff.as_ref().and_then(|h| h.get("questions")).and_then(Value::as_array) {
         let qs: Vec<NewQuestion> = qs.iter().filter_map(|q| serde_json::from_value(q.clone()).ok()).collect();
-        if !qs.is_empty() {
-            cards::ask(&r, m.card, qs)?;
+        if status == Some("blocked") {
+            if !qs.is_empty() {
+                cards::ask(&r, m.card, qs)?;
+            }
+        } else {
+            // A run that finished does not get to ask: what it would have asked is on the card, for the review.
+            for q in qs {
+                let _ = cards::note(&r, m.card, "claude", &unasked(&q));
+            }
         }
     }
     let next = match (m.state, status) {
@@ -1981,6 +1992,15 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
     };
     cards::update(&r, m.card, CardPatch { state: Some(next), ..Default::default() })?;
     Ok(())
+}
+
+/// A question a finished run raised anyway, as a note: what it asked and what it went with.
+fn unasked(q: &NewQuestion) -> String {
+    let went = q.recommended.and_then(|i| q.options.get(i));
+    match went {
+        Some(o) => format!("Decided without asking: {} Went with: {o}", q.text.trim()),
+        None => format!("Left for the review: {}", q.text.trim()),
+    }
 }
 
 fn plural(n: usize, word: &str) -> String {

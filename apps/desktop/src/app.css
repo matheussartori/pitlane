@@ -239,7 +239,8 @@ body { background: var(--color-frame); }
 .card-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .option:disabled { opacity: 0.55; cursor: not-allowed; }
 .option:active { transform: scale(0.99); }
-.other { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); margin-top: var(--space-2xs); }
+.other { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-2xs); }
+.other > .input { flex: 1; min-width: 0; }
 .install { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 .install code { font: var(--weight-regular) var(--text-sm)/1 var(--font-mono); color: var(--color-ink); background: var(--color-paper-sunk); box-shadow: var(--ring); border-radius: var(--radius-md); padding: var(--space-xs) var(--space-sm); }
 
@@ -409,6 +410,9 @@ dialog.sheet-wide { width: min(720px, calc(100% - 48px)); }
 .card-lane-track { display: flex; align-items: center; gap: var(--space-sm); }
 .textarea { height: auto; min-height: 7lh; padding-block: var(--space-xs); line-height: 1.5; resize: vertical; }
 .decisions { margin: 0; display: grid; }
+.decision-change { margin-left: auto; min-height: 0; padding-block: 0; font-size: var(--text-sm); color: var(--color-muted); }
+.decision-change:hover, .decision-change[aria-expanded="true"] { color: var(--color-ink); }
+.decision > .options { flex-basis: 100%; margin-top: var(--space-2xs); }
 .decisions > div { display: grid; gap: var(--space-3xs); padding-block: var(--space-xs); border-top: 1px solid var(--color-rule); }
 .decisions dt { font-weight: var(--weight-strong); color: var(--color-ink); }
 .decisions dd { margin: 0; display: flex; align-items: center; gap: var(--space-xs); color: var(--color-ink-2); }

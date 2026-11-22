@@ -6,7 +6,7 @@ import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, rev
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { refreshAgents } from "./agents";
-import { QuestionBlock } from "./inbox";
+import { DecisionItem, QuestionBlock } from "./inbox";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 
@@ -1084,17 +1084,7 @@ export function CardSheet(props: {
               <h3 class="field-label">Decisions</h3>
               <dl class="decisions">
                 <For each={answered()}>
-                  {(q) => (
-                    <div>
-                      <dt>{q.text}</dt>
-                      <dd>
-                        {q.answer}
-                        <Show when={q.decision}>
-                          <span class="tag">{q.decision}</span>
-                        </Show>
-                      </dd>
-                    </div>
-                  )}
+                  {(q) => <DecisionItem repo={props.repo} card={props.card} q={q} onChanged={props.onChanged} />}
                 </For>
               </dl>
             </div>

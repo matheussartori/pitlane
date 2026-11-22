@@ -117,6 +117,23 @@ fn the_interview_becomes_decisions() {
     assert!(decisions.contains("## D-01: Per IP or per account?\n\nPer account\n"));
     assert!(decisions.contains("From card #1 (Rate limit the invites endpoint)"));
     assert!(decisions.contains("## D-03: Log refusals?"));
+
+    // Choosing again rewrites the same decision in place; the others stay as they were.
+    let again = cards::reanswer(&r, c.id, 1, "1").unwrap();
+    assert_eq!(again.decision, "D-01");
+    assert_eq!(again.card.questions[0].answer.as_deref(), Some("Per IP"));
+    assert!(cards::reanswer(&r, c.id, 1, " ").is_err());
+    let decisions = fs::read_to_string(cards::decisions_path(&r)).unwrap();
+    assert!(decisions.contains("## D-01: Per IP or per account?\n\nPer IP\n"));
+    assert!(decisions.contains("changed from: Per account"));
+    assert!(!decisions.contains("\n\nPer account\n"));
+    assert_eq!(decisions.matches("## D-01").count(), 1);
+    assert!(decisions.contains("## D-02: What window?\n\n1 hour\n"));
+    assert!(decisions.contains("## D-03: Log refusals?\n\nYes, at info level\n"));
+    // The last entry can change too.
+    cards::reanswer(&r, c.id, 3, "No").unwrap();
+    let decisions = fs::read_to_string(cards::decisions_path(&r)).unwrap();
+    assert!(decisions.contains("## D-03: Log refusals?\n\nNo\n") && decisions.ends_with("changed from: Yes, at info level\n"));
 }
 
 #[test]

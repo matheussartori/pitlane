@@ -2,6 +2,7 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { api, type Approval, type Card, type RunMeta } from "./api";
 import { ApprovalBlock } from "./approvals";
+import { Dictate } from "./dictate";
 import { openQuestions, type OpenQuestion } from "./cards";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
@@ -10,6 +11,9 @@ const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.
 
 export const MCP_INSTALL = "claude mcp add pitlane -- pit mcp";
 
+// What is typed into an answer, by card and question, so nothing redraws it away.
+const drafts = new Map<string, string>();
+
 /** One question with its options; the recommended one is marked. Used by the Inbox and the card. */
 export function QuestionBlock(props: {
   q: OpenQuestion;
@@ -17,7 +21,14 @@ export function QuestionBlock(props: {
   busy: boolean;
   onAnswer: (answer: string) => void;
 }) {
-  const [other, setOther] = createSignal("");
+  const draft = `${props.q.card.id}-${props.q.id}`;
+  const [other, setOther] = createSignal(drafts.get(draft) ?? "");
+  const write = (v: string) => {
+    setOther(v);
+    if (v) drafts.set(draft, v);
+    else drafts.delete(draft);
+  };
+  let field: HTMLInputElement | undefined;
   return (
     <div class="options" role="group" aria-label={props.q.text}>
       <For each={props.q.options}>
@@ -41,21 +52,26 @@ export function QuestionBlock(props: {
         class="other"
         onSubmit={(e) => {
           e.preventDefault();
-          if (other().trim()) props.onAnswer(other().trim());
+          if (other().trim()) {
+            props.onAnswer(other().trim());
+            drafts.delete(draft);
+          }
         }}
       >
         <label class="visually-hidden" for={`other-${props.q.card.id}-${props.q.id}`}>
           Another answer
         </label>
         <input
+          ref={field}
           id={`other-${props.q.card.id}-${props.q.id}`}
           class="input"
           placeholder={props.q.options.length ? "Or answer in your own words" : "Your answer"}
           autocomplete="off"
           value={other()}
           disabled={props.busy}
-          onInput={(e) => setOther(e.currentTarget.value)}
+          onInput={(e) => write(e.currentTarget.value)}
         />
+        <Dictate field={() => field} value={other} onChange={write} />
         <button type="submit" class="btn" disabled={props.busy || !other().trim()}>
           Answer
         </button>
@@ -63,6 +79,61 @@ export function QuestionBlock(props: {
     </div>
   );
 }
+
+/** An answered question, with Change to choose again: the same decision takes the new answer. */
+export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<Card["questions"]>[number]; onChanged: () => void }) {
+  const [editing, setEditing] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const asked = (): OpenQuestion => ({
+    card: props.card,
+    id: props.q.id,
+    text: props.q.text,
+    options: props.q.options ?? [],
+    recommended: props.q.recommended,
+    index: 0,
+    of: 0,
+  });
+  async function choose(text: string) {
+    setBusy(true);
+    try {
+      const r = await api.cardReanswer(props.repo, props.card.id, props.q.id, text);
+      toast({ tone: "done", title: `${r.decision} changed`, body: text });
+      setEditing(false);
+      props.onChanged();
+    } catch (e) {
+      toast({ tone: "fail", title: "The decision did not change", body: msg(e) }, 0);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div class="decision" data-editing={editing() ? "" : undefined}>
+      <dt>{props.q.text}</dt>
+      <dd>
+        {props.q.answer}
+        <Show when={props.q.decision}>
+          <span class="tag">{props.q.decision}</span>
+        </Show>
+        <button
+          type="button"
+          class="btn btn-ghost decision-change"
+          aria-expanded={editing()}
+          disabled={busy()}
+          onClick={() => setEditing(!editing())}
+        >
+          {editing() ? "Keep" : "Change"}
+        </button>
+      </dd>
+      <Show when={editing()}>
+        <QuestionBlock q={asked()} selected busy={busy()} onAnswer={(a) => void choose(a)} />
+      </Show>
+    </div>
+  );
+}
+
+type Group = { card: Card; qs: OpenQuestion[]; total: number; decided: NonNullable<Card["questions"]> };
+// Same card object, same group: an unchanged re-read keeps the Inbox's DOM.
+const grouped = new WeakMap<Card, Group>();
 
 export function InboxView(props: {
   repo: string;
@@ -134,15 +205,16 @@ export function InboxView(props: {
   const cardsAsking = () => new Set(questions().map((q) => q.card.id)).size;
   /** One head per card, its answered questions as context, then its open ones. */
   const byCard = () => {
-    const groups: { card: Card; qs: OpenQuestion[]; total: number; decided: NonNullable<Card["questions"]> }[] = [];
+    const groups: Group[] = [];
     for (const q of questions()) {
-      let g = groups.find((x) => x.card.id === q.card.id);
+      if (groups.some((x) => x.card === q.card)) continue;
+      let g = grouped.get(q.card);
       if (!g) {
         const all = q.card.questions ?? [];
-        g = { card: q.card, qs: [], total: all.length, decided: all.filter((x) => x.answer != null) };
-        groups.push(g);
+        g = { card: q.card, qs: questions().filter((x) => x.card === q.card), total: all.length, decided: all.filter((x) => x.answer != null) };
+        grouped.set(q.card, g);
       }
-      g.qs.push(q);
+      groups.push(g);
     }
     return groups;
   };
@@ -206,17 +278,7 @@ export function InboxView(props: {
                   <Show when={g.decided.length > 0}>
                     <dl class="decided">
                       <For each={g.decided}>
-                        {(d) => (
-                          <div>
-                            <dt>{d.text}</dt>
-                            <dd>
-                              {d.answer}
-                              <Show when={d.decision}>
-                                <span class="tag">{d.decision}</span>
-                              </Show>
-                            </dd>
-                          </div>
-                        )}
+                        {(d) => <DecisionItem repo={props.repo} card={g.card} q={d} onChanged={props.onChanged} />}
                       </For>
                     </dl>
                   </Show>

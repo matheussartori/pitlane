@@ -625,6 +625,9 @@ export const api = {
     invoke<{ analyzed: { card: number; questions?: number; notes?: number; cost_usd?: number; error?: string }[] }>("cards_analyze", { path, ids }),
   cardAnswer: (path: string, id: number, question: number, answer: string) =>
     invoke<{ decision: string; card: Card }>("card_answer", { path, id, question, answer }),
+  /** Choose again on an answered question; its decision is rewritten in place. */
+  cardReanswer: (path: string, id: number, question: number, answer: string) =>
+    invoke<{ decision: string; card: Card }>("card_reanswer", { path, id, question, answer }),
 };
 
 export const landedLabel: Record<Landed, string> = {

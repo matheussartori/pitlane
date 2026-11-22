@@ -368,6 +368,15 @@ async fn card_answer(path: String, id: u32, question: u32, answer: String) -> Cm
     .await
 }
 
+#[tauri::command]
+async fn card_reanswer(path: String, id: u32, question: u32, answer: String) -> CmdResult<AnswerOut> {
+    blocking(move || {
+        let a = cards::reanswer(&open(&path)?, id, question, &answer)?;
+        Ok(AnswerOut { decision: a.decision, card: a.card.into() })
+    })
+    .await
+}
+
 // ---------------------------------------------------------------- runs (through the daemon)
 
 /// The `pit` executable that starts the daemon when nobody answers on its socket.
@@ -1256,6 +1265,7 @@ pub fn run() {
             card_add,
             card_update,
             card_answer,
+            card_reanswer,
             card_reorder,
             card_delete,
             cards_forget,

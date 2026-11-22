@@ -599,6 +599,79 @@ pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answe
     Ok(Answered { card, decision })
 }
 
+/// Chooses again on an answered question: the card and its decision (same `D-xx`) take the new
+/// answer, and the decisions file keeps a line saying what it was before.
+pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answered> {
+    let answer = answer.trim();
+    if answer.is_empty() {
+        bail!("the answer is empty");
+    }
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    let title = card.title.clone();
+    let q = card
+        .questions
+        .iter_mut()
+        .find(|q| q.id == question)
+        .with_context(|| format!("card #{id} has no question {question}"))?;
+    let Some(old) = q.answer.clone() else { bail!("question {question} on card #{id} is not answered yet") };
+    let text = match answer.parse::<usize>() {
+        Ok(n) if n >= 1 && n <= q.options.len() => q.options[n - 1].clone(),
+        _ => answer.to_owned(),
+    };
+    let now = timestamp(now_secs());
+    if text == old {
+        return Ok(Answered { decision: q.decision.clone().unwrap_or_default(), card });
+    }
+    let decision = match q.decision.clone() {
+        Some(d) if rewrite_decision(repo, &d, &q.text, &text, &old, id, &title, &now[..10])? => d,
+        _ => {
+            let d = next_decision_id(repo)?;
+            append_decision(repo, &d, &q.text, &text, id, &title, &now[..10])?;
+            d
+        }
+    };
+    q.answer = Some(text);
+    q.answered_at = Some(now.clone());
+    q.decision = Some(decision.clone());
+    card.updated = now;
+    write(&card)?;
+    Ok(Answered { card, decision })
+}
+
+/// Replaces the body of `## {id}: …` in the decisions file. False when the entry is not there.
+#[allow(clippy::too_many_arguments)]
+fn rewrite_decision(repo: &Repo, id: &str, question: &str, answer: &str, old: &str, card: u32, title: &str, day: &str) -> Result<bool> {
+    let path = decisions_path(repo);
+    let Ok(text) = fs::read_to_string(&path) else { return Ok(false) };
+    let head = format!("## {id}:");
+    let Some(start) = text.lines().scan(0usize, |at, l| {
+        let here = *at;
+        *at += l.len() + 1;
+        Some((here, l))
+    })
+    .find(|(_, l)| l.starts_with(&head))
+    .map(|(at, _)| at) else {
+        return Ok(false);
+    };
+    let rest = &text[start..];
+    let end = rest
+        .match_indices("\n## ")
+        .next()
+        .map(|(i, _)| start + i + 1)
+        .unwrap_or(text.len());
+    let entry = format!("## {id}: {question}\n\n{answer}\n\nFrom card #{card} ({title}), {day}; changed from: {old}\n");
+    let mut out = String::with_capacity(text.len() + 64);
+    out.push_str(&text[..start]);
+    out.push_str(&entry);
+    if end < text.len() {
+        out.push('\n');
+        out.push_str(&text[end..]);
+    }
+    atomic_write(&path, &out)?;
+    Ok(true)
+}
+
 fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
     let first = card.questions.iter().map(|q| q.id).max().unwrap_or(0) + 1;
     for (next, q) in (first..).zip(new) {
