@@ -1088,24 +1088,6 @@ export function CardSheet(props: {
             <Show when={forgetOne()}>
               <ForgetSheet repo={props.repo} cards={[props.card]} onDone={props.onChanged} onClose={() => setForgetOne(false)} />
             </Show>
-            <Show when={notes().length > 0} fallback={<p class="cs-empty">{t("No notes yet. Run all's analysis and each run add theirs here.")}</p>}>
-              <ol class="notes">
-                <For each={notes()}>
-                  {(n) => (
-                    <li class="note" data-by={n.by}>
-                      <div class="note-head">
-                        <Icon name={noteBy[n.by]?.icon ?? "person"} small />
-                        <span class="note-by">{noteBy[n.by] ? t(noteBy[n.by]!.name) : n.by}</span>
-                        <span class="note-at" title={n.at}>
-                          {ago(n.at, props.now)}
-                        </span>
-                      </div>
-                      <Prose text={n.text} />
-                    </li>
-                  )}
-                </For>
-              </ol>
-            </Show>
             <div class="note-compose">
               <textarea
                 class="input textarea"
@@ -1128,6 +1110,24 @@ export function CardSheet(props: {
                 {t("Add note")}
               </button>
             </div>
+            <Show when={notes().length > 0} fallback={<p class="cs-empty">{t("No notes yet. Run all's analysis and each run add theirs here.")}</p>}>
+              <ol class="notes">
+                <For each={[...notes()].reverse()}>
+                  {(n) => (
+                    <li class="note" data-by={n.by}>
+                      <div class="note-head">
+                        <Icon name={noteBy[n.by]?.icon ?? "person"} small />
+                        <span class="note-by">{noteBy[n.by] ? t(noteBy[n.by]!.name) : n.by}</span>
+                        <span class="note-at" title={n.at}>
+                          {ago(n.at, props.now)}
+                        </span>
+                      </div>
+                      <Prose text={n.text} />
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
           </section>
           <Show when={error()}>
             <ErrorLine>{error()}</ErrorLine>
