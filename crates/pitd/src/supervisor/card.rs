@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use pit_core::Repo;
+use pit_core::lanes::now_secs;
 use pit_core::actions::{self, NewOptions};
 use pit_core::cards::{self, CardPatch, CardState, NewQuestion};
 use pit_core::flow::RUN_BASE_TOOLS;
@@ -257,19 +258,39 @@ pub(super) fn prepare(
     })
 }
 
-/// Blocks the run's card, saying why.
+/// Blocks the run's card, saying why, and when Pitlane tries it again by itself.
 pub(super) fn block_card(m: &RunMeta, reason: cards::BlockReason, detail: &str, home: &Path) -> Result<()> {
     let r = Repo::open(&m.repo, &home_dir(), home)?;
+    let retries = cards::get(&r, m.card).map(|c| c.retries).unwrap_or_default();
     cards::update(
         &r,
         m.card,
         CardPatch {
             state: Some(CardState::Blocked),
-            blocked: Some(cards::Block::new(reason, short(detail), Some(m.id.clone()))),
+            blocked: Some(cards::Block::new(reason, short(detail), Some(m.id.clone())).retry_at(retry_policy(reason, retries, m))),
             ..Default::default()
         },
     )?;
     Ok(())
+}
+
+/// Runs that failed are tried again by themselves this many times before the card waits for you.
+const FAILED_RETRIES: u32 = 2;
+/// The first wait before a failed run is tried again; each try after waits one more of these.
+const FAILED_WAIT_SECS: u64 = 120;
+/// With no account free and no reset time known, how long before trying again.
+const NO_ROUTE_WAIT_SECS: u64 = 600;
+
+/// When Pitlane tries a blocked card again by itself, if it does: a failed run a couple of
+/// times, a card with no account free once one frees up. The others wait for an answer or for
+/// you (an API key's cost, a conflict, checks that fail after their rounds).
+pub(super) fn retry_policy(reason: cards::BlockReason, retries: u32, m: &RunMeta) -> Option<u64> {
+    let now = now_secs();
+    match reason {
+        cards::BlockReason::Failed => (retries < FAILED_RETRIES).then(|| now + FAILED_WAIT_SECS * u64::from(retries + 1)),
+        cards::BlockReason::NoRoute => Some(m.resets_at.filter(|t| *t > now).map_or(now + NO_ROUTE_WAIT_SECS, |t| t + 60)),
+        _ => None,
+    }
 }
 
 /// The first line of a reason, cut to fit a board tile and a card's header.
@@ -391,7 +412,15 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         (RunState::Done, Some("blocked")) => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Stuck, short(summary), Some(m.id.clone())))),
         (RunState::Done, _) => (CardState::Review, None),
         (RunState::Stopped, _) => (CardState::Ready, None),
-        _ => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Failed, short(m.error.as_deref().unwrap_or("The run ended without finishing.")), Some(m.id.clone())))),
+        _ => {
+            let retries = cards::get(&r, m.card).map(|c| c.retries).unwrap_or_default();
+            // Out of turns is not tried again by itself: another run would spend as much again.
+            let out_of_turns = m.handoff.is_none() && m.turns.is_some_and(|t| t + 1 >= r.flow.run.max_turns);
+            let detail = if out_of_turns { "Ran out of turns before finishing." } else { m.error.as_deref().unwrap_or("The run ended without finishing.") };
+            let b = cards::Block::new(cards::BlockReason::Failed, short(detail), Some(m.id.clone()));
+            let at = if out_of_turns { None } else { retry_policy(cards::BlockReason::Failed, retries, m) };
+            (CardState::Blocked, Some(b.retry_at(at)))
+        }
     };
     // Stopped once the agent had started: the next Run resumes its session, not a new one.
     // Stopped before it started: the session it was going to resume is still the one to resume.

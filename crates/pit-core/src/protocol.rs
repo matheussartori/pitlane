@@ -28,6 +28,9 @@ pub enum Request {
     /// A card blocked on its questions, all answered: read it again and free it when nothing
     /// else is open. `changed` says whether a reading started.
     Recheck { repo: PathBuf, card: u32 },
+    /// What you chose for a blocked card: try again (the way that fits why it stopped), leave it
+    /// for the review, or send it back to the Backlog. Replies with the run it started, if any.
+    Unblock { repo: PathBuf, card: u32, action: crate::cards::Unblock },
     /// Claude's short reading of a report, written on it.
     ReportDigest { repo: PathBuf, id: String },
     /// Claude's summary of a card, and its title when `title`.
@@ -138,7 +141,7 @@ impl ReviewAction {
 
 /// Every op the daemon knows, as it is written in `op`.
 pub const OPS: &[&str] = &[
-    "ping", "start", "analyze", "recheck", "report_digest", "describe", "talk", "stop_talk", "finish", "assist", "resume", "list", "sessions", "get",
+    "ping", "start", "analyze", "recheck", "unblock", "report_digest", "describe", "talk", "stop_talk", "finish", "assist", "resume", "list", "sessions", "get",
     "say", "tune", "stop", "stop_all", "perf", "perf_set", "perf_hold", "stop_analyses", "shutdown", "hold", "quota", "review", "enqueue",
     "queue", "queue_resume", "dequeue", "continue", "ask", "decide", "approvals", "follow",
 ];
@@ -166,6 +169,7 @@ impl Request {
             Self::Start(_) => "start",
             Self::Analyze { .. } => "analyze",
             Self::Recheck { .. } => "recheck",
+            Self::Unblock { .. } => "unblock",
             Self::ReportDigest { .. } => "report_digest",
             Self::Describe { .. } => "describe",
             Self::Talk { .. } => "talk",

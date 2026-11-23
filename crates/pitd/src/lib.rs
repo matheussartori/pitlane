@@ -46,6 +46,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
 
     let sup = Supervisor::new(cfg);
     sup.start_queue();
+    sup.start_unblocker();
     sup.start_perf();
     let recovered = sup.recover()?;
     eprintln!("pitd: listening on {} ({recovered} interrupted run(s) recovered)", sock.display());
@@ -159,6 +160,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
         }
         Request::Analyze { repo, cards } => sup.analyze(repo, cards).await,
         Request::Recheck { repo, card } => reply(Changed { changed: sup.recheck(repo, card)? }),
+        Request::Unblock { repo, card, action } => Ok(json!({ "run": sup.unblock(repo, card, action, false)? })),
         Request::ReportDigest { repo, id } => sup.report_digest(repo, id).await,
         Request::Describe { repo, card, title } => sup.describe(repo, card, title).await,
         Request::Talk { repo, card, question, message } => sup.talk(repo, card, question, message).await,

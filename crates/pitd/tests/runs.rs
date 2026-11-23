@@ -1649,3 +1649,34 @@ async fn rechecks_an_answered_card_with_the_real_claude() {
     }
     panic!("the reading never ended");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_run_is_tried_again_a_couple_of_times_then_waits_for_you() {
+    let fx = fx();
+    let id = card(&fx, "Crashes");
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    // An agent that dies at once.
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: "/usr/bin/false".into(), pit_bin: None });
+    let block = || cards::get(&r, id).unwrap().blocked.expect("blocked, saying why");
+
+    let first = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    wait_end(&s, &first.id).await;
+    let b = block();
+    assert_eq!(b.reason, cards::BlockReason::Failed);
+    assert!(b.retry_at.is_some(), "a failed run is tried again by itself");
+
+    // Pitlane's own tries, as its timer would make them: the second one is the last.
+    for n in 1..=2 {
+        let run = s.unblock(fx.repo.clone(), id, cards::Unblock::Retry, true).unwrap().expect("a run");
+        wait_end(&s, &run.id).await;
+        assert_eq!(cards::get(&r, id).unwrap().retries, n);
+    }
+    assert_eq!(block().retry_at, None, "out of tries: it waits for you");
+
+    // Yours: the card goes back to the Backlog with its count reset.
+    assert!(s.unblock(fx.repo.clone(), id, cards::Unblock::Review, false).is_err(), "a failed run has nothing to review");
+    s.unblock(fx.repo.clone(), id, cards::Unblock::Backlog, false).unwrap();
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!((c.state, c.retries, c.blocked.is_none()), (CardState::Ready, 0, true));
+    assert!(s.unblock(fx.repo.clone(), id, cards::Unblock::Retry, false).is_err(), "not blocked any more");
+}

@@ -868,6 +868,12 @@ impl Client {
         Ok(self.request_as::<crate::protocol::Changed>(&Request::Recheck { repo: repo.to_owned(), card })?.changed)
     }
 
+    /// Carries out what you chose for a blocked card; the run it started, if any.
+    pub fn unblock(&mut self, repo: &Path, card: u32, action: crate::cards::Unblock) -> Result<Option<RunMeta>> {
+        let v = self.request(&Request::Unblock { repo: repo.to_owned(), card, action })?;
+        Ok(serde_json::from_value(v.get("run").cloned().unwrap_or(Value::Null))?)
+    }
+
     /// Claude's short reading of a report, written on it; the report as it is now.
     pub fn report_digest(&mut self, repo: &Path, id: &str) -> Result<crate::report::Report> {
         self.request_as(&Request::ReportDigest { repo: repo.to_owned(), id: id.into() })

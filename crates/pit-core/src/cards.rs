@@ -137,6 +137,8 @@ pub enum BlockReason {
     Failed,
     /// No account or model in the route could take the run.
     NoRoute,
+    /// The route's next option is an API key, paid per token: it waits for your yes.
+    ApiKey,
     /// Its branch conflicts with where it lands.
     Conflict,
     /// The checks still fail after the fix rounds.
@@ -158,14 +160,48 @@ pub struct Block {
     /// The run that ended blocked, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
-    /// Pitlane is reading the card again with your answers (since when).
+    /// Pitlane is reading the card again (with your answers, or to turn what stopped the agent
+    /// into questions), since when.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checking: Option<String>,
+    /// When Pitlane tries the card again by itself (Unix seconds); none when it waits for you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<u64>,
 }
 
 impl Block {
     pub fn new(reason: BlockReason, detail: impl Into<String>, run: Option<String>) -> Self {
-        Self { reason, detail: detail.into(), since: timestamp(now_secs()), run, checking: None }
+        Self { reason, detail: detail.into(), since: timestamp(now_secs()), run, checking: None, retry_at: None }
+    }
+
+    /// The same, tried again by Pitlane at `at`.
+    pub fn retry_at(mut self, at: Option<u64>) -> Self {
+        self.retry_at = at;
+        self
+    }
+}
+
+/// What can be done about a blocked card (the Unblock action).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Unblock {
+    /// Try again, the way that fits why it stopped: read it again, run it again, another fix
+    /// round, or bring the target in.
+    Retry,
+    /// Leave it for the review as it is (its checks failed).
+    Review,
+    /// Back to the Backlog, to be run when you choose.
+    Backlog,
+}
+
+impl Unblock {
+    pub fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "retry" => Self::Retry,
+            "review" => Self::Review,
+            "backlog" => Self::Backlog,
+            _ => bail!("unknown action {s:?} (retry, review or backlog)"),
+        })
     }
 }
 
@@ -212,6 +248,10 @@ pub struct Card {
     pub paused: Option<String>,
     pub created: String,
     pub updated: String,
+    /// Times Pitlane tried the card again by itself since it last got through (to the review or
+    /// further) or you sent it on; it gives up after a few and waits for you.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retries: u32,
     /// Why it is Blocked; none in any other state. A table, so after the plain values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked: Option<Block>,
@@ -343,6 +383,7 @@ pub struct CardPatch {
     pub paused: Option<Option<String>>,
     /// Why the card is blocked, with `state: Blocked`. Leaving Blocked forgets it.
     pub blocked: Option<Block>,
+    pub retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -675,6 +716,7 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         summary: None,
         paused: None,
         blocked: None,
+        retries: 0,
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
@@ -721,6 +763,13 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     }
     if let Some(b) = patch.blocked {
         card.blocked = Some(b);
+    }
+    if let Some(n) = patch.retries {
+        card.retries = n;
+    }
+    // Got through: a later block starts with its retries again.
+    if matches!(card.state, CardState::Review | CardState::InDev | CardState::Done) {
+        card.retries = 0;
     }
     // A reason only while blocked, and always one then.
     if card.state != CardState::Blocked {
@@ -894,6 +943,18 @@ pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answe
     Ok(Answered { card, decision })
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// Blocked cards Pitlane tries again by itself, due by `now` (Unix seconds).
+pub fn due(repo: &Repo, now: u64) -> Result<Vec<Card>> {
+    Ok(list(repo)?.0
+        .into_iter()
+        .filter(|c| c.state == CardState::Blocked && c.blocked.as_ref().is_some_and(|b| b.checking.is_none() && b.retry_at.is_some_and(|t| t <= now)))
+        .collect())
+}
+
 /// Whether the card waits on a recheck: its agent stopped to ask, and every question is answered
 /// now. Pitlane then reads the card again with the answers, and puts it back in the Backlog when
 /// nothing else is open.
@@ -904,14 +965,26 @@ pub fn wants_recheck(card: &Card) -> bool {
 }
 
 /// Marks a blocked card as being read again (`true`) or not any more. Fails when it is not
-/// blocked on questions any more (someone moved it meanwhile).
+/// blocked on questions, or stuck, any more (someone moved it meanwhile).
 pub fn set_checking(repo: &Repo, id: u32, on: bool) -> Result<Card> {
+    edit_block(repo, id, |b| {
+        if !matches!(b.reason, BlockReason::Questions | BlockReason::Stuck) {
+            bail!("card #{id} is not waiting on a reading");
+        }
+        b.checking = on.then(|| timestamp(now_secs()));
+        Ok(())
+    })
+}
+
+/// Changes why a card is blocked, in place. Fails when it is not blocked any more.
+pub fn edit_block(repo: &Repo, id: u32, change: impl FnOnce(&mut Block) -> Result<()>) -> Result<Card> {
     let _lock = Lock::take(repo)?;
     let mut card = get(repo, id)?;
-    let Some(b) = card.blocked.as_mut().filter(|b| b.reason == BlockReason::Questions) else {
-        bail!("card #{id} is not blocked on questions any more");
+    let Some(b) = card.blocked.as_mut().filter(|_| card.state == CardState::Blocked) else {
+        bail!("card #{id} is not blocked any more");
     };
-    b.checking = on.then(|| timestamp(now_secs()));
+    change(b)?;
+    card.updated = timestamp(now_secs());
     write(&card)?;
     Ok(card)
 }
@@ -1189,6 +1262,7 @@ mod tests {
             summary: None,
             paused: None,
             blocked: None,
+            retries: 0,
             created: "2026-11-20T10:00:00Z".into(),
             updated: "2026-11-20T10:00:00Z".into(),
             questions: vec![Question {

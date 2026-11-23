@@ -175,6 +175,11 @@ impl Supervisor {
     }
 
     fn fail(&self, id: &str, why: &str) {
+        // The card first, as when a run ends: whoever sees the run failed finds the card blocked.
+        // Written from a copy, without holding the list.
+        if let Ok(m) = self.get(id) {
+            let _ = block_card(&m, pit_core::cards::BlockReason::Failed, why, &self.cfg.home);
+        }
         self.emit(
             id,
             RunEvent::Note {
@@ -193,11 +198,7 @@ impl Supervisor {
                 state: RunState::Failed,
             },
         );
-        // Taken off the list first: the card is written without holding it.
-        let gone = self.live.lock().unwrap().remove(id).map(|l| l.meta);
-        if let Some(m) = gone {
-            let _ = block_card(&m, pit_core::cards::BlockReason::Failed, why, &self.cfg.home);
-        }
+        self.live.lock().unwrap().remove(id);
     }
 
     async fn drive(
@@ -445,8 +446,13 @@ impl Supervisor {
         let home = self.cfg.home.clone();
         let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home, true)).await?;
         // Said while the run is still live: once it leaves the list, nothing more is recorded.
-        if let Err(e) = &card_result {
-            self.emit(&id, RunEvent::Note { text: format!("The card could not be moved: {e:#}") });
+        match &card_result {
+            Err(e) => self.emit(&id, RunEvent::Note { text: format!("The card could not be moved: {e:#}") }),
+            Ok(()) => {
+                if let Ok(m) = self.get(&id) {
+                    self.after_settle(&m.repo, m.card);
+                }
+            }
         }
         self.update(&id, |m| {
             m.state = state;

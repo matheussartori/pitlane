@@ -98,15 +98,37 @@ options, the one you recommend, and a context the person can answer from without
 questions when the work can go on, which is the usual case. Notes only for what is new and the session will need \
 (an answer that changes where to look, say); usually none.";
 
+pub const TRIAGE_RULES: &str = "You are Pitlane's analyst. You do not change anything. The session working this \
+card stopped blocked without asking the person anything; its last handoff and notes are on the card. Read them, and \
+the repository where it helps, and turn what stopped it into questions the person can answer: a decision it could \
+not make, something only the person can do or give (access, a credential, a file, a service to start), or a part of \
+the spec that cannot be done as written. For something the person has to do outside, ask with options such as \
+\"Done, go on\" and \"Leave that part out\". Each question gets two to four options, the one you recommend, and a \
+context the person can answer from without opening the card. Return no questions only when nothing the person could \
+say or do would help (the session gave up on something it can do, say); then put in a note what the next session \
+should do differently.";
+
 /// The card read again after its questions were answered: its spec, notes, questions with their
 /// answers, and why it stopped.
 pub fn recheck_prompt(repo: &Repo, card: &Card) -> String {
     let mut p = card_context(repo, card);
+    push_why(&mut p, card);
+    p.push_str("\n\nThe questions are answered. Can the work go on? Return questions only for what is still open.\n");
+    p
+}
+
+/// The card of a session that stopped blocked without asking: what would get it going again.
+pub fn triage_prompt(repo: &Repo, card: &Card) -> String {
+    let mut p = card_context(repo, card);
+    push_why(&mut p, card);
+    p.push_str("\n\nThe session stopped here without asking anything. What does the person need to answer or do so the work can go on?\n");
+    p
+}
+
+fn push_why(p: &mut String, card: &Card) {
     if let Some(b) = card.blocked.as_ref().filter(|b| !b.detail.is_empty()) {
         p.push_str(&format!("\n\n## Why the work stopped\n{}\n", b.detail));
     }
-    p.push_str("\n\nThe questions are answered. Can the work go on? Return questions only for what is still open.\n");
-    p
 }
 
 /// Writes a recheck on the card: its notes, and any question still open. True when nothing is.

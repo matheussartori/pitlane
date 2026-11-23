@@ -209,9 +209,8 @@ impl Supervisor {
                 // The card first: whoever sees the run's next option finds the card already waiting.
                 let home = self.cfg.home.clone();
                 let detail = text.clone();
-                tokio::task::spawn_blocking(move || {
-                    block_card(&meta, pit_core::cards::BlockReason::NoRoute, &detail, &home)
-                })
+                let reason = if next.is_some() { pit_core::cards::BlockReason::ApiKey } else { pit_core::cards::BlockReason::NoRoute };
+                tokio::task::spawn_blocking(move || block_card(&meta, reason, &detail, &home))
                 .await??;
                 self.update_disk(&id, |m| {
                     m.error = Some(text.clone());
