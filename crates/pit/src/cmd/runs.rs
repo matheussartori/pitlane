@@ -7,7 +7,7 @@ use pit_core::Repo;
 use pit_core::runs::{Client, RunEvent, RunMeta, RunState};
 
 use super::{daemon, pitlane_home, print_json};
-use crate::term::{ACCENT, DONE, FAIL, MUTED, RUN, paint, plain};
+use crate::term::{ACCENT, DONE, FAIL, MUTED, RUN, paint, paint_err, plain};
 
 pub fn approvals() -> Result<ExitCode> {
     let v = daemon()?.call(serde_json::json!({ "op": "approvals" }))?;
@@ -150,7 +150,7 @@ fn follow_run(c: &mut Client, run: &str) -> Result<ExitCode> {
         }
         // The stream ended without the run's end: the daemon went away mid-run.
         None => {
-            eprintln!("{} the daemon stopped answering before the run ended", paint(FAIL, "✕"));
+            eprintln!("{} the daemon stopped answering before the run ended", paint_err(FAIL, "✕"));
             ExitCode::FAILURE
         }
     })

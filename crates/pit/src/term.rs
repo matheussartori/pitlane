@@ -1,6 +1,7 @@
 //! Terminal output: colours, prompts and making text safe to print.
 //!
-//! `paint` decides on colour by whether stdout is a terminal, also for text sent to stderr.
+//! `paint` colours what goes to stdout and `paint_err` what goes to stderr, each deciding by
+//! whether its own stream is a terminal.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -37,6 +38,12 @@ pub fn short(sha: &str) -> &str {
 /// The Claude Code executable: `$PITLANE_CLAUDE_BIN`, else `claude` on the PATH.
 pub fn claude_bin() -> String {
     std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into())
+}
+
+/// `paint` for text sent to stderr: coloured only when stderr is a terminal, so `pit … 2> log`
+/// writes no escape codes and `pit … > out` keeps its errors in colour.
+pub fn paint_err(style: &str, text: &str) -> String {
+    if std::env::var_os("NO_COLOR").is_none() && std::io::stderr().is_terminal() { format!("\x1b[{style}m{text}\x1b[0m") } else { text.to_owned() }
 }
 
 pub fn paint(style: &str, text: &str) -> String {

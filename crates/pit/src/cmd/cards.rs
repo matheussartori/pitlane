@@ -8,7 +8,7 @@ use pit_core::cards::{self, CardOut, CardPatch, CardState, NewCard, NewQuestion}
 
 use super::{pitlane_home, print_json};
 use crate::cli::CardCmd;
-use crate::term::{ACCENT, DONE, FAIL, MUTED, paint, plain};
+use crate::term::{ACCENT, DONE, FAIL, MUTED, paint, paint_err, plain};
 
 pub fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
     match cmd {
@@ -40,7 +40,7 @@ pub fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
                 println!("{}  {:<8}  {}{asks}{lane}", paint(MUTED, &format!("#{:04}", c.id)), c.state.as_str(), plain(&c.title));
             }
             for p in problems {
-                eprintln!("{} {p}", paint(FAIL, "skipped:"));
+                eprintln!("{} {p}", paint_err(FAIL, "skipped:"));
             }
         }
         CardCmd::Show { id, json } => {

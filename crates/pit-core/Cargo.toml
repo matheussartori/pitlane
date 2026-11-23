@@ -17,3 +17,4 @@ tree-sitter-python = "0.25"
 tree-sitter-rust = "0.24"
 tempfile.workspace = true
 base64 = "0.22"
+libc = "0.2"

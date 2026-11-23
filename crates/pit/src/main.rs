@@ -9,7 +9,7 @@ use pit_core::Repo;
 
 use cli::{AccountCmd, Cli, Cmd};
 use cmd::{accounts, cards, lanes, review, runs};
-use term::{FAIL, claude_bin, paint};
+use term::{FAIL, claude_bin, paint_err};
 
 mod cli;
 mod cmd;
@@ -21,7 +21,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("{} {e:#}", paint(FAIL, "pit:"));
+            eprintln!("{} {e:#}", paint_err(FAIL, "pit:"));
             ExitCode::FAILURE
         }
     }

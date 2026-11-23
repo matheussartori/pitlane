@@ -814,8 +814,8 @@ pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answe
     let now_s = now_secs();
     let now = timestamp(now_s);
     let decision = next_decision_id(repo)?;
-    append_decision(repo, &decision, &q.text, &text, id, &card.title, &now[..10])?;
-    q.answer = Some(text);
+    let question_text = q.text.clone();
+    q.answer = Some(text.clone());
     q.answered_at = Some(now.clone());
     q.decision = Some(decision.clone());
     card.updated = now;
@@ -823,7 +823,15 @@ pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answe
     if card.state == CardState::Inbox && card.open_questions() == 0 {
         card.state = CardState::Ready;
     }
+    // The card first, then the decision: a card that could not be written leaves no decision
+    // behind (a retry would add a second one), and a decision that could not be written puts
+    // the card back as it was, still asking.
+    let before = get(repo, id)?;
     write(&card)?;
+    if let Err(e) = append_decision(repo, &decision, &question_text, &text, id, &card.title, &local_day(now_s)) {
+        let _ = write(&before);
+        return Err(e);
+    }
     Ok(Answered { card, decision })
 }
 
@@ -847,15 +855,16 @@ pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Ans
         Ok(n) if n >= 1 && n <= q.options.len() => q.options[n - 1].clone(),
         _ => answer.to_owned(),
     };
-    let now = timestamp(now_secs());
+    let now_s = now_secs();
+    let now = timestamp(now_s);
     if text == old {
         return Ok(Answered { decision: q.decision.clone().unwrap_or_default(), card });
     }
     let decision = match q.decision.clone() {
-        Some(d) if rewrite_decision(repo, &d, &q.text, &text, &old, id, &title, &now[..10])? => d,
+        Some(d) if rewrite_decision(repo, &d, &q.text, &text, &old, id, &title, &local_day(now_s))? => d,
         _ => {
             let d = next_decision_id(repo)?;
-            append_decision(repo, &d, &q.text, &text, id, &title, &now[..10])?;
+            append_decision(repo, &d, &q.text, &text, id, &title, &local_day(now_s))?;
             d
         }
     };
@@ -1033,6 +1042,19 @@ fn fold(c: char) -> Option<char> {
         'ñ' | 'Ñ' => 'n',
         c => c,
     })
+}
+
+/// The day `secs` falls on where you are (`2026-11-20`): a decision taken at 22:00 in São
+/// Paulo is dated that day, not the next one as in UTC.
+pub fn local_day(secs: u64) -> String {
+    let t = secs as libc::time_t;
+    // SAFETY: localtime_r writes into the zeroed tm we own and reads only `t`.
+    let offset = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&t, &mut tm).is_null() { 0 } else { tm.tm_gmtoff }
+    };
+    let local = (secs as i64 + offset).max(0) as u64;
+    timestamp(local)[..10].to_owned()
 }
 
 /// Unix seconds to `2026-11-20T14:03:00Z` (UTC), without a date crate.
