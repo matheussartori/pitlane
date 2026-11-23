@@ -120,7 +120,19 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
             // A follow takes over the connection until the run ends.
             return follow(&sup, run, *from, &mut write).await;
         }
-        let answer = match handle(&sup, req).await {
+        // An approval or a question waits for a person, maybe long: when the asker hangs up
+        // meanwhile (Claude Code cancelled it, or its session ended), the wait is dropped so it
+        // leaves your list. Its clients send one request per connection, so nothing else comes.
+        let waits = matches!(req, Request::Ask { .. } | Request::Consult { .. });
+        let answer = if waits {
+            tokio::select! {
+                r = handle(&sup, req) => r,
+                _ = lines.next_line() => return Ok(()),
+            }
+        } else {
+            handle(&sup, req).await
+        };
+        let answer = match answer {
             Ok(v) => v,
             Err(e) => json!({ "error": format!("{e:#}") }),
         };
@@ -173,7 +185,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
             if text.is_empty() {
                 bail!("say what you want on the board");
             }
-            sup.assist(repo, text)?;
+            sup.assist(repo, text).await?;
             ok()
         }
         Request::Resume { run } => {

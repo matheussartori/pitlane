@@ -123,6 +123,7 @@ impl Supervisor {
                 results: 0,
                 background: 0,
                 stop_requested: false,
+                admitted: false,
                 events: 0,
                 tx,
                 rules: Vec::new(),

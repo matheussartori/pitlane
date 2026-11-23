@@ -95,6 +95,9 @@ struct Live {
     /// Claude Code starts a turn by itself, so stdin stays open until they are done.
     background: usize,
     stop_requested: bool,
+    /// Let through `wait_room` and about to start its process: counted as working already, so
+    /// runs leaving the wait together never take more room than there is.
+    admitted: bool,
     events: usize,
     tx: broadcast::Sender<(usize, RunEvent)>,
     /// Rules allowed "for this run".

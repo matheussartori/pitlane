@@ -93,7 +93,11 @@ impl Supervisor {
             },
         );
 
+        // Claude Code may withdraw the request (it cancels the call, or the session ends and the
+        // connection with it): then this wait is dropped, and the guard takes it off your list.
+        let mut guard = Withdraw { sup: self, run, id: approval.id.clone(), armed: true };
         let answer = rx.await;
+        guard.armed = false;
         self.update(run, |m| m.waiting.retain(|a| a.id != approval.id));
         let Ok((decision, message)) = answer else {
             return deny("The run ended before anyone answered.");
@@ -166,8 +170,10 @@ impl Supervisor {
             .pending
             .remove(&id)
             .with_context(|| format!("no approval {id} waiting in run {run}"))?;
-        tx.send((decision, message))
-            .map_err(|_| anyhow::anyhow!("the agent stopped waiting"))?;
+        if tx.send((decision, message)).is_err() {
+            l.meta.waiting.retain(|a| a.id != id);
+            anyhow::bail!("the agent stopped waiting");
+        }
         Ok(id)
     }
 
@@ -179,5 +185,26 @@ impl Supervisor {
             .values()
             .flat_map(|l| l.meta.waiting.iter().map(|a| (l.meta.clone(), a.clone())))
             .collect()
+    }
+}
+
+/// A request still on your list while its wait is dropped: taken off, and said in the log.
+struct Withdraw<'a> {
+    sup: &'a Supervisor,
+    run: &'a str,
+    id: String,
+    armed: bool,
+}
+
+impl Drop for Withdraw<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let was_live = self.sup.live.lock().unwrap().get_mut(self.run).map(|l| l.pending.remove(&self.id)).is_some();
+        if was_live {
+            self.sup.update(self.run, |m| m.waiting.retain(|a| a.id != self.id));
+            self.sup.emit(self.run, RunEvent::Note { text: "Claude Code withdrew a request before anyone answered.".into() });
+        }
     }
 }

@@ -30,7 +30,7 @@ pub struct Running {
 }
 
 pub fn dir(pitlane_home: &Path) -> PathBuf {
-    pitlane_home.join("code-server")
+    pit_core::procs::code_server_dir(pitlane_home)
 }
 
 /// Where the bundled bridge extension leaves "Ask Claude about this" requests for Pitlane to pick up.
@@ -215,16 +215,12 @@ impl Vscode {
         std::fs::create_dir_all(dir(pitlane_home))?;
         install_bundled(bin, resources, pitlane_home);
         // A server left by an app that did not get to close it: it goes.
-        let pidfile = dir(pitlane_home).join("server.pid");
-        if let Some(old) = std::fs::read_to_string(&pidfile).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
-            let cmd = Command::new("ps").args(["-o", "command=", "-p", &old.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-            if cmd.contains("code-server") && cmd.contains(&dir(pitlane_home).to_string_lossy().into_owned()) {
-                end_server(old);
-                // Let it let go of its port, so this one takes the same.
-                let t = Instant::now();
-                while TcpListener::bind(("127.0.0.1", STABLE_PORT)).is_err() && t.elapsed() < Duration::from_secs(2) {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+        let pidfile = pit_core::procs::code_server_pidfile(pitlane_home);
+        if pit_core::procs::end_code_server(pitlane_home) {
+            // Let it let go of its port, so this one takes the same.
+            let t = Instant::now();
+            while TcpListener::bind(("127.0.0.1", STABLE_PORT)).is_err() && t.elapsed() < Duration::from_secs(2) {
+                std::thread::sleep(Duration::from_millis(50));
             }
         }
         // The same port each time when it is free: the page keeps one origin, so VS Code's own cache
@@ -292,26 +288,11 @@ impl Vscode {
         self.running.lock().unwrap().clone()
     }
 
+    /// Ends the server and everything it started: SIGTERM to its group, SIGKILL a second later
+    /// to what is left. If the app dies before this, the daemon ends it when the app's hold drops.
     pub fn stop(&self) {
         if let Some(r) = self.running.lock().unwrap().take() {
-            end_server(r.pid);
-        }
-    }
-}
-
-/// Ends a code-server and everything it started: SIGTERM to its process group, or to the process
-/// alone when it leads none (one started by an older Pitlane, in the app's own group).
-fn end_server(pid: u32) {
-    let Ok(pid) = i32::try_from(pid) else { return };
-    if pid <= 1 {
-        return;
-    }
-    // SAFETY: kill takes no pointers; a negative pid names the group `pid` leads.
-    unsafe {
-        if libc::getpgid(pid) == pid {
-            libc::kill(-pid, libc::SIGTERM);
-        } else {
-            libc::kill(pid, libc::SIGTERM);
+            pit_core::procs::end_group(r.pid, Duration::from_secs(1));
         }
     }
 }

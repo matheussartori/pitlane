@@ -93,21 +93,30 @@ impl Supervisor {
         }
         let mut said = false;
         loop {
-            let working = self
-                .live
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|l| {
-                    l.meta.id != id
-                        && l.meta.kind == SessionKind::Run
-                        && l.meta.pid.is_some()
-                        && !self.perf.is_held(&l.meta.id)
-                })
-                .count() as u32;
-            let allowed = self.perf.allowed();
-            if working < allowed || self.stop_requested(id) {
+            if self.stop_requested(id) {
                 break;
+            }
+            // Read before taking the list: Performance's own lock is never taken under it.
+            let held = self.perf.held_ids();
+            let allowed = self.perf.allowed();
+            {
+                // Counted and claimed under one lock: runs waiting together never all go in.
+                let mut live = self.live.lock().unwrap();
+                let working = live
+                    .values()
+                    .filter(|l| {
+                        l.meta.id != id
+                            && l.meta.kind == SessionKind::Run
+                            && (l.meta.pid.is_some() || l.admitted)
+                            && !held.contains(&l.meta.id)
+                    })
+                    .count() as u32;
+                if working < allowed {
+                    if let Some(l) = live.get_mut(id) {
+                        l.admitted = true;
+                    }
+                    break;
+                }
             }
             if !said {
                 said = true;
@@ -297,6 +306,9 @@ impl Supervisor {
             signal(pid, libc::SIGKILL);
         }
         self.perf.release_all();
+        // The app's code-server, when the app went without closing it (a crash, a force quit).
+        let home = self.cfg.home.clone();
+        let _ = tokio::task::spawn_blocking(move || pit_core::procs::end_code_server(&home)).await;
         let _ = fs::remove_file(runs::socket_path(&self.cfg.home));
         std::process::exit(0)
     }

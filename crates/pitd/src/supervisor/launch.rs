@@ -64,6 +64,10 @@ impl Supervisor {
         let out = tokio::time::timeout(ONE_SHOT_LIMIT, child.wait_with_output()).await;
         if let Some(p) = pid {
             self.one_shots.lock().unwrap().remove(&p);
+            // kill_on_drop reaches the process only: what it started in its group goes too.
+            if out.is_err() {
+                super::control::end_group(p);
+            }
         }
         out.with_context(|| format!("{what} took over two minutes"))?
             .with_context(|| format!("{what} failed to run"))

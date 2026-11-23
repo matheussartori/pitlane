@@ -177,6 +177,20 @@ impl Supervisor {
     }
 
     fn fail(&self, id: &str, why: &str) {
+        let live_pid = self.live.lock().unwrap().get(id).map(|l| l.meta.pid);
+        let Some(pid) = live_pid else {
+            // It went wrong after the run ended (moving its card, say): the run keeps the state it
+            // ended in and the card stays where it went; the error is kept on the run.
+            eprintln!("pitd: run {id}, after it ended: {why}");
+            self.update_disk(id, |m| {
+                m.error.get_or_insert_with(|| why.to_owned());
+            });
+            return;
+        };
+        // A process that started is never left behind by a failure.
+        if let Some(pid) = pid {
+            end_group(pid);
+        }
         // The card first, as when a run ends: whoever sees the run failed finds the card blocked.
         // Written from a copy, without holding the list.
         if let Ok(m) = self.get(id) {
@@ -244,15 +258,33 @@ impl Supervisor {
             )
         })
         .await??;
-        // One agent per worktree: two in the same checkout would edit over each other.
-        if let Some(other) = self.live.lock().unwrap().values().find(|l| {
-            l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.worktree == prep.worktree
-        }) {
-            bail!(
-                "#{} is already working in {}; this card starts when it ends",
-                other.meta.card,
-                prep.worktree.display()
-            );
+        // One agent per worktree: two in the same checkout would edit over each other. Checked
+        // and claimed under one lock, so two runs starting together never both get in; the one
+        // that finds it taken waits for it (Stop ends the wait).
+        let mut said = false;
+        loop {
+            let other = {
+                let mut live = self.live.lock().unwrap();
+                let other = live
+                    .values()
+                    .find(|l| l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.worktree == prep.worktree)
+                    .map(|l| l.meta.card);
+                if other.is_none()
+                    && let Some(l) = live.get_mut(&id)
+                {
+                    l.meta.worktree = prep.worktree.clone();
+                }
+                other
+            };
+            let Some(other) = other else { break };
+            if self.stopped_before_start(&id).await? {
+                return Ok(());
+            }
+            if !said {
+                said = true;
+                self.emit(&id, RunEvent::Note { text: format!("#{other} is already working in {}; this card starts when it ends.", prep.worktree.display()) });
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
         let mut prep = prep;
         if let Some(i) = instructions
@@ -281,17 +313,23 @@ impl Supervisor {
             return Ok(());
         }
         let mut cmd = self.run_command(&id, &repo, resuming, &prep, &choice)?;
+        if !resuming {
+            fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
+        }
         let mut child = cmd
             .spawn()
             .with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
         let pid = child.id();
+        // Known at once: from here a failure (or Stop, or closing the app) reaches the process.
+        if let Some(l) = self.live.lock().unwrap().get_mut(&id) {
+            l.meta.pid = pid;
+        }
         let mut stdin = child.stdin.take().context("no stdin")?;
         let first = if resuming {
             message
                 .clone()
                 .unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned())
         } else {
-            fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
             format!(
                 "{}{}",
                 prep.briefing,
@@ -381,6 +419,7 @@ impl Supervisor {
         // watcher) must not outlive it.
         if let Some(l) = self.live.lock().unwrap().get_mut(&id) {
             l.meta.pid = None;
+            l.admitted = false;
         }
         if let Some(pid) = pid {
             end_group(pid);

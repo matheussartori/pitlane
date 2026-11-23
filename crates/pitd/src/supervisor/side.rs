@@ -511,8 +511,23 @@ impl Supervisor {
     /// a Claude Code session in the repository that reads the code and writes cards with
     /// Pitlane's board tools. It runs in the background, in view in the Agents dock; people can
     /// keep talking to it while it works.
-    pub fn assist(self: &Arc<Self>, repo: PathBuf, text: String) -> Result<()> {
+    /// One per repository: while the repository's assistant lives, what you ask next goes to it as
+    /// a message (it keeps what was said before), instead of a new Claude Code each time.
+    pub async fn assist(self: &Arc<Self>, repo: PathBuf, text: String) -> Result<()> {
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let open = self
+            .live
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|l| l.meta.kind == SessionKind::Assist && l.meta.repo == r.root && l.stdin.is_some() && !l.stop_requested)
+            .max_by_key(|l| l.meta.started_at)
+            .map(|l| l.meta.id.clone());
+        if let Some(id) = open
+            && self.say(&id, &text).await.is_ok()
+        {
+            return Ok(());
+        }
         if self.cfg.pit_bin.is_none() {
             bail!("the board assistant needs the pit executable for its board tools");
         }

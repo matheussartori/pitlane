@@ -851,6 +851,17 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
         (Some("deny"), Some("Use npm run clean."))
     );
 
+    // Withdrawn by Claude Code (the wait is dropped): it leaves the list, nobody answers it.
+    let gone = ask("make deploy", "t6");
+    while s.approvals().is_empty() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    gone.abort();
+    let _ = gone.await;
+    assert!(s.approvals().is_empty(), "a withdrawn request leaves the list");
+    assert!(s.get(&run).unwrap().waiting.is_empty());
+    assert!(s.decide(&run, Some("t6"), Decision::Once, None).is_err());
+
     // Still waiting when the run ends: the agent hears no.
     let late = ask("curl example.com", "t5");
     while s.approvals().is_empty() {
@@ -869,7 +880,7 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
         tl.iter()
             .filter(|(_, e)| matches!(e, RunEvent::Approval { .. }))
             .count(),
-        4
+        5
     );
     assert_eq!(
         tl.iter()

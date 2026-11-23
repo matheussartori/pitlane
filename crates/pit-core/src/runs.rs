@@ -856,6 +856,12 @@ impl Client {
     }
 
     /// One request, one answer. A daemon-side error becomes an `Err`.
+    /// The connection itself, for another thread to hang it up (`shutdown`) while this one waits
+    /// on an answer: the daemon then drops what it was waiting on (an approval, a question).
+    pub fn hangup_handle(&self) -> std::io::Result<UnixStream> {
+        self.stream.get_ref().try_clone()
+    }
+
     pub fn request(&mut self, req: &Request) -> Result<Value> {
         self.exchange(req)
     }

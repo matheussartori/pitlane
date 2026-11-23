@@ -61,10 +61,13 @@ impl Supervisor {
             Err(e) => return format!("Pitlane could not ask: {e:#}. Go with your recommendation, \"{recommended}\", and note it."),
         };
         self.update(run, |m| m.asking.push(qid));
+        // Dropped when the asker hangs up: the run stops saying it waits on this question (the
+        // question itself stays open on the card for you).
+        let _asking = scopeguard_asking(self, run, qid);
         self.emit(run, RunEvent::Note { text: format!("Asked you: {text}") });
         let deadline = Instant::now() + Duration::from_secs(u64::from(cfg.wait_minutes) * 60);
         let poll = Duration::from_millis(self.consult_poll_ms.load(Ordering::Relaxed));
-        let reply = loop {
+        loop {
             let answered = cards::get(&repo, card).ok().and_then(|c| c.questions.into_iter().find(|x| x.id == qid)).and_then(|x| x.answer.map(|a| (a, x.auto)));
             if let Some((a, auto)) = answered {
                 if auto {
@@ -88,14 +91,16 @@ impl Supervisor {
                         self.emit(run, RunEvent::Note { text: format!("{why}; went with the recommendation: {recommended}") });
                         break format!("{why}: go with your recommendation, \"{recommended}\". It is written on the card as taken for them; no note needed.");
                     }
-                    // Answered meanwhile: the next look reads it.
-                    Err(_) => continue,
+                    // Answered meanwhile: the next look, after the pause, reads it. When the card
+                    // is gone, the recommendation stands.
+                    Err(_) if cards::get(&repo, card).is_err() => {
+                        break format!("{why}: go with your recommendation, \"{recommended}\".");
+                    }
+                    Err(_) => {}
                 }
             }
             tokio::time::sleep(poll).await;
-        };
-        self.update(run, |m| m.asking.retain(|x| *x != qid));
-        reply
+        }
     }
 
     /// A question answered with the recommendation at once: on the card, for the review.
@@ -111,4 +116,16 @@ impl Supervisor {
     pub fn set_consult_poll(&self, every: Duration) {
         self.consult_poll_ms.store(every.as_millis() as u64, Ordering::Relaxed);
     }
+}
+
+/// Takes the question off the run's `asking` when dropped: at the answer or when the wait is.
+fn scopeguard_asking<'a>(sup: &'a Supervisor, run: &'a str, qid: u32) -> impl Drop + 'a {
+    struct Asking<'a>(&'a Supervisor, &'a str, u32);
+    impl Drop for Asking<'_> {
+        fn drop(&mut self) {
+            let q = self.2;
+            self.0.update(self.1, |m| m.asking.retain(|x| *x != q));
+        }
+    }
+    Asking(sup, run, qid)
 }

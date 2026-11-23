@@ -274,6 +274,11 @@ impl Perf {
         self.state.lock().unwrap().holds.contains_key(id)
     }
 
+    /// The sessions held right now, read in one go (for callers that then take other locks).
+    pub fn held_ids(&self) -> std::collections::HashSet<String> {
+        self.state.lock().unwrap().holds.keys().cloned().collect()
+    }
+
     pub fn set_waiting(&self, id: &str, on: bool) {
         let mut s = self.state.lock().unwrap();
         if on {

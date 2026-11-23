@@ -14,6 +14,7 @@ pub mod language;
 pub mod git;
 pub mod lanes;
 pub mod plan;
+pub mod procs;
 pub mod protocol;
 pub mod queue;
 pub mod related;
