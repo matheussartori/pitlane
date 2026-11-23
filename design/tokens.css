@@ -10,7 +10,7 @@
   --color-paper-3: oklch(30% 0.004 255);
   --color-paper-sunk: oklch(19% 0.002 255);
   --color-frame: oklch(16.5% 0.002 255); /* the window around the content panel, darkest */
-  --color-rule: oklch(31% 0.004 255);
+  --color-rule: oklch(29.5% 0.004 255); /* felt, not seen (Linear 2026): one notch softer */
   --color-rule-strong: oklch(39% 0.005 255);
 
   /* Ink. */

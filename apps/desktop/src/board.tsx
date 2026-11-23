@@ -117,7 +117,7 @@ function BoardAsk(props: { repo: string }) {
         class="board-ask-field"
         rows="1"
         aria-label={t("Ask Claude to write or change cards")}
-        placeholder={t("Ask Claude: paste a list or say what you need, and it writes the cards (Enter sends, Shift+Enter for a new line)")}
+        placeholder={t("Ask Claude to write cards: paste a list or say what you need")}
         value={text()}
         onInput={(e) => (setText(e.currentTarget.value), fit())}
         onKeyDown={(e) => {
@@ -126,6 +126,10 @@ function BoardAsk(props: { repo: string }) {
         }}
         disabled={busy()}
       />
+      {/* The keys show only while you write, so the empty bar reads as one short line. */}
+      <span class="board-ask-keys" aria-hidden="true">
+        <span class="kbd">↵</span> {t("sends")} <span class="kbd">⇧↵</span> {t("new line")}
+      </span>
       <Dictate field={() => field} value={text} onChange={(v) => (setText(v), requestAnimationFrame(fit))} />
       <button type="button" class="btn btn-ghost" disabled={busy() || !text().trim()} aria-busy={busy()} onClick={() => void send()}>
         <Show when={busy()} fallback={<Icon name="spark" small />}>

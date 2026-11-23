@@ -1,4 +1,7 @@
 export default {
+  "Ask Claude to write cards: paste a list or say what you need": "Peça ao Claude para escrever cards: cole uma lista ou diga o que precisa",
+  "sends": "envia",
+  "new line": "nova linha",
   // cards.ts
   "Needs you": "Precisa de você",
   "Backlog": "Backlog",
