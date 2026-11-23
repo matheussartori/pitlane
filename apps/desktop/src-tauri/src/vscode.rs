@@ -202,11 +202,10 @@ impl Vscode {
     /// The server, started if it is not running.
     pub fn start(&self, bin: &Path, resources: Option<&Path>, pitlane_home: &Path) -> Result<Running> {
         let mut slot = self.running.lock().unwrap();
-        if let Some(r) = slot.as_ref() {
-            if TcpStream::connect(("127.0.0.1", r.port)).is_ok() {
+        if let Some(r) = slot.as_ref()
+            && TcpStream::connect(("127.0.0.1", r.port)).is_ok() {
                 return Ok(r.clone());
             }
-        }
         first_settings(pitlane_home)?;
         std::fs::create_dir_all(dir(pitlane_home))?;
         install_bundled(bin, resources, pitlane_home);

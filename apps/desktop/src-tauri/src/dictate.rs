@@ -85,13 +85,9 @@ impl Dictation {
                 }
             };
             let _ = ready_tx.send(Ok(()));
-            loop {
-                match stop_rx.recv_timeout(Duration::from_millis(80)) {
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        let _ = app2.emit("dictate-level", f32::from_bits(level.load(Ordering::Relaxed)));
-                    }
-                    _ => break,
-                }
+            // Until stopped (or the app goes): the level, every 80 ms.
+            while let Err(mpsc::RecvTimeoutError::Timeout) = stop_rx.recv_timeout(Duration::from_millis(80)) {
+                let _ = app2.emit("dictate-level", f32::from_bits(level.load(Ordering::Relaxed)));
             }
             drop(stream);
             let samples = std::mem::take(&mut *buf.lock().unwrap());
@@ -277,7 +273,7 @@ mod tests {
         assert!(ok.success());
         let bytes = std::fs::read(&wav).unwrap();
         let at = bytes.windows(4).position(|w| w == b"data").unwrap() + 8;
-        let audio: Vec<f32> = bytes[at..].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let audio: Vec<f32> = bytes[at..].as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
         let model = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/whisper").join(MODEL);
         let ctx = WhisperContext::new_with_params(&model, WhisperContextParameters::default()).unwrap();
         let t0 = std::time::Instant::now();

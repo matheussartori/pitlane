@@ -110,13 +110,11 @@ pub(crate) async fn capacity() -> CmdResult<Capacity> {
         }
         // The daemon's Performance governor decides when it runs: Full or Light, and the memory.
         // Only a daemon already running: reading the capacity never starts one.
-        if let Some(v) = running().and_then(|mut c| c.call(serde_json::json!({ "op": "perf" })).ok()) {
-            if v.get("governed").and_then(serde_json::Value::as_bool) == Some(true) {
-                if let Some(n) = v.get("allowed").and_then(serde_json::Value::as_u64) {
+        if let Some(v) = running().and_then(|mut c| c.call(serde_json::json!({ "op": "perf" })).ok())
+            && v.get("governed").and_then(serde_json::Value::as_bool) == Some(true)
+                && let Some(n) = v.get("allowed").and_then(serde_json::Value::as_u64) {
                     agents = (n as u32).max(1);
                 }
-            }
-        }
         Ok(Capacity { agents, max, load, cores, free_memory })
     })
     .await

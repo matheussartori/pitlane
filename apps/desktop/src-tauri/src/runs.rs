@@ -53,6 +53,8 @@ pub(crate) async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
     .await
 }
 
+// The frontend sends these as named arguments; a struct would change what it sends.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>, autopilot: Option<bool>, fresh: Option<bool>) -> CmdResult<RunMeta> {
     blocking(move || {

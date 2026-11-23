@@ -64,22 +64,20 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, e| {
-            if e.id().as_ref() == "close-window" {
-                if let Some(w) = app.get_webview_window("main") {
+            if e.id().as_ref() == "close-window"
+                && let Some(w) = app.get_webview_window("main") {
                     let _ = w.close();
                 }
-            }
         })
         // Closing the window only hides it: Pitlane stays in the Dock and the menu bar, agents
         // keep going, and the Dock icon or the tray brings it back. Quit (⌘Q, the Dock's or the
         // tray's) is what ends it.
         .on_window_event(|w, e| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = e {
-                if w.label() == "main" && !daemon::QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = e
+                && w.label() == "main" && !daemon::QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
                     api.prevent_close();
                     let _ = w.hide();
                 }
-            }
         })
         .invoke_handler(tauri::generate_handler![
             runs::perf,

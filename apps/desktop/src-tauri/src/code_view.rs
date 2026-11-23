@@ -14,13 +14,16 @@ use crate::{CmdResult, blocking, holes, vscode};
 /// VS Code views, one per folder, most recent first. Up to three stay loaded, so coming back to
 /// the tab, or to a recent lane, is instant. A view is never seen before VS Code has drawn itself:
 /// it loads (login, workbench) out of sight, and moves onto the tab once it is ready.
+/// A place on the window in logical pixels: x, y, width, height.
+type Rect = (f64, f64, f64, f64);
+
 #[derive(Default)]
 pub(crate) struct CodeView {
     views: Mutex<Vec<View>>,
     /// The folders VS Code's picker offers: [{root, label, kind}].
     places: Mutex<serde_json::Value>,
     /// The folder the tab wants shown, and where (logical pixels).
-    shown: Mutex<Option<(String, (f64, f64, f64, f64))>>,
+    shown: Mutex<Option<(String, Rect)>>,
     /// What the page draws over VS Code (tooltips, toasts): window rects (x, y, w, h, radius).
     holes: Mutex<Vec<[f64; 5]>>,
     next: std::sync::atomic::AtomicU32,
