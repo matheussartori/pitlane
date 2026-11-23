@@ -3,7 +3,8 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 import { api, isLive, onRun, type Card, type RunEvent, type RunMeta, type RunState, type Yard } from "./api";
 import { Line } from "./agents";
 import { ApprovalBlock } from "./approvals";
-import { LaneTrack, ago, noteBy } from "./board";
+import { LaneTrack } from "./board";
+import { ago, noteBy } from "./cardsheet";
 import { Counts, DiffViewer, statusLetter, statusWord, type ChangedFile } from "./diffview";
 import { Prose } from "./prose";
 import { parsePatch } from "./review";
