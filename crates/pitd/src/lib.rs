@@ -255,9 +255,15 @@ async fn follow(sup: &Arc<Supervisor>, run: &str, from: usize, w: &mut tokio::ne
                 // Fell behind: catch up from the timeline on disk, then keep listening.
                 Err(RecvError::Lagged(_)) => {
                     let sub = sup.subscribe(&id, next)?;
+                    let mut done = false;
                     for (i, ev) in sub.replay {
+                        done |= matches!(ev, RunEvent::Exited { .. });
                         send(w, &json!({ "i": i, "event": ev })).await?;
                         next = i + 1;
+                    }
+                    // The run ended in what was caught up on: nothing more will come.
+                    if done {
+                        break;
                     }
                 }
                 Err(RecvError::Closed) => break,
