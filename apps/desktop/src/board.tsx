@@ -229,6 +229,39 @@ export async function deleteCard(repo: string, card: Card, onChanged: () => void
   }
 }
 
+/** Deletes every card given (the Landed column's Clear all), with one undo that brings them all back. */
+async function deleteCards(repo: string, cards: Card[], onChanged: () => void) {
+  const gone: Card[] = [];
+  let failed: unknown;
+  for (const c of cards) {
+    try {
+      await api.cardDelete(repo, c.id);
+      gone.push(c);
+    } catch (e) {
+      failed ??= e;
+    }
+  }
+  onChanged();
+  if (failed !== undefined) toast({ tone: "fail", title: t("Could not delete {n} cards", { n: cards.length - gone.length }), body: failed instanceof Error ? failed.message : String(failed) });
+  if (gone.length === 0) return;
+  toast(
+    {
+      tone: "done",
+      title: plural(gone.length, "Cleared {n} landed card", "Cleared {n} landed cards"),
+      action: {
+        label: t("Undo"),
+        run: () =>
+          void Promise.allSettled(gone.map((c) => api.cardRestore(repo, c.id))).then((rs) => {
+            onChanged();
+            const bad = rs.filter((r) => r.status === "rejected").length;
+            if (bad > 0) toast({ tone: "fail", title: t("Could not restore {n} cards", { n: bad }) });
+          }),
+      },
+    },
+    12000,
+  );
+}
+
 /** Landed where it was going: dependencies on it are met. */
 const landedState = (c: Card) => c.state === "done" || c.state === "in-dev";
 
@@ -550,6 +583,17 @@ export function BoardView(props: {
                         onClick={() => setForgetting(remembered().map((c) => c.id))}
                       >
                         <Icon name="undo" small />
+                      </button>
+                    </Show>
+                    <Show when={col === "landed" && props.repo && byColumn(col).some(({ card }) => !liveRun(card.id))}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost col-action"
+                        title={t("Delete every card in Landed (you can undo)")}
+                        onClick={() => void deleteCards(props.repo!, byColumn(col).map((x) => x.card).filter((c) => !liveRun(c.id)), props.onChanged)}
+                      >
+                        <Icon name="trash" small />
+                        {t("Clear all")}
                       </button>
                     </Show>
                   </h2>
