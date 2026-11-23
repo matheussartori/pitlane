@@ -838,6 +838,7 @@ export function CardSheet(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [note, setNote] = createSignal("");
+  let noteRef: HTMLTextAreaElement | undefined;
   const [noting, setNoting] = createSignal(false);
   const [forgetOne, setForgetOne] = createSignal(false);
   const dirty = () =>
@@ -902,6 +903,7 @@ export function CardSheet(props: {
     try {
       await api.cardNote(props.repo, props.card.id, note().trim());
       setNote("");
+      if (noteRef) noteRef.style.height = "";
       props.onChanged();
     } catch (e) {
       setError(msg(e));
@@ -1010,7 +1012,8 @@ export function CardSheet(props: {
           addImages?.(files);
         }}
       >
-        <div class="cs-main">
+        {/* The sheet opens with focus here, not on the close button (which drew its ring). */}
+        <div class="cs-main" tabindex="-1" autofocus>
           <section class="cs-section">
             <div class="field-head">
               <label class="cs-label" for="card-body">
@@ -1019,7 +1022,7 @@ export function CardSheet(props: {
               <Show
                 when={editing()}
                 fallback={
-                  <button type="button" class="btn btn-ghost" onClick={() => setEditing(true)}>
+                  <button type="button" class="btn btn-ghost cs-act" onClick={() => setEditing(true)}>
                     <Icon name="edit" small /> {t("Edit")}
                   </button>
                 }
@@ -1076,26 +1079,32 @@ export function CardSheet(props: {
           </Show>
 
           <section class="cs-section">
-            <h3 class="cs-label">
-              {t("Notes")} <span class="count">{notes().length}</span>
-              <span class="cs-hint">{t("What Claude learned working this card, and what you add. Every run reads them.")}</span>
+            <div class="field-head">
+              <h3 class="cs-label">
+                {t("Notes")} <span class="count">{notes().length}</span>
+              </h3>
               <Show when={hasMemory(props.card)}>
                 <button type="button" class="btn btn-ghost cs-forget" disabled={!!live()} onClick={() => setForgetOne(true)} title={t("Forget Claude's notes, its open questions and the analysis, to analyse this card again")}>
                   <Icon name="undo" small /> {t("Forget")}
                 </button>
               </Show>
-            </h3>
+            </div>
+            <p class="cs-sub">{t("What Claude learned working this card, and what you add. Every run reads them.")}</p>
             <Show when={forgetOne()}>
               <ForgetSheet repo={props.repo} cards={[props.card]} onDone={props.onChanged} onClose={() => setForgetOne(false)} />
             </Show>
-            <div class="note-compose">
+            <div class="note-compose" data-filled={note().trim() ? "" : undefined}>
               <textarea
-                class="input textarea"
+                ref={(el) => (noteRef = el)}
+                class="note-input"
                 rows="2"
                 aria-label={t("Add a note")}
-                placeholder={t("Add context for the next run (⌘↩ adds it)")}
+                placeholder={t("Add context for the next run")}
                 value={note()}
-                onInput={(e) => setNote(e.currentTarget.value)}
+                onInput={(e) => {
+                  setNote(e.currentTarget.value);
+                  fit(e.currentTarget);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
@@ -1103,12 +1112,16 @@ export function CardSheet(props: {
                   }
                 }}
               />
-              <button type="button" class="btn" disabled={noting() || !note().trim()} aria-busy={noting()} onClick={() => void addNote()}>
-                <Show when={noting()} fallback={<Icon name="plus" small />}>
-                  <Spinner />
-                </Show>
-                {t("Add note")}
-              </button>
+              <div class="note-compose-bar">
+                <Dictate field={() => noteRef} value={note} onChange={(v) => (setNote(v), noteRef && fit(noteRef))} />
+                <span class="note-keys">⌘↩</span>
+                <button type="button" class="btn btn-primary btn-sm" disabled={noting() || !note().trim()} aria-busy={noting()} onClick={() => void addNote()}>
+                  <Show when={noting()} fallback={<Icon name="plus" small />}>
+                    <Spinner />
+                  </Show>
+                  {t("Add note")}
+                </button>
+              </div>
             </div>
             <Show when={notes().length > 0} fallback={<p class="cs-empty">{t("No notes yet. Run all's analysis and each run add theirs here.")}</p>}>
               <ol class="notes">

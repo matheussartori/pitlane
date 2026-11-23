@@ -159,7 +159,7 @@ export function CardImages(props: { repo: string; card: Card; onChanged: () => v
         <Show when={busy()}>
           <Spinner />
         </Show>
-        <button type="button" class="btn btn-ghost" disabled={busy()} onClick={() => picker?.click()}>
+        <button type="button" class="btn btn-ghost cs-act" disabled={busy()} onClick={() => picker?.click()}>
           <Icon name="plus" small /> {t("Add")}
         </button>
         <input
@@ -174,7 +174,12 @@ export function CardImages(props: { repo: string; card: Card; onChanged: () => v
           }}
         />
       </div>
-      <Show when={images().length > 0} fallback={<p class="img-hint">{t("Drop screenshots here, pick them with Add, or paste with ⌘V. Claude gets them with the spec.")}</p>}>
+      <Show when={images().length > 0} fallback={
+          <button type="button" class="img-drop" disabled={busy()} onClick={() => picker?.click()}>
+            <Icon name="plus" small />
+            {t("Drop screenshots here, pick them with Add, or paste with ⌘V. Claude gets them with the spec.")}
+          </button>
+        }>
         <ul class="img-list">
           <For each={images()}>
             {(f) => <Thumb repo={props.repo} id={props.card.id} file={f} busy={busy()} onOpen={setBig} onRemove={() => void remove(f)} />}

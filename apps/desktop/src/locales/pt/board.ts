@@ -163,6 +163,7 @@ export default {
   "No notes yet. Run all's analysis and each run add theirs here.": "Nenhuma nota ainda. A análise do Executar tudo e cada execução adicionam as suas aqui.",
   "Add a note": "Adicionar uma nota",
   "Add context for the next run (⌘↩ adds it)": "Adicione contexto para a próxima execução (⌘↩ adiciona)",
+  "Add context for the next run": "Adicione contexto para a próxima execução…",
   "Add note": "Adicionar nota",
   "State": "Estado",
   "Lane": "Lane",
