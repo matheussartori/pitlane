@@ -9,8 +9,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result};
 
 /// Writes `bytes` to `path` whole or not at all: a temp file beside it (its own name for each
-/// write, so two writers never rename each other's half-written file), flushed to disk, then
-/// renamed over the old one. A reader sees the old file or the new one; a crash leaves the old.
+/// write, so two writers never rename each other's half-written file), then renamed over the old
+/// one. A reader sees the old file or the new one; a process that dies mid-write leaves the old.
+/// No fsync: on macOS it is a full flush of the disk's cache, tens of milliseconds a write, and
+/// cards are written all the time; these files are Pitlane's state, not its only copy of work.
 pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> Result<()> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
@@ -26,7 +28,6 @@ pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> Result<()> {
     let written = (|| {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes.as_ref())?;
-        f.sync_all()?;
         std::fs::rename(&tmp, path)
     })();
     if written.is_err() {
