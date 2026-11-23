@@ -16,7 +16,7 @@ use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use super::card::{add_to_briefing, last_words, prepare, resume_message, set_card_state, settle_card};
+use super::card::{add_to_briefing, last_words, prepare, resume_message, set_card_state, settle_card, block_card};
 use super::control::{Release, end_group, signal};
 use super::launch::{claude_dir, session_saved};
 use super::{StartOpts, Supervisor, home_dir};
@@ -196,7 +196,7 @@ impl Supervisor {
         // Taken off the list first: the card is written without holding it.
         let gone = self.live.lock().unwrap().remove(id).map(|l| l.meta);
         if let Some(m) = gone {
-            let _ = set_card_state(&m, CardState::Blocked, &self.cfg.home);
+            let _ = block_card(&m, pit_core::cards::BlockReason::Failed, why, &self.cfg.home);
         }
     }
 

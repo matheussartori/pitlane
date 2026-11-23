@@ -79,6 +79,10 @@ pub fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
         CardCmd::Answer { id, question, answer } => {
             let a = cards::answer(repo, id, question, &answer)?;
             println!("{} recorded as {} in {}", paint(DONE, "✓"), a.decision, cards::decisions_path(repo).display());
+            let c = pit_core::runs::recheck_after_answer(repo, a.card);
+            if c.blocked.as_ref().is_some_and(|b| b.checking.is_some()) {
+                println!("{} #{} is read again with your answers; it goes back to the Backlog when nothing else is open", paint(DONE, "✓"), c.id);
+            }
         }
         CardCmd::Link { id, branch, unlink } => {
             if branch.is_none() && !unlink {

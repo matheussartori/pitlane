@@ -382,7 +382,8 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
             let q = args.get("question_id").and_then(Value::as_u64).context("question_id is required")?;
             let a = str_arg("answer").context("answer is required")?;
             let done = cards::answer(&repo, id()?, u32::try_from(q)?, &a)?;
-            json!({ "decision": done.decision, "card": card_json(&done.card) })
+            let card = pit_core::runs::recheck_after_answer(&repo, done.card);
+            json!({ "decision": done.decision, "card": card_json(&card) })
         }
         "add_note" => {
             let text = str_arg("text").context("text is required")?;

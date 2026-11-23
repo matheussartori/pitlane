@@ -124,8 +124,10 @@ pub struct AnswerOut {
 #[tauri::command]
 pub(crate) async fn card_answer(path: String, id: u32, question: u32, answer: String) -> CmdResult<AnswerOut> {
     blocking(move || {
-        let a = cards::answer(&open(&path)?, id, question, &answer)?;
-        Ok(AnswerOut { decision: a.decision, card: a.card.into() })
+        let repo = open(&path)?;
+        let a = cards::answer(&repo, id, question, &answer)?;
+        let card = pit_core::runs::recheck_after_answer(&repo, a.card);
+        Ok(AnswerOut { decision: a.decision, card: card.into() })
     })
     .await
 }

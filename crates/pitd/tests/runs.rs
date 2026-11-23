@@ -462,6 +462,13 @@ async fn a_blocked_handoff_asks_in_the_inbox() {
     let (state, open) = card_state(&fx, id);
     assert_eq!(state, CardState::Blocked);
     assert_eq!(open, 1, "the agent's question is in the Inbox");
+    // It says why, and keeps the run to resume.
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::get(&r, id).unwrap();
+    let b = c.blocked.clone().expect("a blocked card says why");
+    assert_eq!((b.reason, b.run.as_deref()), (cards::BlockReason::Questions, Some(meta.id.as_str())));
+    assert_eq!(c.paused.as_deref(), Some(meta.id.as_str()), "the next run picks up this session");
+    assert!(!cards::wants_recheck(&c), "not while a question is open");
     // And a card with open questions does not start.
     assert!(
         s.start(fx.repo.clone(), id, None, Default::default())
@@ -469,6 +476,13 @@ async fn a_blocked_handoff_asks_in_the_inbox() {
             .to_string()
             .contains("open question")
     );
+    // Answered: it waits on a recheck; moved on by hand, it forgets why it was blocked.
+    let q = c.questions[0].id;
+    let a = cards::answer(&r, id, q, "1").unwrap();
+    assert!(cards::wants_recheck(&a.card), "every question answered: read it again");
+    let moved = cards::update(&r, id, CardPatch { state: Some(CardState::Ready), ..Default::default() }).unwrap();
+    assert!(moved.blocked.is_none());
+    assert_eq!(moved.paused.as_deref(), Some(meta.id.as_str()), "still the session to resume (see the stopped-card test)");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -89,6 +89,39 @@ fn card_context(repo: &Repo, card: &Card) -> String {
     p
 }
 
+pub const RECHECK_RULES: &str = "You are Pitlane's analyst. You do not change anything. The session working this \
+card stopped to ask the person some questions, and every one is answered now. Read the card, the answers and, where \
+it helps, the repository, and say whether the work can go on. Ask again only what the answers and the code still \
+leave open and would stop the work (scope, behaviour, a choice between real alternatives); never ask something \
+already answered, how the work gets done or lands, or what you can find out by reading. Each question gets two to four \
+options, the one you recommend, and a context the person can answer from without opening the card. Return no \
+questions when the work can go on, which is the usual case. Notes only for what is new and the session will need \
+(an answer that changes where to look, say); usually none.";
+
+/// The card read again after its questions were answered: its spec, notes, questions with their
+/// answers, and why it stopped.
+pub fn recheck_prompt(repo: &Repo, card: &Card) -> String {
+    let mut p = card_context(repo, card);
+    if let Some(b) = card.blocked.as_ref().filter(|b| !b.detail.is_empty()) {
+        p.push_str(&format!("\n\n## Why the work stopped\n{}\n", b.detail));
+    }
+    p.push_str("\n\nThe questions are answered. Can the work go on? Return questions only for what is still open.\n");
+    p
+}
+
+/// Writes a recheck on the card: its notes, and any question still open. True when nothing is.
+pub fn record_recheck(repo: &Repo, id: u32, a: Analysis) -> Result<bool> {
+    for n in a.notes.iter().filter(|n| !n.trim().is_empty()) {
+        cards::note(repo, id, "claude", n)?;
+    }
+    let qs: Vec<NewQuestion> = a.questions.into_iter().filter(|q| !q.text.trim().is_empty()).collect();
+    let clear = qs.is_empty();
+    if !clear {
+        cards::ask(repo, id, qs)?;
+    }
+    Ok(clear)
+}
+
 pub const TALK_RULES: &str = "You are Pitlane's analyst, talking one of this card's questions over with the person \
 before the work starts. You do not change anything; you may read the repository to answer well. Answer what they said \
 directly and briefly, like a colleague at their desk: if they propose another way, weigh it honestly against what you \

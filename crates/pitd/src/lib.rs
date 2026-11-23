@@ -158,6 +158,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
             reply(RunReply { run: sup.start(repo, card, None, opts)? })
         }
         Request::Analyze { repo, cards } => sup.analyze(repo, cards).await,
+        Request::Recheck { repo, card } => reply(Changed { changed: sup.recheck(repo, card)? }),
         Request::ReportDigest { repo, id } => sup.report_digest(repo, id).await,
         Request::Describe { repo, card, title } => sup.describe(repo, card, title).await,
         Request::Talk { repo, card, question, message } => sup.talk(repo, card, question, message).await,

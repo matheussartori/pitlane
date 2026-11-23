@@ -257,6 +257,27 @@ pub(super) fn prepare(
     })
 }
 
+/// Blocks the run's card, saying why.
+pub(super) fn block_card(m: &RunMeta, reason: cards::BlockReason, detail: &str, home: &Path) -> Result<()> {
+    let r = Repo::open(&m.repo, &home_dir(), home)?;
+    cards::update(
+        &r,
+        m.card,
+        CardPatch {
+            state: Some(CardState::Blocked),
+            blocked: Some(cards::Block::new(reason, short(detail), Some(m.id.clone()))),
+            ..Default::default()
+        },
+    )?;
+    Ok(())
+}
+
+/// The first line of a reason, cut to fit a board tile and a card's header.
+pub(super) fn short(text: &str) -> String {
+    let line = text.trim().lines().next().unwrap_or_default().trim();
+    if line.chars().count() <= 200 { line.to_owned() } else { format!("{}…", line.chars().take(199).collect::<String>()) }
+}
+
 pub(super) fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Result<()> {
     let r = Repo::open(&m.repo, &home_dir(), home)?;
     cards::update(
@@ -289,9 +310,15 @@ pub(super) fn resume_message(c: &cards::Card, prev: &RunMeta) -> String {
             q.decision.as_deref().or(q.answer.as_deref()).unwrap_or_default().trim()
         )
     }));
-    let mut text = "You were stopped and are resumed in the same session: carry on from where you stopped (check the worktree first, a step may have been cut short). End with the handoff.".to_owned();
+    let asked = prev.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str) == Some("blocked");
+    let mut text = if asked {
+        "You ended blocked on your questions; they are answered now, and you are resumed in the same session: carry on with the answers below. End with the handoff."
+    } else {
+        "You were stopped and are resumed in the same session: carry on from where you stopped (check the worktree first, a step may have been cut short). End with the handoff."
+    }
+    .to_owned();
     if !news.is_empty() {
-        text.push_str("\n\nWhile you were stopped, the card got:\n");
+        text.push_str(if asked { "\n\nSince you stopped, the card got:\n" } else { "\n\nWhile you were stopped, the card got:\n" });
         text.push_str(&news.join("\n"));
     }
     text
@@ -334,6 +361,7 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         }
         let _ = cards::note(&r, m.card, "claude", &text);
     }
+    let mut asked = false;
     if let Some(qs) = m
         .handoff
         .as_ref()
@@ -346,6 +374,7 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
             .collect();
         if status == Some("blocked") {
             if !qs.is_empty() {
+                asked = true;
                 cards::ask(&r, m.card, qs)?;
             }
         } else {
@@ -355,23 +384,34 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
             }
         }
     }
-    let next = match (m.state, status) {
-        (RunState::Done, Some("blocked")) => CardState::Blocked,
-        (RunState::Done, _) => CardState::Review,
-        (RunState::Stopped, _) => CardState::Ready,
-        _ => CardState::Blocked,
+    let summary = m.handoff.as_ref().and_then(|h| h.get("summary")).and_then(Value::as_str).unwrap_or_default();
+    let (next, block) = match (m.state, status) {
+        // It stopped to ask: once you answer, Pitlane rechecks the card and frees it.
+        (RunState::Done, Some("blocked")) if asked => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Questions, short(summary), Some(m.id.clone())))),
+        (RunState::Done, Some("blocked")) => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Stuck, short(summary), Some(m.id.clone())))),
+        (RunState::Done, _) => (CardState::Review, None),
+        (RunState::Stopped, _) => (CardState::Ready, None),
+        _ => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Failed, short(m.error.as_deref().unwrap_or("The run ended without finishing.")), Some(m.id.clone())))),
     };
     // Stopped once the agent had started: the next Run resumes its session, not a new one.
     // Stopped before it started: the session it was going to resume is still the one to resume.
-    let paused = (m.state == RunState::Stopped && m.kind == SessionKind::Run)
-        .then(|| if ran { Some(m.id.clone()) } else { m.resumed_from.clone() })
-        .flatten();
+    // Blocked on its questions: the next Run resumes it too, with your answers.
+    let paused = if m.kind != SessionKind::Run {
+        None
+    } else if m.state == RunState::Stopped {
+        if ran { Some(m.id.clone()) } else { m.resumed_from.clone() }
+    } else if block.as_ref().is_some_and(|b| b.reason == cards::BlockReason::Questions) && ran {
+        Some(m.id.clone())
+    } else {
+        None
+    };
     cards::update(
         &r,
         m.card,
         CardPatch {
             state: Some(next),
             paused: Some(paused),
+            blocked: block,
             ..Default::default()
         },
     )?;

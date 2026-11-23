@@ -124,6 +124,7 @@ impl Supervisor {
                         m.card,
                         CardPatch {
                             state: Some(CardState::Blocked),
+                            blocked: Some(cards::Block::new(cards::BlockReason::Checks, format!("The checks still fail after {} rounds.", m.round + 1), Some(m.id.clone()))),
                             ..Default::default()
                         },
                     );
@@ -229,6 +230,7 @@ impl Supervisor {
                 card,
                 CardPatch {
                     state: Some(CardState::Blocked),
+                    blocked: Some(cards::Block::new(cards::BlockReason::Conflict, format!("{} conflicts with {}.", job.branch, job.target), Some(last.id.clone()))),
                     ..Default::default()
                 },
             );

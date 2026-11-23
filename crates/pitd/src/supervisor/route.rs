@@ -8,11 +8,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
-use pit_core::cards::CardState;
 use pit_core::lanes::now_secs;
 use pit_core::runs::{RunEvent, RunMeta, RunState};
 
-use super::card::{checkpoint, set_card_state};
+use super::card::{block_card, checkpoint};
 use super::{NEEDS_API_KEY, StartOpts, Supervisor, home_dir};
 
 impl Supervisor {
@@ -209,8 +208,9 @@ impl Supervisor {
                 };
                 // The card first: whoever sees the run's next option finds the card already waiting.
                 let home = self.cfg.home.clone();
+                let detail = text.clone();
                 tokio::task::spawn_blocking(move || {
-                    set_card_state(&meta, CardState::Blocked, &home)
+                    block_card(&meta, pit_core::cards::BlockReason::NoRoute, &detail, &home)
                 })
                 .await??;
                 self.update_disk(&id, |m| {

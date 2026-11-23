@@ -178,6 +178,17 @@ export interface CardNote {
   text: string;
 }
 
+/** Why a card is blocked: what would free it. */
+export type BlockReason = "questions" | "stuck" | "failed" | "no-route" | "conflict" | "checks" | "other";
+export interface Block {
+  reason: BlockReason;
+  detail?: string;
+  since: string;
+  run?: string;
+  /** Pitlane is reading the card again with your answers. */
+  checking?: string;
+}
+
 export interface Card {
   id: number;
   title: string;
@@ -199,6 +210,8 @@ export interface Card {
   summary?: string;
   /** The run stopped mid-work: the next Run resumes its Claude Code session instead of starting over. */
   paused?: string;
+  /** Why it is blocked (only while it is). */
+  blocked?: Block;
   created: string;
   updated: string;
   questions?: Question[];

@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice, Routing};
 use pit_core::actions;
-use pit_core::cards::{self, CardState};
+use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::lanes::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
@@ -104,7 +104,7 @@ impl Supervisor {
                     return (card.id, Err(anyhow::anyhow!("stopped before it started")));
                 }
                 let out = me
-                    .analyst(&root, &card, &prompt, choice.as_ref(), model.as_deref())
+                    .analyst(&root, &card, &prompt, pit_core::analyze::RULES, choice.as_ref(), model.as_deref())
                     .await;
                 (card.id, out)
             }));
@@ -206,6 +206,7 @@ impl Supervisor {
         repo: &Path,
         card: &cards::Card,
         prompt: &str,
+        rules: &str,
         choice: Option<&Choice>,
         model: Option<&str>,
     ) -> Result<(pit_core::analyze::Analysis, Option<f64>)> {
@@ -222,7 +223,7 @@ impl Supervisor {
         }
         args.extend([
             "--append-system-prompt".into(),
-            pit_core::analyze::RULES.into(),
+            rules.into(),
             "--json-schema".into(),
             pit_core::analyze::schema().to_string(),
         ]);
@@ -254,6 +255,62 @@ impl Supervisor {
             .await
             .map_err(|e| anyhow::anyhow!("the analysis {e:#}"))?;
         pit_core::analyze::read(&stdout)
+    }
+
+    /// A card blocked on its questions, all answered now: a read-only Claude Code session reads it
+    /// again with the answers. Nothing left open: the card goes back to the Backlog (its next Run
+    /// resumes the agent's session with the answers). Something still open: the new questions go
+    /// on the card, which keeps waiting for you. Returns at once; the reading goes on behind.
+    pub fn recheck(self: &Arc<Self>, repo: PathBuf, id: u32) -> Result<bool> {
+        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let card = cards::get(&r, id)?;
+        if !cards::wants_recheck(&card) {
+            return Ok(false);
+        }
+        // One reading at a time per card (an answer from the app and one from pit, say).
+        if !self.analysing.lock().unwrap().insert((r.root.clone(), id)) {
+            return Ok(false);
+        }
+        let card = match cards::set_checking(&r, id, true) {
+            Ok(c) => c,
+            Err(e) => {
+                self.analysing.lock().unwrap().remove(&(r.root.clone(), id));
+                return Err(e);
+            }
+        };
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            let _busy = Release(&me.analysing, (r.root.clone(), id));
+            let out = async {
+                let choice = me.side_choice(&r.root)?;
+                let _slot = me.analysis_gate.acquire().await;
+                let prompt = pit_core::analyze::recheck_prompt(&r, &card);
+                let (a, _) = me
+                    .analyst(&r.root, &card, &prompt, pit_core::analyze::RECHECK_RULES, choice.as_ref(), r.flow.run.model.as_deref())
+                    .await?;
+                pit_core::analyze::record_recheck(&r, id, a)
+            }
+            .await;
+            // Moved by hand meanwhile: what it is now stands.
+            let still = cards::get(&r, id).is_ok_and(|c| c.blocked.as_ref().is_some_and(|b| b.checking.is_some()));
+            if !still {
+                return;
+            }
+            match out {
+                Ok(true) => {
+                    let _ = cards::note(&r, id, "pitlane", "Read again with your answers: nothing else is open, so the card is back in the Backlog. Its next run picks up the agent's session with the answers.");
+                    let _ = cards::update(&r, id, CardPatch { state: Some(CardState::Ready), ..Default::default() });
+                }
+                Ok(false) => {
+                    let _ = cards::set_checking(&r, id, false);
+                }
+                Err(e) => {
+                    let _ = cards::note(&r, id, "pitlane", &format!("Could not read the card again after your answers ({e:#}). Move it back to the Backlog when it is ready."));
+                    let _ = cards::set_checking(&r, id, false);
+                }
+            }
+        });
+        Ok(true)
     }
 
     /// Talks one question over: what the person said goes on the question, a read-only Claude

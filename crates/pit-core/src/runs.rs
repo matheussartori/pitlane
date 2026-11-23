@@ -305,6 +305,17 @@ pub fn rule_allows(rule: &str, tool: &str, input: &Value) -> bool {
     rule == tool
 }
 
+/// After an answer: when the card waits on a recheck (`cards::wants_recheck`), asks the daemon,
+/// if it runs, to read the card again; the card as it is then. Never starts the daemon, never
+/// fails: without one the card stays blocked, and "Back to Backlog" frees it by hand.
+pub fn recheck_after_answer(repo: &crate::Repo, card: crate::cards::Card) -> crate::cards::Card {
+    if !crate::cards::wants_recheck(&card) {
+        return card;
+    }
+    let started = Client::connect(&repo.pitlane_home, None).and_then(|mut c| c.recheck(&repo.root, card.id)).unwrap_or(false);
+    if started { crate::cards::get(repo, card.id).unwrap_or(card) } else { card }
+}
+
 /// One thing that happened in a run, as people read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -849,6 +860,12 @@ impl Client {
     /// Run all's analysis of `cards`. The answer is the analysis step's own.
     pub fn analyze(&mut self, repo: &Path, cards: Vec<u32>) -> Result<Value> {
         self.request(&Request::Analyze { repo: repo.to_owned(), cards })
+    }
+
+    /// Reads a card again once its questions are answered (see `cards::wants_recheck`); whether a
+    /// reading started.
+    pub fn recheck(&mut self, repo: &Path, card: u32) -> Result<bool> {
+        Ok(self.request_as::<crate::protocol::Changed>(&Request::Recheck { repo: repo.to_owned(), card })?.changed)
     }
 
     /// Claude's short reading of a report, written on it; the report as it is now.

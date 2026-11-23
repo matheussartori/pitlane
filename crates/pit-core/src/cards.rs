@@ -125,6 +125,50 @@ impl Question {
     }
 }
 
+/// Why a card is Blocked, so Pitlane knows what would free it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BlockReason {
+    /// The agent stopped to ask: answering frees it (after a recheck).
+    Questions,
+    /// The agent ended blocked without a question: something it cannot do or decide.
+    Stuck,
+    /// The run failed (the agent crashed, or could not start).
+    Failed,
+    /// No account or model in the route could take the run.
+    NoRoute,
+    /// Its branch conflicts with where it lands.
+    Conflict,
+    /// The checks still fail after the fix rounds.
+    Checks,
+    /// Set by hand, or by something that did not say why.
+    #[default]
+    Other,
+}
+
+/// What blocked a card, and since when.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Block {
+    pub reason: BlockReason,
+    /// In a few words, for the board and the card.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    #[serde(default)]
+    pub since: String,
+    /// The run that ended blocked, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// Pitlane is reading the card again with your answers (since when).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checking: Option<String>,
+}
+
+impl Block {
+    pub fn new(reason: BlockReason, detail: impl Into<String>, run: Option<String>) -> Self {
+        Self { reason, detail: detail.into(), since: timestamp(now_secs()), run, checking: None }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Card {
     pub id: u32,
@@ -168,6 +212,9 @@ pub struct Card {
     pub paused: Option<String>,
     pub created: String,
     pub updated: String,
+    /// Why it is Blocked; none in any other state. A table, so after the plain values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<Block>,
     /// Kept last: TOML wants tables after plain values.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questions: Vec<Question>,
@@ -294,6 +341,8 @@ pub struct CardPatch {
     pub target: Option<Option<String>>,
     /// `Some(None)` forgets the stopped run: the next Run starts over.
     pub paused: Option<Option<String>>,
+    /// Why the card is blocked, with `state: Blocked`. Leaving Blocked forgets it.
+    pub blocked: Option<Block>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -625,6 +674,7 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         images: Vec::new(),
         summary: None,
         paused: None,
+        blocked: None,
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
@@ -668,6 +718,15 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     }
     if let Some(p) = patch.paused {
         card.paused = p;
+    }
+    if let Some(b) = patch.blocked {
+        card.blocked = Some(b);
+    }
+    // A reason only while blocked, and always one then.
+    if card.state != CardState::Blocked {
+        card.blocked = None;
+    } else if card.blocked.is_none() {
+        card.blocked = Some(Block::new(BlockReason::Other, "", None));
     }
     // A changed spec is a new card to the analyst: read it again before the next Run all.
     if (title_before != card.title || body_before != card.body) && card.analyzed.is_some() {
@@ -833,6 +892,28 @@ pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answe
         return Err(e);
     }
     Ok(Answered { card, decision })
+}
+
+/// Whether the card waits on a recheck: its agent stopped to ask, and every question is answered
+/// now. Pitlane then reads the card again with the answers, and puts it back in the Backlog when
+/// nothing else is open.
+pub fn wants_recheck(card: &Card) -> bool {
+    card.state == CardState::Blocked
+        && card.blocked.as_ref().is_some_and(|b| b.reason == BlockReason::Questions && b.checking.is_none())
+        && card.open_questions() == 0
+}
+
+/// Marks a blocked card as being read again (`true`) or not any more. Fails when it is not
+/// blocked on questions any more (someone moved it meanwhile).
+pub fn set_checking(repo: &Repo, id: u32, on: bool) -> Result<Card> {
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    let Some(b) = card.blocked.as_mut().filter(|b| b.reason == BlockReason::Questions) else {
+        bail!("card #{id} is not blocked on questions any more");
+    };
+    b.checking = on.then(|| timestamp(now_secs()));
+    write(&card)?;
+    Ok(card)
 }
 
 /// Chooses again on an answered question: the card and its decision (same `D-xx`) take the new
@@ -1107,6 +1188,7 @@ mod tests {
             images: Vec::new(),
             summary: None,
             paused: None,
+            blocked: None,
             created: "2026-11-20T10:00:00Z".into(),
             updated: "2026-11-20T10:00:00Z".into(),
             questions: vec![Question {

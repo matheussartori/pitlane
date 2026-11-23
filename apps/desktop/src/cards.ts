@@ -1,6 +1,6 @@
 // Where a card sits on the board and why. The card file says what someone set; the lane it is
 // linked to says where the work really is. The board groups by who acts next.
-import type { Card, CardState, Lane, RunMeta, Turn, Yard } from "./api";
+import type { BlockReason, Card, CardState, Lane, RunMeta, Turn, Yard } from "./api";
 import type { IconName } from "./icons";
 import { group, next, type ChipState } from "./lane";
 import { plural, t } from "./i18n";
@@ -31,6 +31,17 @@ export const stateLabel: Record<CardState, string> = {
   blocked: "Blocked",
 };
 
+/** What blocked a card, on its tile. */
+export const blockLabel: Record<BlockReason, string> = {
+  questions: "Blocked on questions",
+  stuck: "Agent stuck",
+  failed: "Run failed",
+  "no-route": "No account free",
+  conflict: "Conflict",
+  checks: "Checks fail",
+  other: "Blocked",
+};
+
 export interface Placement {
   column: Column;
   chip: ChipState;
@@ -53,7 +64,12 @@ export function place(card: Card, yard: Yard | null): Placement {
 
   if (open.length > 0)
     return { column: "needs", chip: "needs", icon: "needs", label: plural(open.length, "{n} question", "{n} questions"), why: open[0]!.text };
-  if (card.state === "blocked") return { column: "needs", chip: "needs", icon: "blocked", label: t("Blocked"), why: about(card) };
+  if (card.state === "blocked") {
+    const b = card.blocked;
+    // Answered: Pitlane reads it again, and it goes back to the Backlog on its own when nothing else is open.
+    if (b?.checking) return { column: "needs", chip: "running", icon: "verify", label: t("Rereading with your answers"), why: b.detail || about(card) };
+    return { column: "needs", chip: "needs", icon: "blocked", label: t(blockLabel[b?.reason ?? "other"]), why: b?.detail || about(card) };
+  }
   // Landed in the branch it was asked for (Run all's Into): done, whatever its own lane waits on.
   if (card.target && (card.state === "done" || card.state === "in-dev"))
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target }) };

@@ -306,3 +306,22 @@ fn a_leftover_temp_file_is_not_the_card() {
     assert_eq!(u.path, c.path);
     assert_eq!(cards::get(&r, c.id).unwrap().state, CardState::Ready);
 }
+
+#[test]
+fn a_blocked_card_always_says_why_and_forgets_it_when_it_moves_on() {
+    let (_t, r) = repo();
+    let c = cards::add(&r, NewCard { title: "Stuck".into(), ..Default::default() }).unwrap();
+    let b = cards::update(&r, c.id, CardPatch { state: Some(CardState::Blocked), ..Default::default() }).unwrap();
+    assert_eq!(b.blocked.as_ref().map(|b| b.reason), Some(cards::BlockReason::Other), "blocked by hand");
+    let why = cards::Block::new(cards::BlockReason::Questions, "Which limit?", Some("r1".into()));
+    let b = cards::update(&r, c.id, CardPatch { state: Some(CardState::Blocked), blocked: Some(why), ..Default::default() }).unwrap();
+    assert!(cards::wants_recheck(&b), "blocked on questions, none open");
+    let checking = cards::set_checking(&r, c.id, true).unwrap();
+    assert!(!cards::wants_recheck(&checking), "not twice");
+    // Written and read back as TOML.
+    let again = cards::get(&r, c.id).unwrap();
+    assert_eq!(again.blocked.as_ref().map(|b| (b.reason, b.detail.as_str())), Some((cards::BlockReason::Questions, "Which limit?")));
+    let ready = cards::update(&r, c.id, CardPatch { state: Some(CardState::Ready), ..Default::default() }).unwrap();
+    assert!(ready.blocked.is_none());
+    assert!(cards::set_checking(&r, c.id, false).is_err(), "not blocked any more");
+}
