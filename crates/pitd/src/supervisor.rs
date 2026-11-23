@@ -688,6 +688,9 @@ impl Supervisor {
             "--output-format",
             "stream-json",
             "--verbose",
+            // Claude in Chrome on from the start: a run that needs the browser finds it there,
+            // and one that never touches it pays nothing.
+            "--chrome",
         ]);
         if resuming {
             cmd.args(["--resume", &session]);

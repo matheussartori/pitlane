@@ -552,7 +552,7 @@ export function BoardView(props: {
                         >
                           <Spinner />
                         </Show>
-                        {runLabel()}
+                        <span class="col-action-label">{runLabel()}</span>
                       </button>
                     </Show>
                     <Show when={col === "backlog" && (outside().length > 0 || props.joining.length > 0)}>
@@ -567,11 +567,13 @@ export function BoardView(props: {
                         <Show when={props.joining.length > 0} fallback={<Icon name="search" small />}>
                           <Spinner />
                         </Show>
-                        {props.joining.length > 0
-                          ? t("Analysing {n}", { n: props.joining.length })
-                          : outside().some((c) => !c.analyzed)
-                            ? t("Analyse {n} new", { n: outside().length })
-                            : t("Add {n} to the batch", { n: outside().length })}
+                        <span class="col-action-label">
+                          {props.joining.length > 0
+                            ? t("Analysing {n}", { n: props.joining.length })
+                            : outside().some((c) => !c.analyzed)
+                              ? t("Analyse {n} new", { n: outside().length })
+                              : t("Add {n} to the batch", { n: outside().length })}
+                        </span>
                       </button>
                     </Show>
                     <Show when={col === "backlog" && props.phase === "idle" && props.repo && remembered().length > 0}>
@@ -593,7 +595,7 @@ export function BoardView(props: {
                         onClick={() => void deleteCards(props.repo!, byColumn(col).map((x) => x.card).filter((c) => !liveRun(c.id)), props.onChanged)}
                       >
                         <Icon name="trash" small />
-                        {t("Clear all")}
+                        <span class="col-action-label">{t("Clear all")}</span>
                       </button>
                     </Show>
                   </h2>
