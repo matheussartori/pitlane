@@ -217,7 +217,7 @@ impl Supervisor {
             ANALYSIS_MAX_TURNS.into(),
         ]);
         // Read-only: it may look at sibling repositories, where a project's code often lives.
-        if let Some(parent) = repo.parent() {
+        if let Some(parent) = siblings_dir(repo) {
             args.extend(["--add-dir".into(), parent.to_string_lossy().into_owned()]);
         }
         args.extend([
@@ -281,7 +281,7 @@ impl Supervisor {
             "--max-turns".into(),
             TALK_MAX_TURNS.into(),
         ]);
-        if let Some(parent) = r.root.parent() {
+        if let Some(parent) = siblings_dir(&r.root) {
             args.extend(["--add-dir".into(), parent.to_string_lossy().into_owned()]);
         }
         args.extend([
@@ -683,3 +683,12 @@ markdown that says what and why, with acceptance in a line or two. Read the code
 (paths, names), but never change files and never do the work itself. Before adding, list the cards to avoid duplicates; \
 update an existing card instead when it is the same work. When they ask to change, annotate or delete cards, do that. End with a \
 one-line summary per card you added or changed (#id and title).";
+
+/// The folder holding a repository and its siblings, for read-only sessions to look around in;
+/// none when that folder is your home or above it, which would open ~/.ssh and the rest of
+/// your files to a session that only meant to read the code next door.
+fn siblings_dir(repo: &Path) -> Option<&Path> {
+    let parent = repo.parent()?;
+    let home = home_dir();
+    (!home.starts_with(parent)).then_some(parent)
+}
