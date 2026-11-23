@@ -33,7 +33,7 @@ const QUIT_WAIT: Duration = Duration::from_secs(12);
 
 type CmdResult<T> = Result<T, String>;
 
-async fn blocking<T, F>(f: F) -> CmdResult<T>
+pub(crate) async fn blocking<T, F>(f: F) -> CmdResult<T>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,

@@ -233,24 +233,23 @@ fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> Result<String> {
 /// off the main thread: the window keeps drawing meanwhile.
 #[tauri::command]
 pub(crate) async fn dictate_start(app: tauri::AppHandle) -> CmdResult<()> {
-    tauri::async_runtime::spawn_blocking(move || app.state::<Dictation>().start(&app))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+    crate::blocking(move || app.state::<Dictation>().start(&app)).await
 }
 
 /// Blocking work (the transcription), so off the main thread.
 #[tauri::command]
 pub(crate) async fn dictate_stop(app: tauri::AppHandle) -> CmdResult<String> {
-    tauri::async_runtime::spawn_blocking(move || app.state::<Dictation>().stop(&app))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+    crate::blocking(move || app.state::<Dictation>().stop(&app)).await
 }
 
+/// Off the main thread too: it waits for a start still opening the microphone.
 #[tauri::command]
-pub(crate) fn dictate_cancel(d: tauri::State<'_, Dictation>) {
-    d.cancel()
+pub(crate) async fn dictate_cancel(app: tauri::AppHandle) -> CmdResult<()> {
+    crate::blocking(move || {
+        app.state::<Dictation>().cancel();
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

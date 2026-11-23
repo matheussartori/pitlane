@@ -8,9 +8,10 @@ use tauri::Manager;
 
 use crate::{CmdResult, blocking, term};
 
+/// Opening a PTY forks a shell and may write its startup files: off the main thread.
 #[tauri::command]
-pub(crate) fn term_open(app: tauri::AppHandle, terms: tauri::State<'_, term::Terms>, cwd: String, label: String, cols: u16, rows: u16) -> CmdResult<term::TermInfo> {
-    terms.open(term::app_sink(&app), &cwd, &label, cols, rows).map_err(|e| format!("{e:#}"))
+pub(crate) async fn term_open(app: tauri::AppHandle, cwd: String, label: String, cols: u16, rows: u16) -> CmdResult<term::TermInfo> {
+    blocking(move || app.state::<term::Terms>().open(term::app_sink(&app), &cwd, &label, cols, rows)).await
 }
 
 /// "Continue in Claude Code": the official CLI resumes a finished agent session in a terminal,

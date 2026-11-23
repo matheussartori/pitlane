@@ -263,7 +263,9 @@ impl Terms {
 fn zsh_integration() -> Option<&'static str> {
     static DIR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join("pitlane-zsh");
+        // In Pitlane's own folder, not a temp folder another user could write first: every shell
+        // sources these.
+        let dir = pit_core::default_homes().1.join("zsh");
         std::fs::create_dir_all(&dir).ok()?;
         for (name, body) in [
             (".zshenv", include_str!("shell/zshenv")),

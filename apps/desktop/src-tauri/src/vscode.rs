@@ -18,7 +18,10 @@ const STABLE_PORT: u16 = 47615;
 
 #[derive(Default)]
 pub struct Vscode {
+    /// Read from the main thread (a page load, a navigation): only ever held for a moment.
     running: Mutex<Option<Running>>,
+    /// One start at a time; held through a boot (up to 30 s), never by the main thread.
+    starting: Mutex<()>,
 }
 
 
@@ -206,10 +209,10 @@ fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
 impl Vscode {
     /// The server, started if it is not running.
     pub fn start(&self, bin: &Path, resources: Option<&Path>, pitlane_home: &Path) -> Result<Running> {
-        let mut slot = self.running.lock().unwrap();
-        if let Some(r) = slot.as_ref()
+        let _one = self.starting.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(r) = self.current()
             && TcpStream::connect(("127.0.0.1", r.port)).is_ok() {
-                return Ok(r.clone());
+                return Ok(r);
             }
         first_settings(pitlane_home)?;
         std::fs::create_dir_all(dir(pitlane_home))?;
@@ -265,7 +268,7 @@ impl Vscode {
             std::thread::sleep(Duration::from_millis(150));
         }
         let r = Running { port, password: pw, pid };
-        *slot = Some(r.clone());
+        *self.running.lock().unwrap() = Some(r.clone());
         Ok(r)
     }
 

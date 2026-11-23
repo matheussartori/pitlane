@@ -41,6 +41,10 @@ pub fn serve_approver(run: String) -> Result<()> {
                 continue;
             }
         };
+        if msg.is_array() {
+            send(&out, error(Value::Null, -32600, "batches are not supported; send one message per line"));
+            continue;
+        }
         if msg.get("method").and_then(Value::as_str) == Some("notifications/cancelled") {
             if let Some(req) = msg.pointer("/params/requestId") {
                 waits.cancel(req);
@@ -48,6 +52,9 @@ pub fn serve_approver(run: String) -> Result<()> {
             continue;
         }
         let Some(id) = msg.get("id").cloned() else { continue }; // a notification
+        if msg.get("method").is_none() {
+            continue; // a response from the client: nothing to answer
+        }
         let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         let tool = params.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -253,6 +260,8 @@ pub fn serve(dir: PathBuf) -> Result<()> {
     let mut out = std::io::stdout().lock();
     while let Some(line) = read_message(&mut lines)? {
         let reply = match serde_json::from_str::<Value>(&line) {
+            // A batch (an array) is not something these servers take: said, not dropped silently.
+            Ok(msg) if msg.is_array() => Some(error(Value::Null, -32600, "batches are not supported; send one message per line")),
             Ok(msg) => handle(&msg, &dir),
             Err(e) => Some(error(Value::Null, -32700, &format!("parse error: {e}"))),
         };
@@ -270,6 +279,7 @@ pub fn handle(msg: &Value, dir: &Path) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let id = id?; // a notification: nothing to answer
+    msg.get("method")?; // a response from the client: nothing to answer
     let result = match method {
         "initialize" => {
             let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();

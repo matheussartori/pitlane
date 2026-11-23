@@ -208,7 +208,8 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
         .on_navigation(move |u| {
             if u.scheme() != "pitlane" {
                 // Only this machine's code-server: the view never leaves for another site.
-                return is_local_code_server(u);
+                let port = nav_app.state::<vscode::Vscode>().current().map(|r| r.port);
+                return is_local_code_server(u, port);
             }
             if let Some((_, root)) = u.query_pairs().find(|(k, _)| k == "root") {
                 let _ = nav_app.emit("vscode-place", root.into_owned());
@@ -258,12 +259,16 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
 /// The smallest size a Code view is made at, before the tab places it.
 const CODE_VIEW_MIN: (f64, f64) = (400.0, 300.0);
 
-/// Whether a Code view may go to `u`: web addresses only on this machine (the code-server and
-/// what it serves); the view never leaves for another site, which could pose as it.
-fn is_local_code_server(u: &tauri::Url) -> bool {
+/// Whether a Code view may go to `u`: only the code-server Pitlane started (this machine, its
+/// port) and blank pages. Never another site, another local server, or a file: any of them could
+/// pose as VS Code in a view that looks like Pitlane.
+fn is_local_code_server(u: &tauri::Url, port: Option<u16>) -> bool {
     match u.scheme() {
-        "http" | "https" | "ws" | "wss" => matches!(u.host_str(), Some("127.0.0.1" | "localhost")),
-        _ => true,
+        "http" | "https" | "ws" | "wss" => {
+            matches!(u.host_str(), Some("127.0.0.1" | "localhost")) && port.is_some() && u.port_or_known_default() == port
+        }
+        "about" => true,
+        _ => false,
     }
 }
 
