@@ -18,7 +18,11 @@ use crate::lanes::now_secs;
 pub const CARDS_DIR: &str = "cards";
 pub const DECISIONS: &str = "decisions.md";
 pub const CONTEXT: &str = "context.md";
-const LOCK: &str = ".lock";
+/// The board's lock file. Not `.lock`: older builds took that one by creating and deleting
+/// it, and the two schemes must not mistake each other's file for their own.
+const LOCK: &str = ".board.lock";
+/// How long a board write waits for another one to finish.
+const LOCK_WAIT: Duration = Duration::from_secs(10);
 /// Where cards lived before the board moved out of the repository; adopted on open.
 const LEGACY_CARDS: &str = ".pitlane/cards";
 const LEGACY_DECISIONS: &str = ".pitlane/decisions.md";
@@ -203,10 +207,31 @@ impl Card {
             .strip_prefix("+++\n")
             .or_else(|| text.strip_prefix("+++\r\n"))
             .with_context(|| format!("{} does not start with a +++ frontmatter", path.display()))?;
-        let end = rest.find("\n+++").with_context(|| format!("{}: frontmatter never closes", path.display()))?;
-        let mut card: Card =
-            toml::from_str(&rest[..end + 1]).with_context(|| format!("{}: invalid frontmatter", path.display()))?;
-        let after = &rest[end + 4..];
+        // The frontmatter ends at the first `+++` line that closes valid TOML: a note quoting a
+        // diff holds `+++ b/file` lines inside a multi-line string, and cutting there leaves the
+        // string open, so that candidate never parses and the search moves on.
+        let mut first_error = None;
+        let mut found = None;
+        for (end, _) in rest.match_indices("\n+++") {
+            let after = &rest[end + 4..];
+            if !(after.is_empty() || after.starts_with('\n') || after.starts_with("\r\n")) {
+                continue;
+            }
+            match toml::from_str::<Card>(&rest[..end + 1]) {
+                Ok(card) => {
+                    found = Some((card, after));
+                    break;
+                }
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        let (mut card, after) = match (found, first_error) {
+            (Some(f), _) => f,
+            (None, Some(e)) => return Err(e).with_context(|| format!("{}: invalid frontmatter", path.display())),
+            (None, None) => bail!("{}: frontmatter never closes", path.display()),
+        };
         card.body = after.trim_start_matches(['\r', '\n']).trim_end().to_owned();
         card.path = path.to_path_buf();
         Ok(card)
@@ -328,6 +353,9 @@ pub fn attach(repo: &Repo, id: u32, name: &str, bytes: &[u8]) -> Result<Card> {
 
 /// Takes an image off the card and deletes its file.
 pub fn detach(repo: &Repo, id: u32, file: &str) -> Result<Card> {
+    if !crate::is_plain_name(file) {
+        bail!("bad image name {file}");
+    }
     let _lock = Lock::take(repo)?;
     let mut card = get(repo, id)?;
     let before = card.images.len();
@@ -346,7 +374,7 @@ pub fn image_bytes(repo: &Repo, card: &Card) -> Vec<(&'static str, Vec<u8>)> {
     let dir = images_dir(repo, card.id);
     card.images
         .iter()
-        .filter(|f| !f.contains('/') && !f.contains(".."))
+        .filter(|f| crate::is_plain_name(f))
         .filter_map(|f| Some((image_type(f)?, fs::read(dir.join(f)).ok()?)))
         .collect()
 }
@@ -485,13 +513,14 @@ pub fn trash_dir(repo: &Repo) -> PathBuf {
     repo.board.join("deleted")
 }
 
+/// The numbers held by the card files in `dir`, read from the names: a card whose file no
+/// longer parses still holds its number.
+fn file_ids(dir: &Path) -> Vec<u32> {
+    fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| file_id(&e.file_name())).collect()
+}
+
 fn deleted_ids(repo: &Repo) -> Vec<u32> {
-    fs::read_dir(trash_dir(repo))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| e.file_name().to_string_lossy().split('-').next()?.parse().ok())
-        .collect()
+    file_ids(&trash_dir(repo))
 }
 
 /// Deletes a card: its file moves to the board's `deleted/` folder (undo with `restore`), and
@@ -543,27 +572,30 @@ pub fn forget(repo: &Repo, ids: &[u32]) -> Result<Forgot> {
 /// Brings a deleted card back.
 pub fn restore(repo: &Repo, id: u32) -> Result<Card> {
     let _lock = Lock::take(repo)?;
-    let prefix = format!("{id:04}-");
-    let from = fs::read_dir(trash_dir(repo))
-        .ok()
-        .and_then(|rd| rd.flatten().find(|e| e.file_name().to_string_lossy().starts_with(&prefix)))
-        .with_context(|| format!("no deleted card #{id}"))?;
-    if get(repo, id).is_ok() {
+    let from = card_file(&trash_dir(repo), id).with_context(|| format!("no deleted card #{id}"))?;
+    if card_file(&dir(repo), id).is_some() {
         bail!("there is already a card #{id}");
     }
-    let to = dir(repo).join(from.file_name());
-    fs::rename(from.path(), &to)?;
+    let to = dir(repo).join(from.file_name().context("a card file has a name")?);
+    fs::rename(&from, &to)?;
     Card::parse(&fs::read_to_string(&to)?, &to)
 }
 
+/// The card number a file in a board folder holds: `0007-title.md` is 7. Anything else (a
+/// write's temp file, a stray file) holds none.
+fn file_id(name: &std::ffi::OsStr) -> Option<u32> {
+    let name = name.to_str()?;
+    let (digits, _) = name.strip_suffix(".md")?.split_once('-')?;
+    digits.parse().ok()
+}
+
+/// The file of card `id` in `dir`, if there is one.
+fn card_file(dir: &Path, id: u32) -> Option<PathBuf> {
+    fs::read_dir(dir).ok()?.flatten().find(|e| file_id(&e.file_name()) == Some(id)).map(|e| e.path())
+}
+
 pub fn get(repo: &Repo, id: u32) -> Result<Card> {
-    let prefix = format!("{id:04}-");
-    let dir = dir(repo);
-    let entry = fs::read_dir(&dir)
-        .ok()
-        .and_then(|rd| rd.flatten().find(|e| e.file_name().to_string_lossy().starts_with(&prefix)))
-        .with_context(|| format!("no card #{id}"))?;
-    let path = entry.path();
+    let path = card_file(&dir(repo), id).with_context(|| format!("no card #{id}"))?;
     Card::parse(&fs::read_to_string(&path)?, &path)
 }
 
@@ -575,7 +607,8 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
     let _lock = Lock::take(repo)?;
     let (cards, _) = list(repo)?;
     // Deleted cards keep their numbers, so an undo never collides with a newer card.
-    let id = cards.iter().map(|c| c.id).chain(deleted_ids(repo)).max().unwrap_or(0) + 1;
+    // Counted from the file names, so a card that fails to parse never has its number reused.
+    let id = cards.iter().map(|c| c.id).chain(file_ids(&dir(repo))).chain(deleted_ids(repo)).max().unwrap_or(0) + 1;
     // New cards go to the bottom of the board.
     let rank = cards.iter().map(|c| c.order().0).max().map_or(id as i64, |r| (r + 1).max(id as i64));
     let now = timestamp(now_secs());
@@ -856,6 +889,7 @@ fn rewrite_decision(repo: &Repo, id: &str, question: &str, answer: &str, old: &s
         .next()
         .map(|(i, _)| start + i + 1)
         .unwrap_or(text.len());
+    let (question, answer, old, title) = (one_line(question), entry_body(answer), one_line(old), one_line(title));
     let entry = format!("## {id}: {question}\n\n{answer}\n\nFrom card #{card} ({title}), {day}; changed from: {old}\n");
     let mut out = String::with_capacity(text.len() + 64);
     out.push_str(&text[..start]);
@@ -914,8 +948,25 @@ fn append_decision(repo: &Repo, id: &str, question: &str, answer: &str, card: u3
     if !text.ends_with('\n') {
         text.push('\n');
     }
+    let (question, answer, title) = (one_line(question), entry_body(answer), one_line(title));
     text.push_str(&format!("\n## {id}: {question}\n\n{answer}\n\nFrom card #{card} ({title}), {day}.\n"));
     atomic_write(&path, &text)
+}
+
+/// Text that goes on an entry's one line (its heading, the card's title): a question or title
+/// with line breaks in it could otherwise start an entry of its own.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// An entry's answer: kept as written, except that a line starting with `#` is escaped, so the
+/// answer never opens a heading (a forged `## D-xx` entry) in the decisions file.
+fn entry_body(text: &str) -> String {
+    text.trim()
+        .lines()
+        .map(|l| if l.trim_start().starts_with('#') { format!("\\{}", l.trim_start()) } else { l.to_owned() })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn write(card: &Card) -> Result<()> {
@@ -931,8 +982,10 @@ fn atomic_write(path: &Path, text: &str) -> Result<()> {
     fs::rename(&tmp, path).with_context(|| format!("could not write {}", path.display()))
 }
 
-/// Cross-process lock on the board's `.lock`. A lock older than 10 s is taken as abandoned.
-struct Lock(PathBuf);
+/// Cross-process lock on the board: an OS lock (`flock`) on the board's lock file, held while
+/// the value lives. The OS drops it when the holder ends, crash included, so there is no stale
+/// lock to guess about and nobody can take a lock that is still held.
+struct Lock(#[allow(dead_code)] fs::File);
 
 impl Lock {
     fn take(repo: &Repo) -> Result<Self> {
@@ -940,31 +993,21 @@ impl Lock {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
-        for _ in 0..250 {
-            match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => return Ok(Self(path)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| SystemTime::now().duration_since(t).ok())
-                        .is_some_and(|age| age > Duration::from_secs(10));
-                    if stale {
-                        let _ = fs::remove_file(&path);
-                    } else {
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
-                }
-                Err(e) => return Err(e).with_context(|| format!("could not lock {}", path.display())),
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("could not open {}", path.display()))?;
+        let until = SystemTime::now() + LOCK_WAIT;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self(file)),
+                Err(fs::TryLockError::WouldBlock) if SystemTime::now() < until => std::thread::sleep(Duration::from_millis(20)),
+                Err(fs::TryLockError::WouldBlock) => bail!("{} is held by another pit process; try again", path.display()),
+                Err(fs::TryLockError::Error(e)) => return Err(e).with_context(|| format!("could not lock {}", path.display())),
             }
         }
-        bail!("{} is held by another pit process; try again", path.display())
-    }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
     }
 }
 

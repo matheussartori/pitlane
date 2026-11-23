@@ -2,7 +2,7 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api, type Approval, type Decision } from "./api";
 import { t } from "./i18n";
-import { ErrorLine, Spinner, toast } from "./ui";
+import { ErrorLine, Spinner, toast, ownsKey } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -52,7 +52,7 @@ export function ApprovalBlock(props: {
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!props.keys || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (ownsKey(e)) return;
       if (document.querySelector("dialog[open]")) return;
       const pick: Record<string, () => void> = {
         "1": () => void decide("once"),

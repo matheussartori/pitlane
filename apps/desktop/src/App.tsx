@@ -20,7 +20,7 @@ import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, ProjectSheet, RunAllSheet, ShipSheet, type RunAllChoice } from "./sheets";
-import { Toasts, dismissable, installTips, toast } from "./ui";
+import { Toasts, dismissable, installTips, ownsKey, toast } from "./ui";
 import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
 
@@ -153,11 +153,15 @@ export default function App() {
   }
 
   // Loads are tagged so a slow answer for an old repo never overwrites a newer one.
+  // The fetching flag has its own tag: a plain reload that starts while a fetch is in flight
+  // drops the fetch's answer, but must not leave the spinner on.
   let generation = 0;
+  let fetchGen = 0;
   async function load(fetch: boolean) {
     const path = repo();
     if (!path) return;
     const gen = ++generation;
+    const fgen = fetch ? ++fetchGen : 0;
     if (fetch) setFetching(true);
     try {
       const y = await api.yard(path, fetch);
@@ -168,7 +172,7 @@ export default function App() {
     } catch (e) {
       if (gen === generation) setError(msg(e));
     } finally {
-      if (fetch && gen === generation) setFetching(false);
+      if (fetch && fgen === fetchGen) setFetching(false);
     }
   }
 
@@ -184,7 +188,7 @@ export default function App() {
       setCards((old) => keepUnchanged(old, r.cards));
       setProblems(r.problems);
     } catch (e) {
-      if (gen === cardsGen) setProblems([msg(e)]);
+      if (gen === cardsGen && path === repo()) setProblems([msg(e)]);
     }
   }
 
@@ -200,9 +204,16 @@ export default function App() {
       if (gen !== runsGen || path !== repo()) return;
       setRuns(r);
       for (const m of r) if (isLive(m.state)) void api.runFollow(m.id, 0).catch(() => {});
-      setQuota(await api.quota(path));
     } catch {
-      if (gen === runsGen) setRuns([]);
+      if (gen === runsGen && path === repo()) setRuns([]);
+      return;
+    }
+    // The quota is its own call: when it fails, the runs just read stay on screen.
+    try {
+      const q = await api.quota(path);
+      if (gen === runsGen && path === repo()) setQuota(q);
+    } catch {
+      // Keep the last quota; the next poll tries again.
     }
   }
 
@@ -218,7 +229,7 @@ export default function App() {
       const r = await api.reports(path);
       if (path === repo()) setReports(r);
     } catch {
-      setReports([]);
+      if (path === repo()) setReports([]);
     }
   }
   createEffect(on([tab, repo], ([t]) => t === "reports" && void loadReports()));
@@ -815,7 +826,7 @@ export default function App() {
       if (document.visibilityState === "visible" && jobs().some(isOpenJob)) void loadQueue();
     }, 4000);
     const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      const typing = ownsKey(e);
       if (e.metaKey && e.key === "\\") {
         e.preventDefault();
         toggleTower();

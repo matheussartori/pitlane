@@ -733,38 +733,13 @@ impl Supervisor {
             m.related = prep.related.clone();
         });
 
-        if self
-            .live
-            .lock()
-            .unwrap()
-            .get(&id)
-            .is_some_and(|l| l.stop_requested)
-        {
-            self.emit(
-                &id,
-                RunEvent::Note {
-                    text: "Stopped before the agent started".into(),
-                },
-            );
-            let mut settled = self.get(&id)?;
-            settled.state = RunState::Stopped;
-            let home = self.cfg.home.clone();
-            let _ = tokio::task::spawn_blocking(move || settle_card(&settled, &home, false)).await;
-            self.update(&id, |m| {
-                m.state = RunState::Stopped;
-                m.ended_at = Some(now_secs());
-            });
-            self.emit(
-                &id,
-                RunEvent::Exited {
-                    code: None,
-                    state: RunState::Stopped,
-                },
-            );
-            self.live.lock().unwrap().remove(&id);
+        if self.stopped_before_start(&id).await? {
             return Ok(());
         }
         self.wait_room(&id).await;
+        if self.stopped_before_start(&id).await? {
+            return Ok(());
+        }
         let session = self.get(&id)?.session_id;
         let mut cmd = Command::new(&self.cfg.claude_bin);
         cmd.args([
@@ -868,6 +843,8 @@ impl Supervisor {
                 .env("MCP_TOOL_TIMEOUT", "86400000");
         }
         cmd.current_dir(&prep.worktree)
+            // Tells the board tools (`pit mcp`) they serve an agent working a card.
+            .env("PITLANE_RUN", &id)
             .env_remove("CLAUDECODE")
             .env_remove("CLAUDE_CODE_CHILD_SESSION")
             // Performance may pause a session for a while: a request that went quiet then is
@@ -903,16 +880,21 @@ impl Supervisor {
         };
         stdin.write_all(format!("{line}\n").as_bytes()).await?;
         stdin.flush().await?;
-        {
+        let stopped_meanwhile = {
             let mut live = self.live.lock().unwrap();
-            if let Some(l) = live.get_mut(&id) {
+            live.get_mut(&id).is_some_and(|l| {
                 l.stdin = Some(stdin);
                 l.turn = true;
                 l.meta.pid = pid;
                 l.meta.state = RunState::Running;
-            }
-        }
+                l.stop_requested
+            })
+        };
         self.update(&id, |_| {});
+        // A stop that came while the agent was starting found no process to signal: send it now.
+        if stopped_meanwhile {
+            let _ = self.stop(&id);
+        }
         let _ = set_card_state(&self.get(&id)?, CardState::Running, &self.cfg.home);
 
         let stdout = child.stdout.take().context("no stdout")?;
@@ -1457,7 +1439,7 @@ impl Supervisor {
         {
             return allow(&input);
         }
-        let approval = Approval {
+        let mut approval = Approval {
             id: tool_use_id.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
             tool: tool.to_owned(),
             detail: runs::read_claude_line(&serde_json::json!({
@@ -1478,6 +1460,11 @@ impl Supervisor {
             let Some(l) = live.get_mut(run) else {
                 return deny("This run is not live any more.");
             };
+            // An id already waiting (a repeated or forged tool_use_id) gets one of its own, so it
+            // never takes the place of the request a person is looking at.
+            if l.pending.contains_key(&approval.id) {
+                approval.id = uuid::Uuid::new_v4().simple().to_string();
+            }
             l.pending.insert(approval.id.clone(), tx);
             l.meta.waiting.push(approval.clone());
         }
@@ -3306,6 +3293,38 @@ impl Supervisor {
         Ok(())
     }
 
+    /// A run whose stop came before its agent started: it ends Stopped, and its card is settled
+    /// as if it never ran. Asked before and after waiting for room, so a stop while waiting
+    /// never starts the agent.
+    async fn stopped_before_start(&self, id: &str) -> Result<bool> {
+        if !self.stop_requested(id) {
+            return Ok(false);
+        }
+        self.emit(
+            id,
+            RunEvent::Note {
+                text: "Stopped before the agent started".into(),
+            },
+        );
+        let mut settled = self.get(id)?;
+        settled.state = RunState::Stopped;
+        let home = self.cfg.home.clone();
+        let _ = tokio::task::spawn_blocking(move || settle_card(&settled, &home, false)).await;
+        self.update(id, |m| {
+            m.state = RunState::Stopped;
+            m.ended_at = Some(now_secs());
+        });
+        self.emit(
+            id,
+            RunEvent::Exited {
+                code: None,
+                state: RunState::Stopped,
+            },
+        );
+        self.live.lock().unwrap().remove(id);
+        Ok(true)
+    }
+
     fn stop_requested(&self, id: &str) -> bool {
         self.live
             .lock()
@@ -3348,11 +3367,14 @@ impl Supervisor {
         tokio::spawn(async move {
             for (after, sig) in [(4, libc::SIGTERM), (4, libc::SIGKILL)] {
                 tokio::time::sleep(Duration::from_secs(after)).await;
-                let live: Vec<String> = me.live.lock().unwrap().keys().cloned().collect();
-                for (id, pid) in &pids {
-                    if live.contains(id) {
-                        signal(*pid, sig);
-                    }
+                // Only a session still on the same process: a run that moved on to its checks has
+                // no agent any more, and its old group id may belong to someone else by now.
+                let still: Vec<(String, u32)> = {
+                    let live = me.live.lock().unwrap();
+                    pids.iter().filter(|(id, pid)| live.get(id).is_some_and(|l| l.meta.pid == Some(*pid))).cloned().collect()
+                };
+                for (_, pid) in &still {
+                    signal(*pid, sig);
                 }
             }
         });
@@ -3936,8 +3958,10 @@ fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         _ => CardState::Blocked,
     };
     // Stopped once the agent had started: the next Run resumes its session, not a new one.
-    let paused = (m.state == RunState::Stopped && m.kind == SessionKind::Run && ran)
-        .then(|| m.id.clone());
+    // Stopped before it started: the session it was going to resume is still the one to resume.
+    let paused = (m.state == RunState::Stopped && m.kind == SessionKind::Run)
+        .then(|| if ran { Some(m.id.clone()) } else { m.resumed_from.clone() })
+        .flatten();
     cards::update(
         &r,
         m.card,

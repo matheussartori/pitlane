@@ -278,3 +278,31 @@ fn images_ride_with_the_card() {
     assert_eq!(c4.images, ["2-shot.jpg", "1-again.png"]);
     assert_eq!(cards::get(&r, c.id).unwrap().images.len(), 2, "kept in the card file");
 }
+
+#[test]
+fn a_note_holding_a_diff_keeps_the_card_readable() {
+    let (_t, r) = repo();
+    let c = cards::add(&r, NewCard { title: "Diff in a note".into(), body: "Spec.".into(), ..Default::default() }).unwrap();
+    let diff = "--- a/src/x.rs\n+++ b/src/x.rs\n@@ -1 +1 @@\n-old\n+new";
+    cards::note(&r, c.id, "claude", diff).unwrap();
+    let back = cards::get(&r, c.id).unwrap();
+    assert_eq!(back.body, "Spec.");
+    assert!(back.notes.iter().any(|n| n.text == diff));
+    let (all, problems) = cards::list(&r).unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(all.len(), 1);
+}
+
+#[test]
+fn a_leftover_temp_file_is_not_the_card() {
+    let (_t, r) = repo();
+    let c = cards::add(&r, NewCard { title: "Real".into(), ..Default::default() }).unwrap();
+    // A write that crashed between writing and renaming leaves this behind.
+    fs::write(c.path.with_extension("tmp999"), "+++\nbroken").unwrap();
+    for _ in 0..5 {
+        assert_eq!(cards::get(&r, c.id).unwrap().path, c.path);
+    }
+    let u = cards::update(&r, c.id, CardPatch { state: Some(CardState::Ready), ..Default::default() }).unwrap();
+    assert_eq!(u.path, c.path);
+    assert_eq!(cards::get(&r, c.id).unwrap().state, CardState::Ready);
+}

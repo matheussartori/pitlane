@@ -27,6 +27,10 @@ pub use supervisor::{Config, Supervisor};
 pub async fn serve(cfg: Config) -> Result<()> {
     let sock = runs::socket_path(&cfg.home);
     std::fs::create_dir_all(&cfg.home)?;
+    // One daemon per home, decided by a lock the OS drops when the process ends: two daemons
+    // started at once (the app and the CLI) would otherwise both bind, and the second's
+    // recovery would end the first one's agents. Held for as long as `serve` runs.
+    let _single = single_instance(&cfg.home)?;
     if UnixStream::connect(&sock).await.is_ok() {
         bail!("a Pitlane daemon is already running on {}", sock.display());
     }
@@ -48,6 +52,18 @@ pub async fn serve(cfg: Config) -> Result<()> {
             }
         });
     }
+}
+
+/// Takes `pitd.lock` in `home` for good, or fails when another daemon holds it.
+fn single_instance(home: &std::path::Path) -> Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    let path = home.join("pitd.lock");
+    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).with_context(|| format!("could not open {}", path.display()))?;
+    // SAFETY: flock on a descriptor this function owns; it takes no pointers.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        bail!("a Pitlane daemon is already running for {}", home.display());
+    }
+    Ok(f)
 }
 
 async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
@@ -87,8 +103,13 @@ async fn send(w: &mut tokio::net::unix::OwnedWriteHalf, v: &Value) -> Result<()>
     Ok(())
 }
 
+/// The run a request names; only a plain name, so it never reaches outside `runs/`.
 fn run_arg(req: &Value) -> Result<&str> {
-    req.get("run").and_then(Value::as_str).context("run is required")
+    let run = req.get("run").and_then(Value::as_str).context("run is required")?;
+    if !pit_core::is_plain_name(run) {
+        bail!("{run:?} is not a run");
+    }
+    Ok(run)
 }
 
 async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {

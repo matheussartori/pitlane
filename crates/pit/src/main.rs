@@ -298,7 +298,7 @@ fn open(dir: Option<PathBuf>) -> Result<Repo> {
 fn run(cli: Cli) -> Result<ExitCode> {
     if let Cmd::Daemon = cli.cmd {
         let (_, home) = pit_core::default_homes();
-        let claude_bin = std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
+        let claude_bin = claude_bin();
         let pit_bin = std::env::current_exe().ok();
         tokio::runtime::Runtime::new()?.block_on(pitd::serve(pitd::Config { home, claude_bin, pit_bin }))?;
         return Ok(ExitCode::SUCCESS);
@@ -346,9 +346,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     "{}  #{} {}\n  {} {}  {}",
                     paint(ACCENT, a["run"].as_str().unwrap_or_default()),
                     a["card"],
-                    a["card_title"].as_str().unwrap_or_default(),
-                    a["approval"]["tool"].as_str().unwrap_or_default(),
-                    a["approval"]["detail"].as_str().unwrap_or_default(),
+                    plain(a["card_title"].as_str().unwrap_or_default()),
+                    plain(a["approval"]["tool"].as_str().unwrap_or_default()),
+                    plain(a["approval"]["detail"].as_str().unwrap_or_default()),
                     paint(MUTED, &format!("pit allow {} | pit deny {}", a["run"].as_str().unwrap_or_default(), a["run"].as_str().unwrap_or_default()))
                 );
             }
@@ -519,7 +519,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let routing = pit_core::accounts::Routing::load(&pitlane_home)?;
             let mine = routing.repo_account(&repo.root, &home);
             let quota = daemon_quota();
-            let claude = std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
+            let claude = claude_bin();
             for a in &routing.accounts {
                 let st = pit_core::accounts::status(a, &pitlane_home, &claude);
                 let signed = if st.logged_in {
@@ -565,7 +565,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             if a.kind.is_api_key() {
                 bail!("{id} is an api-key account: it signs in through its api_key_helper");
             }
-            let mut cmd = std::process::Command::new("claude");
+            let mut cmd = std::process::Command::new(claude_bin());
             cmd.args(["auth", "login"]).env_remove("CLAUDECODE");
             if let Some(dir) = pit_core::accounts::profile_dir(&id, &pitlane_home) {
                 std::fs::create_dir_all(&dir)?;
@@ -609,17 +609,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
         }
         Cmd::Log { run, follow } => {
-            let mut c = daemon()?;
             if follow {
-                return follow_run(&mut c, &run);
+                return follow_run(&mut daemon()?, &run);
             }
-            let end = c.follow(&run, 0, |_, e| {
+            // Without -f: what happened so far, read from the run's record, without waiting.
+            let (_, pitlane_home) = pit_core::default_homes();
+            let dir = pit_core::runs::run_dir(&pitlane_home, &run)?;
+            let meta: RunMeta = serde_json::from_slice(&std::fs::read(dir.join("meta.json")).with_context(|| format!("no run {run}"))?)?;
+            let timeline = std::fs::read_to_string(dir.join("timeline.jsonl")).unwrap_or_default();
+            for e in timeline.lines().filter_map(|l| serde_json::from_str::<RunEvent>(l).ok()) {
                 print_event(&e);
-                true
-            })?;
-            if let Some(m) = end {
-                print_end(&m);
             }
+            print_end(&meta);
         }
         Cmd::Say { run, text } => {
             daemon()?.call(serde_json::json!({ "op": "say", "run": run, "text": text }))?;
@@ -642,7 +643,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(ExitCode::SUCCESS);
             }
-            println!("{} {} from {} {}", paint(DONE, "✓"), r.branch, r.base, &r.base_sha[..8]);
+            println!("{} {} from {} {}", paint(DONE, "✓"), r.branch, r.base, short(&r.base_sha));
             println!("  {}", r.path.display());
             if !r.copied.is_empty() {
                 println!("  copied {}", r.copied.join(", "));
@@ -663,7 +664,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Clean { yes, dry_run, undo, trash: list_trash, no_fetch } => {
             if let Some(b) = undo {
                 let r = actions::undo_clean(&repo, &b)?;
-                println!("{} {} restored at {}", paint(DONE, "✓"), r.branch, &r.sha[..8]);
+                println!("{} {} restored at {}", paint(DONE, "✓"), r.branch, short(&r.sha));
                 if r.remote_restored {
                     println!("  remote branch pushed back");
                 }
@@ -680,7 +681,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 let now = lanes_now();
                 for e in entries {
                     let left = trash::KEEP_DAYS.saturating_sub(now.saturating_sub(e.deleted_at) / 86_400);
-                    println!("{}  {}  {}d left  pit clean --undo {}", &e.sha[..8], e.branch, left, e.branch);
+                    println!("{}  {}  {}d left  pit clean --undo {}", short(&e.sha), e.branch, left, e.branch);
                 }
                 return Ok(ExitCode::SUCCESS);
             }
@@ -746,7 +747,11 @@ fn follow_run(c: &mut Client, run: &str) -> Result<ExitCode> {
             print_end(&m);
             if m.state == RunState::Done { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
-        None => ExitCode::SUCCESS,
+        // The stream ended without the run's end: the daemon went away mid-run.
+        None => {
+            eprintln!("{} the daemon stopped answering before the run ended", paint(FAIL, "✕"));
+            ExitCode::FAILURE
+        }
     })
 }
 
@@ -779,46 +784,47 @@ fn run_figures(m: &RunMeta) -> String {
 fn print_event(e: &RunEvent) {
     match e {
         RunEvent::Started { model, .. } => println!("{} agent started ({model})", paint(RUN, "▸")),
-        RunEvent::Text { text, .. } => println!("{}", text.trim_end()),
-        RunEvent::Tool { name, detail, .. } => println!("  {} {}", paint(MUTED, name), paint(MUTED, detail)),
-        RunEvent::ToolDone { ok: false, detail, .. } => println!("    {} {}", paint(FAIL, "✕"), paint(MUTED, detail)),
+        RunEvent::Text { text, .. } => println!("{}", plain(text.trim_end())),
+        RunEvent::Tool { name, detail, .. } => println!("  {} {}", paint(MUTED, &plain(name)), paint(MUTED, &plain(detail))),
+        RunEvent::ToolDone { ok: false, detail, .. } => println!("    {} {}", paint(FAIL, "✕"), paint(MUTED, &plain(detail))),
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
         RunEvent::Shot { file, .. } => println!("    {} {}", paint(MUTED, "screenshot"), paint(MUTED, file)),
-        RunEvent::Said { text } => println!("{} {text}", paint(ACCENT, "you:")),
+        RunEvent::Said { text } => println!("{} {}", paint(ACCENT, "you:"), plain(text)),
         RunEvent::Tuned { model, effort } => println!(
             "{}",
             paint(MUTED, &[model.as_ref().map(|m| format!("model {m}")), effort.as_ref().map(|e| format!("effort {e}"))].into_iter().flatten().collect::<Vec<_>>().join(", "))
         ),
-        RunEvent::Note { text } => println!("{}", paint(MUTED, text)),
+        RunEvent::Note { text } => println!("{}", paint(MUTED, &plain(text))),
         RunEvent::Proof { command, ok, duration_ms } => println!(
             "{} {command}  {}",
             if *ok { paint(DONE, "✓") } else { paint(FAIL, "✕") },
             paint(MUTED, &format!("{:.1}s", *duration_ms as f64 / 1000.0))
         ),
         RunEvent::Judged { verdict, summary, findings } => println!(
-            "{} judge {}: {summary} ({findings} finding(s))",
+            "{} judge {}: {} ({findings} finding(s))",
             paint(ACCENT, "?"),
-            if *verdict == pit_core::verify::Verdict::Approve { "approves" } else { "asks for changes" }
+            if *verdict == pit_core::verify::Verdict::Approve { "approves" } else { "asks for changes" },
+            plain(summary)
         ),
         RunEvent::Limited { window, .. } => println!("{} hit the {} usage limit", paint(ACCENT, "!"), window.replace('_', "-")),
         RunEvent::Approval { approval } => println!(
             "{} waiting for you: {} {}  {}",
             paint(ACCENT, "?"),
-            approval.tool,
-            approval.detail,
+            plain(&approval.tool),
+            plain(&approval.detail),
             paint(MUTED, "pit allow <run> [--run-wide|--always] | pit deny <run>")
         ),
         RunEvent::Decided { decision, message, .. } => println!(
             "  {} {}",
             paint(MUTED, &format!("{decision:?}").to_lowercase()),
-            paint(MUTED, message.as_deref().unwrap_or_default())
+            paint(MUTED, &plain(message.as_deref().unwrap_or_default()))
         ),
         RunEvent::Finished { ok, handoff, denied, .. } => {
             if let Some(s) = handoff.as_ref().and_then(|h| h.get("summary")).and_then(|s| s.as_str()) {
-                println!("\n{} {s}", if *ok { paint(DONE, "✓") } else { paint(FAIL, "✕") });
+                println!("\n{} {}", if *ok { paint(DONE, "✓") } else { paint(FAIL, "✕") }, plain(s));
             }
             for d in denied {
-                println!("  {} not allowed: {d}", paint(ACCENT, "!"));
+                println!("  {} not allowed: {}", paint(ACCENT, "!"), plain(d));
             }
         }
         RunEvent::Exited { .. } => {}
@@ -859,8 +865,8 @@ fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
             for c in &shown {
                 let open = c.open_questions();
                 let asks = if open > 0 { paint(ACCENT, &format!("  {open} to answer")) } else { String::new() };
-                let lane = c.lane.as_deref().map(|l| paint(MUTED, &format!("  {l}"))).unwrap_or_default();
-                println!("{}  {:<8}  {}{asks}{lane}", paint(MUTED, &format!("#{:04}", c.id)), c.state.as_str(), c.title);
+                let lane = c.lane.as_deref().map(|l| paint(MUTED, &format!("  {}", plain(l)))).unwrap_or_default();
+                println!("{}  {:<8}  {}{asks}{lane}", paint(MUTED, &format!("#{:04}", c.id)), c.state.as_str(), plain(&c.title));
             }
             for p in problems {
                 eprintln!("{} {p}", paint(FAIL, "skipped:"));
@@ -872,12 +878,12 @@ fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
                 println!("{}", serde_json::to_string_pretty(&CardOut::from(c))?);
                 return Ok(ExitCode::SUCCESS);
             }
-            println!("#{} {}  ({}{})", c.id, c.title, c.state.as_str(), c.lane.as_deref().map(|l| format!(", lane {l}")).unwrap_or_default());
+            println!("#{} {}  ({}{})", c.id, plain(&c.title), c.state.as_str(), c.lane.as_deref().map(|l| format!(", lane {}", plain(l))).unwrap_or_default());
             if !c.body.is_empty() {
-                println!("\n{}", c.body);
+                println!("\n{}", plain(&c.body));
             }
             for q in &c.questions {
-                println!("\n{} {}", paint(if q.is_open() { ACCENT } else { MUTED }, &format!("Q{}", q.id)), q.text);
+                println!("\n{} {}", paint(if q.is_open() { ACCENT } else { MUTED }, &format!("Q{}", q.id)), plain(&q.text));
                 for (i, o) in q.options.iter().enumerate() {
                     let rec = if q.recommended == Some(i) { "  (recommended)" } else { "" };
                     println!("   {}. {o}{rec}", i + 1);
@@ -948,9 +954,9 @@ fn ship(repo: &Repo, branch: Option<String>, to: Option<&str>, yes: bool, fetch:
     println!(
         "merge {} {} into {remote}/{} {}, then push {remote} {}",
         branch,
-        &plan.sha[..8],
+        short(&plan.sha),
         plan.target,
-        &plan.target_sha[..8],
+        short(&plan.target_sha),
         plan.target
     );
     if let Some((cmd, dir)) = &plan.check {
@@ -964,7 +970,7 @@ fn ship(repo: &Repo, branch: Option<String>, to: Option<&str>, yes: bool, fetch:
         return Ok(ExitCode::FAILURE);
     }
     let r = actions::execute_ship(repo, &plan)?;
-    println!("{} {} is in {} ({})", paint(DONE, "✓"), branch, r.target, &r.merge_sha[..8]);
+    println!("{} {} is in {} ({})", paint(DONE, "✓"), branch, r.target, short(&r.merge_sha));
     match r.local {
         LocalUpdate::Updated => println!("  local {} updated", r.target),
         LocalUpdate::LeftBehind(p) => println!("  local {} has changes in {}; pull there when ready", r.target, p.display()),
@@ -994,7 +1000,7 @@ fn clean(repo: &Repo, yes: bool, dry_run: bool, fetch: bool) -> Result<ExitCode>
             what.push("remote");
         }
         let how = i.how.map_or("", |h| h.label());
-        println!("  {}  {}  ({how})  {}", &i.sha[..8], i.branch, paint(MUTED, &what.join(" + ")));
+        println!("  {}  {}  ({how})  {}", short(&i.sha), i.branch, paint(MUTED, &what.join(" + ")));
     }
     if dry_run {
         return Ok(ExitCode::SUCCESS);
@@ -1233,6 +1239,23 @@ fn term_width() -> Option<usize> {
 
 fn color_on() -> bool {
     std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+/// Text that came from an agent or a card, safe to print: control characters (escape
+/// sequences that move the cursor, rewrite the line or set the clipboard) are dropped, so what
+/// you read in `pit approvals` is what you approve. Line breaks and tabs stay.
+fn plain(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
+}
+
+/// A commit's short form; never panics on a short or empty id.
+fn short(sha: &str) -> &str {
+    sha.get(..8).unwrap_or(sha)
+}
+
+/// The Claude Code executable: `$PITLANE_CLAUDE_BIN`, else `claude` on the PATH.
+fn claude_bin() -> String {
+    std::env::var("PITLANE_CLAUDE_BIN").unwrap_or_else(|_| "claude".into())
 }
 
 fn paint(style: &str, text: &str) -> String {

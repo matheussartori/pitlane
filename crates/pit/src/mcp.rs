@@ -2,13 +2,17 @@
 //! Code, Codex) creates, asks about and moves cards. JSON-RPC 2.0, one message per line.
 //! Install: `claude mcp add pitlane -- pit mcp`.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::cards::{self, Card, CardOut, CardPatch, CardState, NewCard, NewQuestion};
 use serde_json::{Value, json};
+
+/// Set by the daemon in a card run's environment (the run id): the board tools then hold back
+/// what only the person or the daemon decides.
+pub const RUN_ENV: &str = "PITLANE_RUN";
 
 const VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -18,28 +22,37 @@ each with options and the one you recommend; the user answers them in Pitlane's 
 becomes a recorded project decision that get_card and every run include. Read get_card before working on a card.";
 
 /// `pit mcp --approve <run>`: the server Claude Code asks, through `--permission-prompt-tool`,
-/// whenever it wants a tool no rule allows. Each call waits on the daemon for a person's answer.
+/// whenever it wants a tool no rule allows. Each approval waits on the daemon for a person's
+/// answer on a thread of its own, so parallel subagents' asks (and pings) never queue behind it.
 pub fn serve_approver(run: String) -> Result<()> {
+    let out = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
+    let send = |out: &std::sync::Mutex<std::io::Stdout>, v: Value| {
+        let mut o = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = writeln!(o, "{v}").and_then(|()| o.flush());
+    };
     let stdin = std::io::stdin();
-    let mut out = std::io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-        let Some(id) = msg.get("id").cloned() else { continue };
+    let mut lines = stdin.lock();
+    while let Some(line) = read_message(&mut lines)? {
+        let msg = match serde_json::from_str::<Value>(&line) {
+            Ok(m) => m,
+            Err(e) => {
+                send(&out, error(Value::Null, -32700, &format!("parse error: {e}")));
+                continue;
+            }
+        };
+        let Some(id) = msg.get("id").cloned() else { continue }; // a notification
         let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        let result = match method {
-            "initialize" => {
+        let tool = params.get("name").and_then(Value::as_str).unwrap_or_default();
+        let result = match (method, tool) {
+            ("initialize", _) => {
                 let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
                 let version = VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(VERSIONS[0]);
                 json!({ "protocolVersion": version, "capabilities": { "tools": {} },
                         "serverInfo": { "name": "pitlane_run", "version": env!("CARGO_PKG_VERSION") } })
             }
-            "ping" => json!({}),
-            "tools/list" => json!({ "tools": [{
+            ("ping", _) => json!({}),
+            ("tools/list", _) => json!({ "tools": [{
                 "name": "approve",
                 "description": "Asks the person running this Pitlane card whether a tool may run.",
                 "inputSchema": { "type": "object", "properties": {
@@ -50,30 +63,62 @@ pub fn serve_approver(run: String) -> Result<()> {
                 "description": "Adds a note to the card you are working: context the next session needs (where the code is, what you found, a choice you made and why, what is left). Short markdown; one note per finding.",
                 "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
             }] }),
-            "tools/call" if params.get("name").and_then(Value::as_str) == Some("note") => {
+            ("tools/call", "note") => {
                 let text = params.pointer("/arguments/text").and_then(Value::as_str).unwrap_or_default();
                 match note_on_run(&run, text) {
                     Ok(()) => json!({ "content": [{ "type": "text", "text": "Noted on the card." }] }),
                     Err(e) => json!({ "content": [{ "type": "text", "text": format!("{e:#}") }], "isError": true }),
                 }
             }
-            "tools/call" => {
+            ("tools/call", "approve") => {
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                let answer = ask_daemon(&run, &args).unwrap_or_else(|e| {
-                    json!({ "behavior": "deny", "message": format!("Pitlane could not ask anyone: {e:#}") })
+                let (out, run) = (out.clone(), run.clone());
+                std::thread::spawn(move || {
+                    let answer = ask_daemon(&run, &args).unwrap_or_else(|e| {
+                        json!({ "behavior": "deny", "message": format!("Pitlane could not ask anyone: {e:#}") })
+                    });
+                    let result = json!({ "content": [{ "type": "text", "text": answer.to_string() }] });
+                    send(&out, json!({ "jsonrpc": "2.0", "id": id, "result": result }));
                 });
-                json!({ "content": [{ "type": "text", "text": answer.to_string() }] })
+                continue;
             }
+            ("tools/call", _) => json!({ "content": [{ "type": "text", "text": format!("unknown tool: {tool}") }], "isError": true }),
             _ => {
-                writeln!(out, "{}", error(id, -32601, &format!("method not found: {method}")))?;
-                out.flush()?;
+                send(&out, error(id, -32601, &format!("method not found: {method}")));
                 continue;
             }
         };
-        writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "result": result }))?;
-        out.flush()?;
+        send(&out, json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
     Ok(())
+}
+
+/// The longest message either server reads: far past any real card or approval, short of one
+/// line taking the memory.
+const MAX_MESSAGE: u64 = 8 << 20;
+
+/// The next non-empty line, or `None` at the end of input. A line past `MAX_MESSAGE` is skipped
+/// whole, and bytes that are not UTF-8 are replaced rather than ending the server.
+fn read_message(input: &mut impl BufRead) -> Result<Option<String>> {
+    loop {
+        let mut buf = Vec::new();
+        let n = (&mut *input).take(MAX_MESSAGE).read_until(b'\n', &mut buf)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        if buf.last() != Some(&b'\n') && n as u64 == MAX_MESSAGE {
+            // Too long: drop the rest of the line.
+            let mut rest = Vec::new();
+            while (&mut *input).take(MAX_MESSAGE).read_until(b'\n', &mut rest)? > 0 && rest.last() != Some(&b'\n') {
+                rest.clear();
+            }
+            continue;
+        }
+        let line = String::from_utf8_lossy(&buf).trim().to_owned();
+        if !line.is_empty() {
+            return Ok(Some(line));
+        }
+    }
 }
 
 /// A note from a run lands on the run's own card.
@@ -88,7 +133,8 @@ fn note_on_run(run: &str, text: &str) -> Result<()> {
 
 fn ask_daemon(run: &str, args: &Value) -> Result<Value> {
     let (_, home) = pit_core::default_homes();
-    let mut c = pit_core::runs::Client::connect(&home, std::env::current_exe().ok().as_deref())?;
+    // Never start a daemon from here: it would inherit the agent's environment and outlive the app.
+    let mut c = pit_core::runs::Client::connect(&home, None)?;
     let v = c.call(json!({
         "op": "ask",
         "run": run,
@@ -101,12 +147,9 @@ fn ask_daemon(run: &str, args: &Value) -> Result<Value> {
 
 pub fn serve(dir: PathBuf) -> Result<()> {
     let stdin = std::io::stdin();
+    let mut lines = stdin.lock();
     let mut out = std::io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
+    while let Some(line) = read_message(&mut lines)? {
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(msg) => handle(&msg, &dir),
             Err(e) => Some(error(Value::Null, -32700, &format!("parse error: {e}"))),
@@ -277,6 +320,15 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
             Some(v) => serde_json::from_value(v.clone()).context("questions: each needs text, optional options and recommended"),
         }
     };
+    // An agent working a card (the daemon marks it with PITLANE_RUN) adds cards and notes, but
+    // the board's decisions stay the person's and the daemon's: it does not answer questions,
+    // move cards, relink lanes or delete cards.
+    if std::env::var_os(RUN_ENV).is_some() {
+        let moves = name == "update_card" && (args.get("state").is_some() || args.get("lane").is_some());
+        if moves || matches!(name, "answer" | "delete_card") {
+            bail!("{name} is not available to an agent working a card: answers come from the person, and Pitlane moves the card when the run ends");
+        }
+    }
     Ok(match name {
         "brief" => {
             let card = match (args.get("id").and_then(Value::as_u64), str_arg("text")) {

@@ -1,5 +1,5 @@
 // Small building blocks: modal sheet, toasts, spinner.
-import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createSignal, onCleanup, onMount, type JSX, type Resource } from "solid-js";
 import { Icon } from "./icons";
 import { t } from "./i18n";
 
@@ -140,6 +140,27 @@ export function Sheet(props: {
       <div class="sheet-foot">{props.foot}</div>
     </dialog>
   );
+}
+
+/** Whether a key press belongs to what has focus rather than to a screen's shortcuts: any text
+ *  field, a select, editable content or a terminal, and Enter or Space on a button or link. */
+export function ownsKey(e: KeyboardEvent): boolean {
+  const el = e.target;
+  if (!(el instanceof HTMLElement)) return false;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
+  if (el.isContentEditable || el.closest(".xterm")) return true;
+  return (e.key === "Enter" || e.key === " ") && !!el.closest("button, a[href], [role=button]");
+}
+
+/** A resource's value, or undefined while it is failed. Solid throws when a failed resource is
+ *  read, and nothing up the tree catches it, so read resources that can fail through this. */
+export function ok<T>(r: Resource<T>): T | undefined {
+  return r.error ? undefined : r();
+}
+
+/** Like `ok`, for `latest`: the last value, kept on screen while a re-read is in flight. */
+export function okLatest<T>(r: Resource<T>): T | undefined {
+  return r.error ? undefined : r.latest;
 }
 
 export function ErrorLine(props: { children: JSX.Element }) {

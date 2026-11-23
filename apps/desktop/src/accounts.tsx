@@ -5,7 +5,7 @@ import { For, Show, createResource, createSignal } from "solid-js";
 import { api, type AccountKind, type AccountView } from "./api";
 import { Icon } from "./icons";
 import { t } from "./i18n";
-import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+import { ErrorLine, Sheet, Spinner, toast, ok } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -39,7 +39,7 @@ function Meter(props: { label: string; used: number | null | undefined; at: numb
 export function AccountsSheet(props: { repo: string; repoName: string; onChanged: () => void; onClose: () => void }) {
   const [data, { refetch }] = createResource(() => api.accounts(props.repo));
   const [busy, setBusy] = createSignal<string | null>(null);
-  const here = () => data()?.accounts.find((a) => a.here)?.id;
+  const here = () => ok(data)?.accounts.find((a) => a.here)?.id;
 
   async function use(a: AccountView) {
     setBusy(a.id);
@@ -67,7 +67,7 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
       onClose={props.onClose}
       foot={
         <>
-          <span class="sheet-note">{data()?.file}</span>
+          <span class="sheet-note">{ok(data)?.file}</span>
           <button type="button" class="btn btn-primary" onClick={props.onClose}>
             {t("Done")}
           </button>
@@ -80,7 +80,7 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
             {t("Switching between your subscription accounts is always yours: here or")} <code>pit account use</code>.
           </p>
           <ul class="accounts" role="radiogroup" aria-label={t("Account for {repo}", { repo: props.repoName })}>
-            <For each={data()?.accounts}>
+            <For each={ok(data)?.accounts}>
               {(a) => (
                 <li class="account" data-here={a.here ? "" : undefined}>
                   <label class="account-pick">
@@ -128,8 +128,8 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                     <Show when={a.usage} fallback={<span class="account-hint">{a.kind === "api-key" ? t("Only after you agree") : t("No runs yet")}</span>}>
                       {(u) => (
                         <>
-                          <Meter label="5h" used={u().five_hour} at={data()!.five_hour_at} />
-                          <Meter label="7d" used={u().seven_day} at={data()!.seven_day_at} />
+                          <Meter label="5h" used={u().five_hour} at={ok(data)!.five_hour_at} />
+                          <Meter label="7d" used={u().seven_day} at={ok(data)!.seven_day_at} />
                         </>
                       )}
                     </Show>
@@ -142,12 +142,12 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
           <div class="sheet-sub-row">
             <h3 class="sheet-sub">{t("The route")}</h3>
             <span class="sheet-sub-note">
-              {t("under {a}% of 5h and {b}% of 7d", { a: data()?.five_hour_at ?? "", b: data()?.seven_day_at ?? "" })}
+              {t("under {a}% of 5h and {b}% of 7d", { a: ok(data)?.five_hour_at ?? "", b: ok(data)?.seven_day_at ?? "" })}
             </span>
           </div>
           <p class="side-hint">{t("An API key always asks first.")}</p>
           <ol class="route">
-            <For each={data()?.route}>{(r) => <li>{routeLabel(r, here())}</li>}</For>
+            <For each={ok(data)?.route}>{(r) => <li>{routeLabel(r, here())}</li>}</For>
           </ol>
 
           <h3 class="sheet-sub">{t("Add an account")}</h3>

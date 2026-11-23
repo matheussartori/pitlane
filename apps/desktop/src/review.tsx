@@ -6,7 +6,7 @@ import { reviewSummary } from "./cards";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
 import { clock, elapsed, money } from "./run";
-import { ErrorLine, Spinner, toast } from "./ui";
+import { ErrorLine, Spinner, toast, ok, okLatest } from "./ui";
 import { Grip, REVIEW_SIDE_W } from "./layout";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -309,16 +309,16 @@ export function ReviewScreen(props: {
     { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
   );
   const [diff, { refetch: rereadDiff }] = createResource(diffSource, ([repo, lane, from]) => api.laneDiff(repo, lane, from));
-  const judgement = () => verification()?.judge?.judgement ?? null;
+  const judgement = () => ok(verification)?.judge?.judgement ?? null;
   const findings = () => judgement()?.findings ?? [];
-  const placed = createMemo(() => anchors(diff.latest ? parsePatch(diff.latest.patch) : [], findings()));
+  const placed = createMemo(() => anchors(parsePatch(okLatest(diff)?.patch ?? ""), findings()));
   const [picked, setPicked] = createSignal<Set<number>>(new Set());
   const [note, setNote] = createSignal("");
   const [asking, setAsking] = createSignal(false);
   const [busy, setBusy] = createSignal<string | null>(null);
   const summary = () => reviewSummary(props.run);
   const needsChanges = () => props.run?.proofs_ok === false || props.run?.verdict === "changes";
-  const maxRounds = () => verification()?.max_rounds ?? 3;
+  const maxRounds = () => ok(verification)?.max_rounds ?? 3;
   const roundsLeft = () => maxRounds() - round();
 
   const pick = (i: number, on: boolean) => {
@@ -355,7 +355,7 @@ export function ReviewScreen(props: {
   }
 
   const h = () => props.run?.handoff;
-  const v = (): Verification | null | undefined => verification();
+  const v = (): Verification | null | undefined => ok(verification);
   const passing = () => (v()?.proofs ?? []).filter((p) => p.ok).length;
 
   return (
@@ -447,8 +447,8 @@ export function ReviewScreen(props: {
                 </div>
               </Show>
               {/* A re-read keeps the diff on screen (and your scroll); only the first read shows the spinner. */}
-              <Show when={diff.latest !== undefined || !diff.loading} fallback={<p class="loading-line"><Spinner /> {t("Reading the diff")}</p>}>
-                <Show when={diff.latest} fallback={<ErrorLine>{diff.error ? msg(diff.error) : t("No lane to compare.")}</ErrorLine>}>
+              <Show when={okLatest(diff) !== undefined || !diff.loading} fallback={<p class="loading-line"><Spinner /> {t("Reading the diff")}</p>}>
+                <Show when={okLatest(diff)} fallback={<ErrorLine>{diff.error ? msg(diff.error) : t("No lane to compare.")}</ErrorLine>}>
                   {(d) => (
                     <DiffView
                       diff={d()}

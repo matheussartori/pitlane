@@ -7,7 +7,7 @@ import { Prose, inline } from "./prose";
 import { openQuestions, type OpenQuestion } from "./cards";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
-import { Spinner, toast } from "./ui";
+import { Spinner, toast, ownsKey } from "./ui";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
@@ -575,7 +575,7 @@ export function InboxView(props: {
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!props.active || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (ownsKey(e)) return;
       if (document.querySelector("dialog[open]")) return;
       const q = current();
       if (!q) return;

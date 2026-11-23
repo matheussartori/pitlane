@@ -111,13 +111,15 @@ pub fn write_theme(pitlane_home: &Path, dark: serde_json::Map<String, serde_json
     Ok(changed)
 }
 
-fn password() -> String {
+/// A fresh password for one start of the server: 24 random bytes from the OS, or no server at
+/// all. A password that might be all zeros is worse than none.
+fn password() -> Result<String> {
+    use std::io::Read;
     let mut b = [0u8; 24];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let _ = f.read_exact(&mut b);
-    }
-    b.iter().map(|x| format!("{x:02x}")).collect()
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut b))
+        .context("could not read random bytes for the VS Code password")?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
 /// Settings Pitlane starts VS Code with: no telemetry, no tour, no AI. Written once; yours after.
@@ -158,6 +160,9 @@ fn look(obj: &mut serde_json::Map<String, serde_json::Value>) {
     use serde_json::{Value, json};
     let mono = "'Geist Mono', Menlo, monospace";
     let keys: Vec<(&str, Value, Vec<Value>)> = vec![
+        // Worktrees open without the trust prompt, and agents write in them: a task an agent
+        // left in .vscode/tasks.json must not run on its own when the folder opens.
+        ("task.allowAutomaticTasks", json!("off"), vec![]),
         // Cursor's layout: the views as a row of icons atop the side bar, one title bar with search.
         ("workbench.activityBar.location", json!("top"), vec![json!("default")]),
         ("window.commandCenter", json!(true), vec![json!(false)]),
@@ -222,7 +227,7 @@ impl Vscode {
         let port = (STABLE_PORT..STABLE_PORT + 10)
             .find(|p| TcpListener::bind(("127.0.0.1", *p)).is_ok())
             .map_or_else(|| TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map(|a| a.port()), Ok)?;
-        let pw = password();
+        let pw = password()?;
         let log = std::fs::File::create(dir(pitlane_home).join("server.log"))?;
         let child: Child = Command::new(bin)
             // Its config file lives with Pitlane's, not in ~/.config.
@@ -317,16 +322,8 @@ const GEIST: &[u8] = include_bytes!("../../node_modules/@fontsource-variable/gei
 const GEIST_MONO: &[u8] = include_bytes!("../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2");
 
 fn base64(b: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(b.len().div_ceil(3) * 4);
-    for c in b.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
-        out.push(T[(n >> 18) as usize & 63] as char);
-        out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
-    }
-    out
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(b)
 }
 
 const LOOK_JS: &str = include_str!("vscode-look.js");
@@ -419,6 +416,6 @@ mod tests {
     fn types_the_password_safely() {
         let s = login_script("ab\"c");
         assert!(s.contains(r#""ab\"c""#), "{s}");
-        assert_eq!(password().len(), 48);
+        assert_eq!(password().unwrap().len(), 48);
     }
 }

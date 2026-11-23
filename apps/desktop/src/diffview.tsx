@@ -6,6 +6,7 @@ import type { DiffFile, DiffHunk } from "./review";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
 import { DIFF_FILES_W, Grip } from "./layout";
+import { ownsKey } from "./ui";
 
 export type FileStatus = DiffFile["status"];
 

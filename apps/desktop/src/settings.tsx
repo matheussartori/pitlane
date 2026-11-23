@@ -8,7 +8,7 @@ import { Icon } from "./icons";
 import { prefs, setPrefs } from "./prefs";
 import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalSide, terminalPrefs } from "./terminals";
 import { t } from "./i18n";
-import { toast } from "./ui";
+import { toast, ok } from "./ui";
 import { resetLayout } from "./layout";
 
 const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
@@ -311,7 +311,7 @@ function Agents(props: { repo: string | null; repoName: string }) {
       void refetch();
     }
   };
-  const f = (): FlowFile | undefined => flow()?.flow;
+  const f = (): FlowFile | undefined => ok(flow)?.flow;
   const num = (v: string, fallback: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : fallback);
   return (
     <>
@@ -319,9 +319,9 @@ function Agents(props: { repo: string | null; repoName: string }) {
       <Show when={props.repo} fallback={<p class="set-empty">{t("Open a repository to see how its agents run.")}</p>}>
         <p class="set-lead">
           {t("How agents run on {name}.", { name: props.repoName })} {t("These live in")} <code class="set-code">.pitlane/flow.toml</code>{t(", versioned with the repository, so the whole team shares them.")}
-          <Show when={flow()}>
+          <Show when={ok(flow)}>
             {" "}
-            <button type="button" class="link-btn" onClick={() => void api.reveal(flow()!.path)}>
+            <button type="button" class="link-btn" onClick={() => void api.reveal(ok(flow)!.path)}>
               {t("Show the file")}
             </button>
           </Show>

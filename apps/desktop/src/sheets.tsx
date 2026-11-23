@@ -2,7 +2,7 @@
 import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
 import { api, landedLabel, short, type CleanPlan, type Lane, type ShipPlan } from "./api";
 import { Icon } from "./icons";
-import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+import { ErrorLine, Sheet, Spinner, toast, ok } from "./ui";
 import { Dictate } from "./dictate";
 import { plural, t, tx } from "./i18n";
 
@@ -16,7 +16,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const ready = () => {
-    const p = plan();
+    const p = ok(plan);
     return p && !p.already && p.conflicts.length === 0 && p.tree ? p : null;
   };
 
@@ -36,7 +36,7 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
     }
   }
 
-  const title = () => (plan()?.target ? t("Ship {branch} to {target}", { branch: props.lane.branch, target: plan()!.target }) : t("Ship {branch}", { branch: props.lane.branch }));
+  const title = () => (ok(plan)?.target ? t("Ship {branch} to {target}", { branch: props.lane.branch, target: ok(plan)!.target }) : t("Ship {branch}", { branch: props.lane.branch }));
 
   return (
     <Sheet
@@ -69,26 +69,26 @@ export function ShipSheet(props: { repo: string; lane: Lane; to: string | null; 
         <Match when={plan.error}>
           <ErrorLine>{msg(plan.error)}</ErrorLine>
         </Match>
-        <Match when={plan()?.already}>
+        <Match when={ok(plan)?.already}>
           {(how) => (
             <div class="note">
               <Icon name="done" small />
               <span>
-                {t("Already in {target} ({how}). Nothing to ship.", { target: plan()!.target, how: t(landedLabel[how()]) })}
+                {t("Already in {target} ({how}). Nothing to ship.", { target: ok(plan)!.target, how: t(landedLabel[how()]) })}
               </span>
             </div>
           )}
         </Match>
-        <Match when={plan() && plan()!.conflicts.length > 0}>
+        <Match when={ok(plan) && ok(plan)!.conflicts.length > 0}>
           <ErrorLine>
-            {plural(plan()!.conflicts.length, "Conflicts with origin/{target} in {n} file. Nothing changed.", "Conflicts with origin/{target} in {n} files. Nothing changed.", { target: plan()!.target })}
+            {plural(ok(plan)!.conflicts.length, "Conflicts with origin/{target} in {n} file. Nothing changed.", "Conflicts with origin/{target} in {n} files. Nothing changed.", { target: ok(plan)!.target })}
           </ErrorLine>
           <ul class="files">
-            <For each={plan()!.conflicts}>{(f) => <li>{f}</li>}</For>
+            <For each={ok(plan)!.conflicts}>{(f) => <li>{f}</li>}</For>
           </ul>
-          <p>{t("Resolve it by hand where {target} is checked out:", { target: plan()!.target })}</p>
+          <p>{t("Resolve it by hand where {target} is checked out:", { target: ok(plan)!.target })}</p>
           <code class="files">
-            git switch {plan()!.target} && git pull && git merge {plan()!.branch} && git push
+            git switch {ok(plan)!.target} && git pull && git merge {ok(plan)!.branch} && git push
           </code>
           <p>{t("rerere records the resolution, so the same conflict resolves itself on the next stage.")}</p>
         </Match>
@@ -226,7 +226,7 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
             {t("Cancel")}
           </button>
-          <Show when={(plan()?.items.length ?? 0) > 0}>
+          <Show when={(ok(plan)?.items.length ?? 0) > 0}>
             <button
               type="button"
               class="btn btn-danger"
@@ -252,7 +252,7 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
         <Match when={plan.error}>
           <ErrorLine>{msg(plan.error)}</ErrorLine>
         </Match>
-        <Match when={plan()}>
+        <Match when={ok(plan)}>
           {(p) => (
             <>
               <Show

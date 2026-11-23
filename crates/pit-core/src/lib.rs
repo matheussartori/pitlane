@@ -123,6 +123,16 @@ impl Repo {
     }
 }
 
+/// Whether `name` is one plain file or folder name: letters, digits, `-`, `_` and `.`, not
+/// starting with a dot. A name that passes never leaves the folder it is joined to, so ids and
+/// file names that come from a client (the app, the socket, an agent) are checked with it.
+pub fn is_plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.starts_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
 /// `(home, pitlane_home)`: `$HOME` and `$PITLANE_HOME` or `~/.pitlane`.
 pub fn default_homes() -> (PathBuf, PathBuf) {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();

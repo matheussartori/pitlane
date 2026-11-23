@@ -131,7 +131,8 @@ async fn capacity() -> CmdResult<Capacity> {
             agents = by_load.min(by_memory).max(1);
         }
         // The daemon's Performance governor decides when it runs: Full or Light, and the memory.
-        if let Ok(v) = call(serde_json::json!({ "op": "perf" })) {
+        // Only a daemon already running: reading the capacity never starts one.
+        if let Ok(v) = Client::connect(&default_homes().1, None).and_then(|mut c| c.call(serde_json::json!({ "op": "perf" }))) {
             if v.get("governed").and_then(serde_json::Value::as_bool) == Some(true) {
                 if let Some(n) = v.get("allowed").and_then(serde_json::Value::as_u64) {
                     agents = (n as u32).max(1);
@@ -167,14 +168,29 @@ fn load_settings() -> Settings {
         .unwrap_or_default()
 }
 
-fn save_settings(s: &Settings) -> Result<()> {
+/// Changes desktop.json: one change at a time (read, change, write under one lock, so two
+/// commands never drop each other's change), written whole or not at all. A file that no longer
+/// reads is kept beside it as `desktop.json.bad`, never silently overwritten with the defaults.
+fn edit_settings<R>(change: impl FnOnce(&mut Settings) -> R) -> Result<(Settings, R)> {
+    static EDITING: Mutex<()> = Mutex::new(());
+    let _one = EDITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let path = settings_path();
+    let mut s = match std::fs::read_to_string(&path) {
+        Ok(t) => serde_json::from_str(&t).unwrap_or_else(|e| {
+            eprintln!("pitlane: {} does not read ({e}); kept as desktop.json.bad", path.display());
+            let _ = std::fs::copy(&path, path.with_extension("json.bad"));
+            Settings::default()
+        }),
+        Err(_) => Settings::default(),
+    };
+    let out = change(&mut s);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(s)?)?;
-    std::fs::rename(&tmp, &path).with_context(|| format!("could not write {}", path.display()))
+    let tmp = path.with_extension(format!("json.tmp{}", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&s)?)?;
+    std::fs::rename(&tmp, &path).with_context(|| format!("could not write {}", path.display()))?;
+    Ok((s, out))
 }
 
 #[tauri::command]
@@ -185,9 +201,7 @@ async fn settings() -> CmdResult<Settings> {
 #[tauri::command]
 async fn prefs_set(prefs: Prefs) -> CmdResult<()> {
     blocking(move || {
-        let mut s = load_settings();
-        s.prefs = prefs;
-        save_settings(&s)
+        edit_settings(|s| s.prefs = prefs).map(drop)
     })
     .await
 }
@@ -196,12 +210,12 @@ async fn prefs_set(prefs: Prefs) -> CmdResult<()> {
 #[tauri::command]
 async fn remove_repo(path: String) -> CmdResult<Settings> {
     blocking(move || {
-        let mut s = load_settings();
-        s.repos.retain(|r| r.path != Path::new(&path));
-        if s.last.as_deref() == Some(Path::new(&path)) {
-            s.last = s.repos.first().map(|r| r.path.clone());
-        }
-        save_settings(&s)?;
+        let (s, ()) = edit_settings(|s| {
+            s.repos.retain(|r| r.path != Path::new(&path));
+            if s.last.as_deref() == Some(Path::new(&path)) {
+                s.last = s.repos.first().map(|r| r.path.clone());
+            }
+        })?;
         Ok(s)
     })
     .await
@@ -252,13 +266,13 @@ async fn add_repo(path: String) -> CmdResult<RepoEntry> {
     blocking(move || {
         let repo = open(&path)?;
         let entry = RepoEntry { path: repo.root.clone(), name: repo.name.clone() };
-        let mut s = load_settings();
-        if !s.repos.iter().any(|r| r.path == entry.path) {
-            s.repos.push(entry.clone());
-            s.repos.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-        s.last = Some(entry.path.clone());
-        save_settings(&s)?;
+        edit_settings(|s| {
+            if !s.repos.iter().any(|r| r.path == entry.path) {
+                s.repos.push(entry.clone());
+                s.repos.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+            s.last = Some(entry.path.clone());
+        })?;
         Ok(entry)
     })
     .await
@@ -267,9 +281,7 @@ async fn add_repo(path: String) -> CmdResult<RepoEntry> {
 #[tauri::command]
 async fn select_repo(path: String) -> CmdResult<()> {
     blocking(move || {
-        let mut s = load_settings();
-        s.last = Some(PathBuf::from(path));
-        save_settings(&s)
+        edit_settings(|s| s.last = Some(PathBuf::from(path))).map(drop)
     })
     .await
 }
@@ -555,10 +567,10 @@ async fn card_detach(path: String, id: u32, file: String) -> CmdResult<CardOut> 
 async fn card_image(path: String, id: u32, file: String) -> CmdResult<String> {
     blocking(move || {
         use base64::Engine as _;
-        let ty = cards::image_type(&file).ok_or_else(|| anyhow::anyhow!("{file} is not an image"))?;
-        if file.contains('/') || file.contains("..") {
+        if !pit_core::is_plain_name(&file) {
             anyhow::bail!("bad image name {file}");
         }
+        let ty = cards::image_type(&file).ok_or_else(|| anyhow::anyhow!("{file} is not an image"))?;
         let bytes = std::fs::read(cards::images_dir(&open(&path)?, id).join(&file))?;
         Ok(format!("data:{ty};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
     })
@@ -570,8 +582,7 @@ async fn card_image(path: String, id: u32, file: String) -> CmdResult<String> {
 async fn run_shot(run: String, file: String) -> CmdResult<String> {
     blocking(move || {
         use base64::Engine as _;
-        let ok = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !s.contains("..");
-        if !ok(&run) || !ok(&file) {
+        if !pit_core::is_plain_name(&run) || !pit_core::is_plain_name(&file) {
             anyhow::bail!("bad screenshot name {run}/{file}");
         }
         let ty = cards::image_type(&file).ok_or_else(|| anyhow::anyhow!("{file} is not an image"))?;
@@ -864,7 +875,7 @@ async fn quota(path: String) -> CmdResult<QuotaOut> {
 #[tauri::command]
 async fn run_verification(run: String) -> CmdResult<Option<pit_core::verify::Verification>> {
     blocking(move || {
-        let path = runs::runs_dir(&default_homes().1).join(&run).join("verify.json");
+        let path = runs::run_dir(&default_homes().1, &run)?.join("verify.json");
         Ok(std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()))
     })
     .await
@@ -1026,7 +1037,7 @@ async fn account_use(path: String, id: String) -> CmdResult<()> {
 #[tauri::command]
 async fn run_timeline(run: String) -> CmdResult<Vec<(usize, RunEvent)>> {
     blocking(move || {
-        let path = runs::runs_dir(&default_homes().1).join(&run).join("timeline.jsonl");
+        let path = runs::run_dir(&default_homes().1, &run)?.join("timeline.jsonl");
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         Ok(text
             .lines()
@@ -1214,21 +1225,29 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{}/", r.port)).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("folder", folder);
     let state = app.state::<CodeView>();
-    let mut views = state.views.lock().unwrap();
-    if let Some(i) = views.iter().position(|v| v.folder == folder) {
-        let v = views.remove(i);
-        let ready = v.ready.load(std::sync::atomic::Ordering::SeqCst);
-        if let Some(wv) = app.get_webview(&v.label) {
+    // The list is never held while a webview is asked or changed: those calls wait on the main
+    // thread, which itself takes the list (placing views, the holes, the places), so holding it
+    // across them could freeze the app for good.
+    let existing = {
+        let mut views = state.views.lock().unwrap();
+        views.iter().position(|v| v.folder == folder).map(|i| {
+            let v = views.remove(i);
+            let found = (v.label.clone(), v.ready.clone());
+            views.insert(0, v);
+            found
+        })
+    };
+    if let Some((label, ready)) = existing {
+        if let Some(wv) = app.get_webview(&label) {
             // A server started again since (a new port): load the folder from it.
             if !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
-                v.ready.store(false, std::sync::atomic::Ordering::SeqCst);
+                ready.store(false, std::sync::atomic::Ordering::SeqCst);
                 wv.navigate(url).map_err(e)?;
-                views.insert(0, v);
                 return Ok(false);
             }
-            views.insert(0, v);
-            return Ok(ready);
+            return Ok(ready.load(std::sync::atomic::Ordering::SeqCst));
         }
+        state.views.lock().unwrap().retain(|v| v.label != label);
     }
     let label = format!("vscode-{}", state.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1242,7 +1261,8 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
         // The folder picker inside VS Code asks for another folder with a pitlane:// address.
         .on_navigation(move |u| {
             if u.scheme() != "pitlane" {
-                return true;
+                // Only this machine's code-server: the view never leaves for another site.
+                return is_local_code_server(u);
             }
             if let Some((_, root)) = u.query_pairs().find(|(k, _)| k == "root") {
                 let _ = nav_app.emit("vscode-place", root.into_owned());
@@ -1254,8 +1274,12 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
             return;
         }
         if p.url().path().starts_with("/login") {
-            // code-server's login page: type the password made for this run.
-            if let Some(r) = wv.app_handle().state::<vscode::Vscode>().current() {
+            // code-server's login page: type the password made for this run, only on the
+            // server Pitlane started (its address and port), never on another page called /login.
+            if let Some(r) = wv.app_handle().state::<vscode::Vscode>().current()
+                && p.url().host_str() == Some("127.0.0.1")
+                && p.url().port() == Some(r.port)
+            {
                 let _ = wv.eval(vscode::login_script(&r.password));
             }
         } else {
@@ -1270,21 +1294,36 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
         builder = builder.background_color(Color(c.0, c.1, c.2, 255));
     }
     // Drawn out of sight (not hidden: a hidden view may not draw), moved in when ready.
-    window.add_child(builder, LogicalPosition::new(PARKED.0, PARKED.1), LogicalSize::new(size.0.max(400.0), size.1.max(300.0))).map_err(e)?;
-    views.insert(0, View { folder: folder.to_owned(), label, ready });
-    while views.len() > CODE_VIEWS {
-        if let Some(old) = views.pop() {
-            if let Some(v) = app.get_webview(&old.label) {
-                let _ = v.close();
-            }
+    window.add_child(builder, LogicalPosition::new(PARKED.0, PARKED.1), LogicalSize::new(size.0.max(CODE_VIEW_MIN.0), size.1.max(CODE_VIEW_MIN.1))).map_err(e)?;
+    let dropped: Vec<View> = {
+        let mut views = state.views.lock().unwrap();
+        views.insert(0, View { folder: folder.to_owned(), label, ready });
+        let keep = views.len().min(CODE_VIEWS);
+        views.split_off(keep)
+    };
+    for old in dropped {
+        if let Some(v) = app.get_webview(&old.label) {
+            let _ = v.close();
         }
     }
     Ok(false)
 }
 
+/// The smallest size a Code view is made at, before the tab places it.
+const CODE_VIEW_MIN: (f64, f64) = (400.0, 300.0);
+
+/// Whether a Code view may go to `u`: web addresses only on this machine (the code-server and
+/// what it serves); the view never leaves for another site, which could pose as it.
+fn is_local_code_server(u: &tauri::Url) -> bool {
+    match u.scheme() {
+        "http" | "https" | "ws" | "wss" => matches!(u.host_str(), Some("127.0.0.1" | "localhost")),
+        _ => true,
+    }
+}
+
 fn hex_colour(s: &str) -> Option<(u8, u8, u8)> {
     let h = s.strip_prefix('#')?;
-    if h.len() != 6 {
+    if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
@@ -1378,10 +1417,7 @@ fn term_open(app: tauri::AppHandle, terms: tauri::State<'_, term::Terms>, cwd: S
 async fn term_resume(app: tauri::AppHandle, run: String, cols: u16, rows: u16) -> CmdResult<term::TermInfo> {
     blocking(move || {
         let home = default_homes().1;
-        if run.is_empty() || run.contains(['/', '\\', '.']) {
-            bail!("{run:?} is not a run");
-        }
-        let text = std::fs::read_to_string(runs::runs_dir(&home).join(&run).join("meta.json")).with_context(|| format!("no run {run}"))?;
+        let text = std::fs::read_to_string(runs::run_dir(&home, &run)?.join("meta.json")).with_context(|| format!("no run {run}"))?;
         let meta: RunMeta = serde_json::from_str(&text)?;
         if meta.state.is_live() {
             bail!("the agent is still working; stop it first, so two Claude Codes never write the same session");
@@ -1729,7 +1765,9 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // Nothing outlives the app: the daemon stops every agent and ends.
                 QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
-                if let Ok(mut c) = Client::connect(&default_homes().1, None) {
+                // The daemon needs at most ~9 s to end its sessions; a daemon that hangs past
+                // that must not keep the app from quitting.
+                if let Ok(mut c) = Client::connect(&default_homes().1, None).and_then(|c| c.with_timeout(Some(Duration::from_secs(12)))) {
                     let _ = c.call(serde_json::json!({ "op": "shutdown" }));
                 }
                 app.state::<term::Terms>().close_all();
