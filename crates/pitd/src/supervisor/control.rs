@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use pit_core::runs::{self, RunEvent, RunMeta, SessionKind};
-use tokio::io::AsyncWriteExt;
 
 use super::launch::EFFORTS;
 use super::Supervisor;
@@ -31,10 +30,7 @@ impl Supervisor {
         let me = Arc::clone(self);
         tokio::spawn(async move {
             loop {
-                let sessions: Vec<crate::perf::LiveSession> = me
-                    .live
-                    .lock()
-                    .unwrap()
+                let sessions: Vec<crate::perf::LiveSession> = me.live()
                     .values()
                     .map(|l| crate::perf::LiveSession {
                         meta: l.meta.clone(),
@@ -55,7 +51,7 @@ impl Supervisor {
     /// Pauses (`hold`) or resumes a session by hand, from the Performance screen.
     pub fn perf_hold(&self, id: &str, hold: bool) -> Result<bool> {
         let (pid, card, title) = {
-            let live = self.live.lock().unwrap();
+            let live = self.live();
             let m = &live
                 .get(id)
                 .with_context(|| format!("run {id} is not running"))?
@@ -101,7 +97,7 @@ impl Supervisor {
             let allowed = self.perf.allowed();
             {
                 // Counted and claimed under one lock: runs waiting together never all go in.
-                let mut live = self.live.lock().unwrap();
+                let mut live = self.live();
                 let working = live
                     .values()
                     .filter(|l| {
@@ -130,34 +126,24 @@ impl Supervisor {
 
     /// A message to the agent while it works: it reads it after its current step.
     pub async fn say(&self, id: &str, text: &str) -> Result<()> {
-        let mid_turn;
-        let mut stdin = {
-            let mut live = self.live.lock().unwrap();
+        let (stdin, mid_turn) = {
+            let mut live = self.live();
             let l = live
                 .get_mut(id)
                 .with_context(|| format!("run {id} is not running; resume it to continue"))?;
-            let s = l
-                .stdin
-                .take()
-                .context("the agent already finished this session; resume it to continue")?;
+            if !l.stdin.is_open() {
+                bail!("the agent already finished this session; resume it to continue");
+            }
             // Mid-turn, Claude Code may fold it into the turn or answer it right after.
-            mid_turn = l.turn;
+            let mid_turn = l.turn;
             l.said = l.turn;
             l.turn = true;
-            s
+            (l.stdin.clone(), mid_turn)
         };
         let line = if mid_turn { mid_turn_message(text) } else { text.to_owned() };
-        let res = async {
-            stdin
-                .write_all(format!("{}\n", runs::claude_user_line(&line)).as_bytes())
-                .await?;
-            stdin.flush().await
+        if !stdin.write(&format!("{}\n", runs::claude_user_line(&line))).await? {
+            bail!("the agent already finished this session; resume it to continue");
         }
-        .await;
-        if let Some(l) = self.live.lock().unwrap().get_mut(id) {
-            l.stdin = Some(stdin);
-        }
-        res?;
         self.emit(
             id,
             RunEvent::Said {
@@ -196,20 +182,14 @@ impl Supervisor {
         if lines.is_empty() {
             return Ok(());
         }
-        let mut stdin = {
-            let mut live = self.live.lock().unwrap();
-            let l = live.get_mut(id).with_context(|| format!("run {id} is not running"))?;
-            l.stdin.take().context("the agent already finished this session")?
+        let stdin = {
+            let live = self.live();
+            let l = live.get(id).with_context(|| format!("run {id} is not running"))?;
+            l.stdin.clone()
         };
-        let res = async {
-            stdin.write_all(lines.as_bytes()).await?;
-            stdin.flush().await
+        if !stdin.write(&lines).await? {
+            bail!("the agent already finished this session");
         }
-        .await;
-        if let Some(l) = self.live.lock().unwrap().get_mut(id) {
-            l.stdin = Some(stdin);
-        }
-        res?;
         // The model shows once Claude Code answers with the one it resolved (`opus` is
         // claude-opus-5-5); the effort has nothing to resolve, so it shows now.
         if let Some(e) = effort.map(str::to_owned) {
@@ -220,9 +200,7 @@ impl Supervisor {
     }
 
     pub(super) fn stop_requested(&self, id: &str) -> bool {
-        self.live
-            .lock()
-            .unwrap()
+        self.live()
             .get(id)
             .is_some_and(|l| l.stop_requested)
     }
@@ -241,7 +219,7 @@ impl Supervisor {
 
     /// The process groups of the sessions on now: each agent leads its own group.
     pub fn session_groups(&self) -> std::collections::HashSet<i32> {
-        let mut groups: std::collections::HashSet<i32> = self.live.lock().unwrap().values().filter_map(|l| l.meta.pid).map(|p| p as i32).collect();
+        let mut groups: std::collections::HashSet<i32> = self.live().values().filter_map(|l| l.meta.pid).map(|p| p as i32).collect();
         groups.extend(self.one_shots.lock().unwrap().iter().map(|p| *p as i32));
         groups
     }
@@ -249,7 +227,7 @@ impl Supervisor {
     /// Stops the live sessions that match; what waits for a slot keeps waiting.
     pub(super) fn stop_matching(self: &Arc<Self>, which: impl Fn(&RunMeta) -> bool) -> usize {
         let pids: Vec<(String, u32)> = {
-            let mut live = self.live.lock().unwrap();
+            let mut live = self.live();
             live.iter_mut()
                 .filter(|(_, l)| which(&l.meta))
                 .filter_map(|(id, l)| {
@@ -271,7 +249,7 @@ impl Supervisor {
                 // Only a session still on the same process: a run that moved on to its checks has
                 // no agent any more, and its old group id may belong to someone else by now.
                 let still: Vec<(String, u32)> = {
-                    let live = me.live.lock().unwrap();
+                    let live = me.live();
                     pids.iter().filter(|(id, pid)| live.get(id).is_some_and(|l| l.meta.pid == Some(*pid))).cloned().collect()
                 };
                 for (_, pid) in &still {
@@ -291,12 +269,12 @@ impl Supervisor {
         }
         self.stop_all();
         for _ in 0..SHUTDOWN_POLLS {
-            if self.live.lock().unwrap().is_empty() {
+            if self.live().is_empty() {
                 break;
             }
             tokio::time::sleep(SHUTDOWN_POLL).await;
         }
-        for l in self.live.lock().unwrap().values() {
+        for l in self.live().values() {
             if let Some(pid) = l.meta.pid {
                 signal(pid, libc::SIGKILL);
             }
@@ -316,7 +294,7 @@ impl Supervisor {
     /// SIGINT ends the current turn cleanly; if the agent is still there after 10 s, SIGTERM.
     pub fn stop(self: &Arc<Self>, id: &str) -> Result<()> {
         let pid = {
-            let mut live = self.live.lock().unwrap();
+            let mut live = self.live();
             let l = live
                 .get_mut(id)
                 .with_context(|| format!("run {id} is not running"))?;
@@ -324,10 +302,7 @@ impl Supervisor {
             l.meta.pid
         };
         // Sessions it opened (its judge) stop with it.
-        let children: Vec<String> = self
-            .live
-            .lock()
-            .unwrap()
+        let children: Vec<String> = self.live()
             .values()
             .filter(|l| l.meta.parent.as_deref() == Some(id))
             .map(|l| l.meta.id.clone())
@@ -343,10 +318,7 @@ impl Supervisor {
         let run = id.to_owned();
         tokio::spawn(async move {
             tokio::time::sleep(STOP_GRACE).await;
-            let same = me
-                .live
-                .lock()
-                .unwrap()
+            let same = me.live()
                 .get(&run)
                 .is_some_and(|l| l.meta.pid == Some(pid));
             if same {

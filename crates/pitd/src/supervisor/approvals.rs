@@ -26,7 +26,7 @@ impl Supervisor {
             |input: &Value| serde_json::json!({ "behavior": "allow", "updatedInput": input });
         let deny = |msg: &str| serde_json::json!({ "behavior": "deny", "message": msg });
         let (repo, run_rules, autopilot) = {
-            let live = self.live.lock().unwrap();
+            let live = self.live();
             let Some(l) = live.get(run) else {
                 return deny("This run is not live any more.");
             };
@@ -73,7 +73,7 @@ impl Supervisor {
         }
         let (tx, rx) = oneshot::channel();
         {
-            let mut live = self.live.lock().unwrap();
+            let mut live = self.live();
             let Some(l) = live.get_mut(run) else {
                 return deny("This run is not live any more.");
             };
@@ -104,7 +104,7 @@ impl Supervisor {
         };
         match decision {
             Decision::Run => {
-                if let Some(l) = self.live.lock().unwrap().get_mut(run) {
+                if let Some(l) = self.live().get_mut(run) {
                     l.rules.push(approval.rule.clone());
                 }
             }
@@ -117,7 +117,7 @@ impl Supervisor {
                         },
                     );
                 }
-                if let Some(l) = self.live.lock().unwrap().get_mut(run) {
+                if let Some(l) = self.live().get_mut(run) {
                     l.rules.push(approval.rule.clone());
                 }
             }
@@ -153,7 +153,7 @@ impl Supervisor {
         decision: Decision,
         message: Option<String>,
     ) -> Result<String> {
-        let mut live = self.live.lock().unwrap();
+        let mut live = self.live();
         let l = live
             .get_mut(run)
             .with_context(|| format!("run {run} is not live"))?;
@@ -179,9 +179,7 @@ impl Supervisor {
 
     /// Everything waiting on a person, across live runs.
     pub fn approvals(&self) -> Vec<(RunMeta, Approval)> {
-        self.live
-            .lock()
-            .unwrap()
+        self.live()
             .values()
             .flat_map(|l| l.meta.waiting.iter().map(|a| (l.meta.clone(), a.clone())))
             .collect()
@@ -201,7 +199,7 @@ impl Drop for Withdraw<'_> {
         if !self.armed {
             return;
         }
-        let was_live = self.sup.live.lock().unwrap().get_mut(self.run).map(|l| l.pending.remove(&self.id)).is_some();
+        let was_live = self.sup.live().get_mut(self.run).map(|l| l.pending.remove(&self.id)).is_some();
         if was_live {
             self.sup.update(self.run, |m| m.waiting.retain(|a| a.id != self.id));
             self.sup.emit(self.run, RunEvent::Note { text: "Claude Code withdrew a request before anyone answered.".into() });

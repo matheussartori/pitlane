@@ -5,12 +5,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use pit_core::runs::{Decision, RunEvent, RunMeta, SessionKind};
-use tokio::process::ChildStdin;
 use tokio::sync::{broadcast, oneshot};
 
 mod approvals;
@@ -24,6 +23,7 @@ mod queue;
 mod record;
 mod route;
 mod run;
+mod session;
 mod side;
 mod unblock;
 mod verify;
@@ -80,7 +80,7 @@ pub use pit_core::protocol::ReviewAction;
 /// What the daemon holds for a run while its process lives.
 struct Live {
     meta: RunMeta,
-    stdin: Option<ChildStdin>,
+    stdin: session::Stdin,
     /// A turn is in flight: a message was written, or the agent started one by itself, and its
     /// result has not been read yet. Stdin closes once no turn is, which is how a stream-json
     /// session ends. Messages are not counted against results: Claude Code folds a message that
@@ -99,6 +99,8 @@ struct Live {
     /// runs leaving the wait together never take more room than there is.
     admitted: bool,
     events: usize,
+    /// `timeline.jsonl`, open to append to.
+    timeline: Option<fs::File>,
     tx: broadcast::Sender<(usize, RunEvent)>,
     /// Rules allowed "for this run".
     rules: Vec<String>,
@@ -192,6 +194,12 @@ impl Supervisor {
             .store(left_running.as_millis() as u64, Ordering::Relaxed);
     }
 
+    /// The live sessions. A panic while one held the lock leaves the map as it was, which is
+    /// still the best account there is: it is used as is rather than taking the daemon down.
+    fn live(&self) -> MutexGuard<'_, HashMap<String, Live>> {
+        self.live.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// A repository's runs, newest first. Side sessions (analysis, judge) are left out.
     pub fn list(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
         Ok(self
@@ -216,7 +224,7 @@ impl Supervisor {
     /// live list is locked: every agent's output waits on that lock.
     pub fn sessions(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
         let disk = self.list_disk()?;
-        let live = self.live.lock().unwrap();
+        let live = self.live();
         let mut all: Vec<RunMeta> = disk
             .into_iter()
             .map(|m| live.get(&m.id).map(|l| l.meta.clone()).unwrap_or(m))
@@ -231,7 +239,7 @@ impl Supervisor {
     }
 
     pub fn get(&self, id: &str) -> Result<RunMeta> {
-        if let Some(l) = self.live.lock().unwrap().get(id) {
+        if let Some(l) = self.live().get(id) {
             return Ok(l.meta.clone());
         }
         let t = fs::read_to_string(self.dir(id).join("meta.json"))
@@ -248,7 +256,7 @@ impl Supervisor {
     /// so far are taken under one lock, the file is read after it: the replay stops at that count
     /// and the receiver starts there, so nothing falls between or comes twice.
     pub fn subscribe(&self, id: &str, from: usize) -> Result<Subscription> {
-        let live = self.live.lock().unwrap();
+        let live = self.live();
         if let Some(l) = live.get(id) {
             let (rx, written) = (l.tx.subscribe(), l.events);
             drop(live);

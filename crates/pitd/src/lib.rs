@@ -91,24 +91,19 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
                 continue;
             }
         };
-        let parsed = Request::from_value(req.clone());
-        // The op the check goes by: the request's, or for one that does not read as a request,
-        // the name it gives, so an op an agent may not use is refused whether it reads or not.
-        let op = match &parsed {
-            Ok(r) => r.op(),
-            Err(_) => protocol::named_op(&req),
-        };
-        if agent && !peer::allowed_from_agent(op) {
-            send(&mut write, &json!({ "error": format!("{op:?} is not open to a session's own processes: it is yours to do, from Pitlane or pit") })).await?;
-            continue;
-        }
-        let req = match parsed {
+        // A request that does not read is refused for what it is, whoever sent it: it does nothing.
+        let req = match Request::from_value(req) {
             Ok(r) => r,
             Err(e) => {
                 send(&mut write, &json!({ "error": format!("{e:#}") })).await?;
                 continue;
             }
         };
+        if agent && !req.agent_safe() {
+            let op = req.op();
+            send(&mut write, &json!({ "error": format!("{op:?} is not open to a session's own processes: it is yours to do, from Pitlane or pit") })).await?;
+            continue;
+        }
         if let Request::Hold = req {
             // The desktop app holds this connection while it is open. When it closes (quit,
             // crash, force quit), everything the daemon started stops and the daemon ends.

@@ -74,9 +74,7 @@ impl Supervisor {
         };
         let choices = routing.choices(&r.root, &home_dir(), &self.cfg.home)?;
         let running: HashMap<String, usize> =
-            self.live
-                .lock()
-                .unwrap()
+            self.live()
                 .values()
                 .fold(HashMap::new(), |mut m, l| {
                     *m.entry(l.meta.account.clone()).or_default() += 1;
@@ -160,7 +158,7 @@ impl Supervisor {
                 state: RunState::Failed,
             },
         );
-        self.live.lock().unwrap().remove(&id);
+        self.live().remove(&id);
 
         match self.start(
             repo,

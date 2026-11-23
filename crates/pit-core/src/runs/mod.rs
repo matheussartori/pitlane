@@ -48,9 +48,10 @@ pub fn run_dir(pitlane_home: &Path, run: &str) -> Result<PathBuf> {
     Ok(runs_dir(pitlane_home).join(run))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunState {
+    #[default]
     Starting,
     Running,
     /// The agent finished; proofs and the judge are checking its work.
@@ -79,7 +80,7 @@ pub struct Tokens {
     pub cache_write: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RunMeta {
     pub id: String,
     /// Main worktree of the repository.
@@ -180,6 +181,13 @@ pub struct RunMeta {
     /// The same branch in the project's related repositories, where the agent works too.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<crate::related::RelatedLane>,
+}
+
+impl RunMeta {
+    /// A session about to start: Claude Code, nothing run yet. The rest is set by whoever starts it.
+    pub fn new(id: String, repo: PathBuf, card: u32, kind: SessionKind, started_at: u64) -> Self {
+        Self { id, repo, card, kind, started_at, agent: "claude-code".into(), ..Default::default() }
+    }
 }
 
 /// Every Claude Code session Pitlane starts, so people can watch and talk to all of them.

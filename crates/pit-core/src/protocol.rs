@@ -227,6 +227,54 @@ impl Request {
             Self::Follow { .. } => "follow",
         }
     }
+
+    /// Open to a session's own processes (anything an agent runs reaches the socket as you):
+    /// reading, and asking you. Deciding, starting, stopping and changing stay yours. Every new
+    /// request has to be placed here.
+    pub fn agent_safe(&self) -> bool {
+        match self {
+            Self::Ping
+            | Self::Ask { .. }
+            | Self::Get { .. }
+            | Self::List { .. }
+            | Self::Sessions { .. }
+            | Self::Quota
+            | Self::Follow { .. }
+            | Self::Approvals
+            | Self::Perf
+            | Self::Consult { .. }
+            | Self::Presence => true,
+            Self::Start(_)
+            | Self::Analyze { .. }
+            | Self::Recheck { .. }
+            | Self::Unblock { .. }
+            | Self::Move { .. }
+            | Self::ReportDigest { .. }
+            | Self::Describe { .. }
+            | Self::Talk { .. }
+            | Self::StopTalk { .. }
+            | Self::Finish { .. }
+            | Self::Assist { .. }
+            | Self::Resume { .. }
+            | Self::Say { .. }
+            | Self::Tune { .. }
+            | Self::Stop { .. }
+            | Self::StopAll
+            | Self::PerfSet { .. }
+            | Self::PerfHold { .. }
+            | Self::StopAnalyses
+            | Self::Shutdown
+            | Self::Hold
+            | Self::Review { .. }
+            | Self::Enqueue { .. }
+            | Self::Queue { .. }
+            | Self::QueueResume
+            | Self::Dequeue { .. }
+            | Self::Continue { .. }
+            | Self::PresenceSet { .. }
+            | Self::Decide { .. } => false,
+        }
+    }
 }
 
 // ---------------------------------------------------------------- replies
@@ -338,6 +386,18 @@ pub struct Waiting {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn what_an_agent_may_ask() {
+        let read = |v: Value| Request::from_value(v).unwrap();
+        for op in ["ping", "approvals", "quota", "perf", "presence"] {
+            assert!(read(json!({ "op": op })).agent_safe(), "{op}");
+        }
+        for op in ["shutdown", "hold", "stop_all", "stop_analyses", "queue_resume"] {
+            let v = json!({ "op": op });
+            assert!(!read(v.clone()).agent_safe(), "{v}");
+        }
+    }
 
     /// Each request as it goes on the wire, against what the clients wrote by hand before.
     #[test]

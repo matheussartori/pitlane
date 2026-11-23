@@ -16,10 +16,7 @@ impl Supervisor {
     pub fn move_card(self: &Arc<Self>, repo: PathBuf, id: u32, to: MoveTo, reason: Option<String>) -> Result<Card> {
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
         let card = cards::get(&r, id)?;
-        let run = self
-            .live
-            .lock()
-            .unwrap()
+        let run = self.live()
             .values()
             .find(|l| l.meta.kind == SessionKind::Run && l.meta.repo == r.root && l.meta.card == id)
             .map(|l| l.meta.id.clone());

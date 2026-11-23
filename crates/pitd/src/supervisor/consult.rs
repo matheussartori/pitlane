@@ -20,7 +20,7 @@ impl Supervisor {
     /// What the run's `ask` tool answers: the person's answer, or what to do without one.
     pub async fn consult(&self, run: &str, mut q: NewQuestion, costly: bool) -> String {
         let (root, card) = {
-            let live = self.live.lock().unwrap();
+            let live = self.live();
             match live.get(run) {
                 Some(l) => (l.meta.repo.clone(), l.meta.card),
                 None => return "This run is not live any more.".into(),
@@ -76,7 +76,7 @@ impl Supervisor {
                 self.emit(run, RunEvent::Note { text: format!("You answered: {a}") });
                 break format!("The person answered: \"{a}\". Go on with that.");
             }
-            if !self.live.lock().unwrap().contains_key(run) || self.stop_requested(run) {
+            if !self.live().contains_key(run) || self.stop_requested(run) {
                 break "The run is stopping.".into();
             }
             let gone = self.presence.effective(self.perf.config().away_minutes) == Mode::Away;

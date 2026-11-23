@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -112,12 +111,13 @@ impl Supervisor {
     pub(super) fn register(&self, meta: RunMeta) -> Result<()> {
         fs::create_dir_all(self.dir(&meta.id))?;
         self.write_meta(&meta)?;
+        let timeline = self.open_timeline(&meta.id);
         let (tx, _) = broadcast::channel(EVENTS_BUFFER);
-        self.live.lock().unwrap().insert(
+        self.live().insert(
             meta.id.clone(),
             Live {
                 meta,
-                stdin: None,
+                stdin: Default::default(),
                 turn: false,
                 said: false,
                 results: 0,
@@ -125,6 +125,7 @@ impl Supervisor {
                 stop_requested: false,
                 admitted: false,
                 events: 0,
+                timeline,
                 tx,
                 rules: Vec::new(),
                 limited: false,
@@ -135,20 +136,13 @@ impl Supervisor {
     }
 
     fn write_meta(&self, m: &RunMeta) -> Result<()> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = self.dir(&m.id);
-        fs::create_dir_all(&dir)?;
-        // A temp name per write: two writers never rename each other's half-written file.
-        let tmp = dir.join(format!("meta.json.tmp{}", NEXT.fetch_add(1, Ordering::Relaxed)));
-        fs::write(&tmp, serde_json::to_string_pretty(m)?)?;
-        fs::rename(&tmp, dir.join("meta.json"))?;
-        Ok(())
+        pit_core::fsutil::write_atomic(&self.dir(&m.id).join("meta.json"), serde_json::to_string_pretty(m)?)
     }
 
     pub(super) fn update(&self, id: &str, f: impl FnOnce(&mut RunMeta)) {
         let _order = self.meta_writes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let snapshot = {
-            let mut live = self.live.lock().unwrap();
+            let mut live = self.live();
             let Some(l) = live.get_mut(id) else { return };
             f(&mut l.meta);
             l.meta.clone()
@@ -156,15 +150,21 @@ impl Supervisor {
         let _ = self.write_meta(&snapshot);
     }
 
+    /// The run's timeline, opened once to append to: every event is written under the live
+    /// lock, so the file is not opened again for each.
+    fn open_timeline(&self, id: &str) -> Option<fs::File> {
+        OpenOptions::new().create(true).append(true).open(self.dir(id).join("timeline.jsonl")).ok()
+    }
+
     /// Appends an event to the run's timeline and tells everyone following it.
     pub(super) fn emit(&self, id: &str, ev: RunEvent) {
-        let mut live = self.live.lock().unwrap();
+        let mut live = self.live();
         let Some(l) = live.get_mut(id) else { return };
         let i = l.events;
-        if let Ok(mut f) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.dir(id).join("timeline.jsonl"))
+        if l.timeline.is_none() {
+            l.timeline = self.open_timeline(id);
+        }
+        if let Some(f) = l.timeline.as_mut()
             && let Ok(line) = serde_json::to_string(&ev)
         {
             let _ = writeln!(f, "{line}");

@@ -1,10 +1,9 @@
 //! A card's run: starting it, driving its Claude Code session, and reading what the agent says.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -14,18 +13,13 @@ use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::card::{add_to_briefing, last_words, prepare, resume_message, set_card_state, settle_card, block_card};
 use super::control::{Release, end_group, signal};
 use super::launch::{claude_dir, session_saved};
+use super::session::{AFTER_EXIT_READ, capture_stderr, stderr_tail};
 use super::{StartOpts, Supervisor, home_dir};
-
-/// How long what an agent printed is still read once it is gone (a child it left can hold the
-/// pipe open).
-pub(super) const AFTER_EXIT_READ: Duration = Duration::from_secs(3);
-/// How long the end of an agent's stderr is waited for once it is gone.
-const STDERR_READ: Duration = Duration::from_secs(1);
 
 impl Supervisor {
     /// Starts a run of `card` in `repo`. Returns at once; preparing the worktree and the agent's
@@ -46,7 +40,7 @@ impl Supervisor {
             );
         }
         {
-            let live = self.live.lock().unwrap();
+            let live = self.live();
             if let Some(l) = live.values().find(|l| {
                 l.meta.kind == SessionKind::Run && l.meta.repo == r.root && l.meta.card == card
             }) {
@@ -104,47 +98,19 @@ impl Supervisor {
             &uuid::Uuid::new_v4().simple().to_string()[..4]
         );
         let meta = RunMeta {
-            id: id.clone(),
-            repo: r.root.clone(),
-            card,
             card_title: c.title.clone(),
             branch: c.lane.clone().unwrap_or_default(),
-            worktree: PathBuf::new(),
-            agent: "claude-code".into(),
             model: choice.model.clone().or_else(|| r.flow.run.model.clone()),
-            effort: None,
             session_id,
-            pid: None,
-            state: RunState::Starting,
-            started_at: now,
-            ended_at: None,
-            cost_usd: None,
-            duration_ms: None,
-            turns: None,
-            tokens: Default::default(),
-            handoff: None,
-            error: None,
-            denied: Vec::new(),
-            resumed_from,
-            waiting: Vec::new(),
-            asking: Vec::new(),
             account: choice.account.clone(),
             reason: Some(reason),
+            resumed_from,
             handoff_from: opts.handoff_from.clone(),
             exhausted,
-            next: None,
-            resets_at: None,
             round: opts.round,
-            verdict: None,
-            proofs_ok: None,
-            base_sha: None,
-            brief: None,
-            kind: SessionKind::Run,
-            parent: None,
             autopilot: opts.autopilot,
             extensions: opts.extensions,
-            goes_on: false,
-            related: Vec::new(),
+            ..RunMeta::new(id.clone(), r.root.clone(), card, SessionKind::Run, now)
         };
         self.register(meta.clone())?;
         let me = Arc::clone(self);
@@ -168,7 +134,7 @@ impl Supervisor {
             && p.repo == repo
             && p.card == card
             && matches!(p.state, RunState::Stopped | RunState::Interrupted)
-            && !self.live.lock().unwrap().contains_key(&p.id)
+            && !self.live().contains_key(&p.id)
             && p.worktree.is_dir()
             && session_saved(
                 &accounts::profile_dir(&p.account, &self.cfg.home).unwrap_or_else(claude_dir),
@@ -177,7 +143,7 @@ impl Supervisor {
     }
 
     fn fail(&self, id: &str, why: &str) {
-        let live_pid = self.live.lock().unwrap().get(id).map(|l| l.meta.pid);
+        let live_pid = self.live().get(id).map(|l| l.meta.pid);
         let Some(pid) = live_pid else {
             // It went wrong after the run ended (moving its card, say): the run keeps the state it
             // ended in and the card stays where it went; the error is kept on the run.
@@ -214,7 +180,7 @@ impl Supervisor {
                 state: RunState::Failed,
             },
         );
-        self.live.lock().unwrap().remove(id);
+        self.live().remove(id);
     }
 
     async fn drive(
@@ -264,7 +230,7 @@ impl Supervisor {
         let mut said = false;
         loop {
             let other = {
-                let mut live = self.live.lock().unwrap();
+                let mut live = self.live();
                 let other = live
                     .values()
                     .find(|l| l.meta.id != id && l.meta.kind == SessionKind::Run && l.meta.worktree == prep.worktree)
@@ -316,39 +282,20 @@ impl Supervisor {
         if !resuming {
             fs::write(self.dir(&id).join("briefing.md"), &prep.briefing)?;
         }
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
-        let pid = child.id();
-        // Known at once: from here a failure (or Stop, or closing the app) reaches the process.
-        if let Some(l) = self.live.lock().unwrap().get_mut(&id) {
-            l.meta.pid = pid;
-        }
-        let mut stdin = child.stdin.take().context("no stdin")?;
         let first = if resuming {
-            message
-                .clone()
-                .unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned())
-        } else {
-            format!(
-                "{}{}",
-                prep.briefing,
-                pit_core::language::reminder(&pit_core::language::agent_language(&self.cfg.home))
+            runs::claude_user_line(
+                &message.clone().unwrap_or_else(|| "Continue where you stopped. End with the handoff.".to_owned()),
             )
-        };
-        let line = if resuming {
-            runs::claude_user_line(&first)
         } else {
-            runs::claude_user_line_with(&first, &prep.images)
+            runs::claude_user_line_with(&self.in_their_language(&prep.briefing), &prep.images)
         };
-        stdin.write_all(format!("{line}\n").as_bytes()).await?;
-        stdin.flush().await?;
+        let (mut child, stdin) = self.spawn_session(&id, &mut cmd, &first).await?;
+        let pid = child.id();
         let stopped_meanwhile = {
-            let mut live = self.live.lock().unwrap();
+            let mut live = self.live();
             live.get_mut(&id).is_some_and(|l| {
-                l.stdin = Some(stdin);
+                l.stdin = stdin;
                 l.turn = true;
-                l.meta.pid = pid;
                 l.meta.state = RunState::Running;
                 l.stop_requested
             })
@@ -361,33 +308,8 @@ impl Supervisor {
         let _ = set_card_state(&self.get(&id)?, CardState::Running, &self.cfg.home);
 
         let stdout = child.stdout.take().context("no stdout")?;
-        let stderr = child.stderr.take().context("no stderr")?;
-        let err_path = self.dir(&id).join("stderr.log");
-        let err_task = tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            let mut tail: Vec<String> = Vec::new();
-            let mut f = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(err_path)
-                .ok();
-            while let Ok(Some(l)) = lines.next_line().await {
-                if let Some(f) = f.as_mut() {
-                    let _ = writeln!(f, "{l}");
-                }
-                tail.push(l);
-                if tail.len() > 8 {
-                    tail.remove(0);
-                }
-            }
-            tail
-        });
-
-        let raw_path = self.dir(&id).join("events.jsonl");
-        let mut raw = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(raw_path)?;
+        let err_task = capture_stderr(child.stderr.take().context("no stderr")?, self.dir(&id).join("stderr.log"));
+        let mut raw = self.raw_log(&id)?;
         let finished = Arc::new(Mutex::new(None::<bool>));
         let reader = {
             let me = Arc::clone(&self);
@@ -396,20 +318,9 @@ impl Supervisor {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = writeln!(raw, "{line}");
-                    let Ok(v) = serde_json::from_str::<Value>(&line) else {
-                        continue;
-                    };
-                    me.note_background(&id, &v);
-                    for ev in runs::read_claude_line(&v) {
-                        let mut ok = None;
-                        me.absorb(&id, &ev, &mut ok).await;
-                        if ok.is_some() {
-                            *finished.lock().unwrap() = ok;
-                        }
-                        me.emit(&id, ev);
+                    if let Some(ok) = me.read_line(&id, &mut raw, &line).await.done {
+                        *finished.lock().unwrap() = Some(ok);
                     }
-                    me.keep_shots(&id, &v);
                 }
             })
         };
@@ -417,7 +328,7 @@ impl Supervisor {
         let status = child.wait().await?;
         // The agent is gone: its pid may be reused, and what it left in its group (a server, a
         // watcher) must not outlive it.
-        if let Some(l) = self.live.lock().unwrap().get_mut(&id) {
+        if let Some(l) = self.live().get_mut(&id) {
             l.meta.pid = None;
             l.admitted = false;
         }
@@ -433,17 +344,11 @@ impl Supervisor {
         {
             reader.abort();
         }
-        let tail = match tokio::time::timeout(STDERR_READ, err_task).await {
-            Ok(Ok(t)) => t,
-            _ => Vec::new(),
-        };
+        let tail = stderr_tail(err_task).await;
         let finished_ok = *finished.lock().unwrap();
         let stopped = self.stop_requested(&id);
         let limited = !stopped
-            && self
-                .live
-                .lock()
-                .unwrap()
+            && self.live()
                 .get(&id)
                 .is_some_and(|l| l.limited);
         if limited {
@@ -517,7 +422,7 @@ impl Supervisor {
                 state,
             },
         );
-        self.live.lock().unwrap().remove(&id);
+        self.live().remove(&id);
         card_result?;
         if self.get(&id).is_ok_and(|m| m.autopilot) {
             self.autopilot(&id).await;
@@ -535,7 +440,7 @@ impl Supervisor {
                 | RunEvent::Text { .. }
                 | RunEvent::Tool { .. }
                 | RunEvent::ToolDone { .. }
-        ) && let Some(l) = self.live.lock().unwrap().get_mut(id)
+        ) && let Some(l) = self.live().get_mut(id)
         {
             l.turn = true;
         }
@@ -561,10 +466,7 @@ impl Supervisor {
                 });
             }
             RunEvent::Quota { window, .. } => {
-                let account = self
-                    .live
-                    .lock()
-                    .unwrap()
+                let account = self.live()
                     .get(id)
                     .map(|l| l.meta.account.clone())
                     .unwrap_or_default();
@@ -574,7 +476,7 @@ impl Supervisor {
                 q.push(ev.clone());
             }
             RunEvent::Limited { resets_at, .. } => {
-                if let Some(l) = self.live.lock().unwrap().get_mut(id) {
+                if let Some(l) = self.live().get_mut(id) {
                     l.limited = true;
                 }
                 let at = (*resets_at > 0).then_some(*resets_at);
@@ -592,7 +494,7 @@ impl Supervisor {
             } => {
                 *finished_ok = Some(*ok);
                 let handed_off = handoff.is_some();
-                if *limited && let Some(l) = self.live.lock().unwrap().get_mut(id) {
+                if *limited && let Some(l) = self.live().get_mut(id) {
                     l.limited = true;
                 }
                 let (ok, cost, dur, turns, tokens, handoff, denied) = (
@@ -627,7 +529,7 @@ impl Supervisor {
                         serde_json::to_string_pretty(&h).unwrap_or_default(),
                     );
                 }
-                let said = match self.live.lock().unwrap().get_mut(id) {
+                let said = match self.live().get_mut(id) {
                     Some(l) => {
                         l.results += 1;
                         l.turn = false;
@@ -650,7 +552,7 @@ impl Supervisor {
             return;
         }
         let n = v.get("tasks").and_then(Value::as_array).map_or(0, Vec::len);
-        if let Some(l) = self.live.lock().unwrap().get_mut(id) {
+        if let Some(l) = self.live().get_mut(id) {
             l.background = n;
         }
         if n == 0 {
@@ -686,7 +588,7 @@ impl Supervisor {
             loop {
                 tokio::time::sleep(GRACE).await;
                 let (stdin, pid) = {
-                    let mut live = live.lock().unwrap();
+                    let mut live = live.lock().unwrap_or_else(PoisonError::into_inner);
                     let Some(l) = live.get_mut(&id) else { return };
                     // A session the person opened (the Board's assistant) is theirs to end:
                     // it waits for the next message until they stop it.
@@ -704,11 +606,11 @@ impl Supervisor {
                     if l.background > 0 && since.elapsed() < wait {
                         continue;
                     }
-                    (l.stdin.take(), l.meta.pid)
+                    // Closed for anyone who writes from now on, before the lock is let go.
+                    l.stdin.mark_closed();
+                    (l.stdin.clone(), l.meta.pid)
                 };
-                if let Some(mut s) = stdin {
-                    let _ = s.shutdown().await;
-                }
+                stdin.close().await;
                 // Paused by Performance, it would not hear the end.
                 if let Some(pid) = pid {
                     signal(pid, libc::SIGCONT);
@@ -716,7 +618,7 @@ impl Supervisor {
                 tokio::time::sleep(leave).await;
                 let lingering = live
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(PoisonError::into_inner)
                     .get(&id)
                     .filter(|l| !l.turn)
                     .and_then(|l| l.meta.pid);
@@ -756,7 +658,7 @@ impl Supervisor {
                 state: RunState::Stopped,
             },
         );
-        self.live.lock().unwrap().remove(id);
+        self.live().remove(id);
         Ok(true)
     }
 }

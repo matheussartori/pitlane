@@ -1,6 +1,6 @@
 //! Who is on the other end of the socket. Anything an agent runs (a test, a build script, a git
 //! hook) runs as you and can reach the daemon's socket, so a request from inside a session the
-//! daemon started may only read and ask: it never decides an approval, starts or reviews work,
+//! daemon started may only read and ask (`Request::agent_safe`): it never decides an approval, starts or reviews work,
 //! or ends the daemon. The sandbox the runs get keeps their commands off the socket in the first
 //! place; this is the check behind it, for whatever runs outside the sandbox.
 
@@ -8,13 +8,6 @@ use std::collections::HashSet;
 
 /// How far up the process tree to look: deeper than any real chain, short of a loop.
 const MAX_DEPTH: usize = 64;
-
-/// What a session's own processes may still ask of the daemon: reading, and asking you.
-const AGENT_OPS: &[&str] = &["ping", "ask", "get", "list", "sessions", "quota", "follow", "approvals", "perf", "consult", "presence"];
-
-pub fn allowed_from_agent(op: &str) -> bool {
-    AGENT_OPS.contains(&op)
-}
 
 /// Whether `peer` is one of the daemon's sessions or something they started: the daemon is among
 /// its ancestors, or it is still in the process group of a session (a command that left the tree
@@ -68,14 +61,5 @@ mod tests {
         let mut child = child;
         child.kill().unwrap();
         child.wait().unwrap();
-    }
-
-    #[test]
-    fn what_an_agent_may_ask() {
-        assert!(allowed_from_agent("ask"));
-        assert!(allowed_from_agent("get"));
-        for op in ["decide", "start", "review", "shutdown", "hold", "perf_set", "enqueue", "stop_all", "say"] {
-            assert!(!allowed_from_agent(op), "{op}");
-        }
     }
 }
