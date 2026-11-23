@@ -1,7 +1,9 @@
 // Code: VS Code (code-server, bundled with Pitlane) over the tab, on the repository or a lane's
 // worktree. Files opened elsewhere in Pitlane (a terminal path, Review, a run) open here at their line.
 import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
-import { onVscodePlace, onVscodeReady, vscode, type Lane } from "./api";
+import { listen } from "@tauri-apps/api/event";
+import { api, onVscodePlace, onVscodeReady, vscode, type Lane } from "./api";
+import { loadCards, repo, yard } from "./store/repo";
 import { t } from "./i18n";
 import { prefs } from "./prefs";
 import { Spinner, toast } from "./ui";
@@ -21,6 +23,48 @@ export function openInCode(root: string, path: string, line?: number, col?: numb
   window.dispatchEvent(new CustomEvent("pitlane-code-open"));
   if (show) window.dispatchEvent(new CustomEvent("pitlane-show-code"));
 }
+
+// ---------------------------------------------------------------- "Ask Claude about this" (⌘L in VS Code)
+
+/** What the bridge extension sends: the ask, and where in which file. */
+interface CodeAsk {
+  ask: string;
+  file: string;
+  root: string;
+  from: number;
+  to: number;
+  language: string;
+  text: string;
+}
+
+/** The ask becomes a Backlog card: what you asked, the file and lines, and the code you pointed at. */
+async function cardFromCode(a: CodeAsk) {
+  const path = repo();
+  if (!path) return;
+  const root = a.root || path;
+  const rel = a.file.startsWith(`${root}/`) ? a.file.slice(root.length + 1) : a.file;
+  const lane = yard()?.lanes.find((l) => l.worktree?.path === root);
+  const lines = a.from === a.to ? t("line {n}", { n: a.from }) : t("lines {from} to {to}", { from: a.from, to: a.to });
+  const where = lane ? t("in the lane {branch}", { branch: lane.branch }) : t("in the repository");
+  const first = a.ask.split("\n")[0]!.trim();
+  const title = first.length > 80 ? `${first.slice(0, 79)}…` : first;
+  const fence = a.text.includes("```") ? "~~~" : "```";
+  const body = [a.ask, "", t("In `{file}`, {lines}, {where}:", { file: rel, lines, where }), "", `${fence}${a.language || ""}`, a.text.replace(/\s+$/, ""), fence].join("\n");
+  try {
+    const c = await api.cardAdd(path, title, body);
+    void loadCards();
+    toast({
+      tone: "done",
+      title: t("#{n} {title} is on the Board", { n: c.id, title: c.title }),
+      body: `${rel}:${a.from}${a.to !== a.from ? `-${a.to}` : ""}`,
+      action: { label: t("Open"), run: () => window.dispatchEvent(new CustomEvent("pitlane-open-card", { detail: c.id })) },
+    });
+  } catch (e) {
+    toast({ tone: "fail", title: t("The card was not made"), body: msg(e) });
+  }
+}
+
+if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) void listen<CodeAsk>("vscode-ask", (e) => void cardFromCode(e.payload));
 
 // ---------------------------------------------------------------- Pitlane's colours, for VS Code
 

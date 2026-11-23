@@ -70,11 +70,41 @@ pub(crate) async fn vscode_theme(app: tauri::AppHandle, dark: serde_json::Map<St
 
 async fn code_server_running(app: &tauri::AppHandle) -> CmdResult<vscode::Running> {
     let a = app.clone();
-    blocking(move || {
+    let r = blocking(move || {
         let bin = code_server(&a)?;
         a.state::<vscode::Vscode>().start(&bin, a.path().resource_dir().ok().as_deref(), &default_homes().1)
     })
-    .await
+    .await?;
+    watch_asks(app);
+    Ok(r)
+}
+
+/// Picks up what the bridge extension leaves ("Ask Claude about this" on a selection) and hands each
+/// request to the page as a `vscode-ask` event, once. A thread of the app's: it ends with it.
+fn watch_asks(app: &tauri::AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WATCHING: AtomicBool = AtomicBool::new(false);
+    if WATCHING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    let dir = vscode::asks_dir(&default_homes().1);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(400));
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            files.sort();
+            for f in files {
+                let text = std::fs::read_to_string(&f).ok();
+                let _ = std::fs::remove_file(&f);
+                let ask = text.and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).filter(|v| v.is_object());
+                if let Some(v) = ask {
+                    let _ = app.emit("vscode-ask", v);
+                }
+            }
+        }
+    });
 }
 
 #[derive(Clone, Serialize)]

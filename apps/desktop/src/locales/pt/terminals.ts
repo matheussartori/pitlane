@@ -1,4 +1,7 @@
 export default {
+  "line {n}": "linha {n}",
+  "lines {from} to {to}": "linhas {from} a {to}",
+  "In `{file}`, {lines}, {where}:": "Em `{file}`, {lines}, {where}:",
   "Make a card to fix this": "Fazer um card para corrigir isto",
   "Fix: {cmd} fails": "Corrigir: {cmd} falha",
   "a command": "um comando",

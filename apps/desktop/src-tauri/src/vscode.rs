@@ -33,6 +33,11 @@ pub fn dir(pitlane_home: &Path) -> PathBuf {
     pitlane_home.join("code-server")
 }
 
+/// Where the bundled bridge extension leaves "Ask Claude about this" requests for Pitlane to pick up.
+pub fn asks_dir(pitlane_home: &Path) -> PathBuf {
+    dir(pitlane_home).join("asks")
+}
+
 fn data(pitlane_home: &Path) -> PathBuf {
     dir(pitlane_home).join("data")
 }
@@ -241,6 +246,7 @@ impl Vscode {
             .arg("--extensions-dir")
             .arg(dir(pitlane_home).join("extensions"))
             .env("PASSWORD", &pw)
+            .env("PITLANE_BRIDGE", asks_dir(pitlane_home))
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)

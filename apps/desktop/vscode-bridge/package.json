@@ -1,0 +1,21 @@
+{
+  "name": "bridge",
+  "displayName": "Pitlane",
+  "description": "Ask Claude about the selection: Pitlane makes it a card on the Board.",
+  "publisher": "pitlane",
+  "version": "0.1.0",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "pitlane.ask", "title": "Ask Claude about this", "category": "Pitlane" }
+    ],
+    "menus": {
+      "editor/context": [{ "command": "pitlane.ask", "when": "editorTextFocus", "group": "0_pitlane@1" }]
+    },
+    "keybindings": [{ "command": "pitlane.ask", "key": "ctrl+l", "mac": "cmd+l", "when": "editorTextFocus" }]
+  }
+}
