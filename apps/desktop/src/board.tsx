@@ -1,7 +1,7 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
 import { For, Show, createEffect, createMemo, createSignal, on, type JSX } from "solid-js";
 import { api, cardStates, isLive, type Card, type CardState, type Plan, type RunMeta, type Yard } from "./api";
-import { clock, elapsed, money, runStateView } from "./run";
+import { elapsed, money, runStateView } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, openQuestions, place, reviewSummary, stateLabel } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
@@ -14,8 +14,8 @@ import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { CARD_SIDE_W, Grip } from "./layout";
 import { locale, plural, t } from "./i18n";
+import { clock, msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 /** The one stop worth naming at card size: your move, a count to settle, or what is wrong. */
 function stopNote(nodes: { stage: string; state: string; figure?: string }[]): string | null {

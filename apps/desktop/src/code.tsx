@@ -5,8 +5,8 @@ import { onVscodePlace, onVscodeReady, vscode, type Lane } from "./api";
 import { t } from "./i18n";
 import { prefs } from "./prefs";
 import { Spinner, toast } from "./ui";
+import { msg, cssHex } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 const [rootSig, setRootSig] = createSignal<string | null>(null);
 let pending: { root: string; path: string; line?: number; col?: number } | null = null;
@@ -22,23 +22,11 @@ export function openInCode(root: string, path: string, line?: number, col?: numb
 
 // ---------------------------------------------------------------- Pitlane's colours, for VS Code
 
-/** Hex of a CSS colour (oklch included), through a 1px canvas. */
-function hex(css: string): string {
-  const c = document.createElement("canvas");
-  c.width = c.height = 1;
-  const ctx = c.getContext("2d");
-  if (!ctx) return "#000000";
-  ctx.fillStyle = "#000";
-  ctx.fillStyle = css;
-  ctx.fillRect(0, 0, 1, 1);
-  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-  return `#${[r, g, b].map((v) => v!.toString(16).padStart(2, "0")).join("")}`;
-}
 
 /** VS Code's workbench colours from the design tokens, for one scheme. */
 function colours(): Record<string, string> {
   const cs = getComputedStyle(document.documentElement);
-  const t = (n: string) => hex(cs.getPropertyValue(n).trim());
+  const t = (n: string) => cssHex(cs.getPropertyValue(n).trim());
   const paper = t("--color-paper"), paper2 = t("--color-paper-2"), paper3 = t("--color-paper-3"), sunk = t("--color-paper-sunk");
   const rule = t("--color-rule"), ruleStrong = t("--color-rule-strong"), ink = t("--color-ink"), ink2 = t("--color-ink-2"), muted = t("--color-muted");
   const accent = t("--color-accent"), accentInk = t("--color-accent-ink"), accentText = t("--color-accent-text"), focus = t("--color-focus");
@@ -151,7 +139,7 @@ export function prewarmCode(repo: string) {
 }
 
 /** The editor's ground, painted under VS Code while it loads, so nothing flashes white. */
-const ground = () => hex(getComputedStyle(document.documentElement).getPropertyValue("--color-paper-sunk").trim());
+const ground = () => cssHex(getComputedStyle(document.documentElement).getPropertyValue("--color-paper-sunk").trim());
 
 // ---------------------------------------------------------------- the folders VS Code offers
 

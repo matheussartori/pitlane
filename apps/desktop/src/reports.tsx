@@ -7,10 +7,10 @@ import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
 import { Prose } from "./prose";
 import { ago } from "./lane";
-import { clock, money } from "./run";
+import { money } from "./run";
 import { Spinner, toast } from "./ui";
+import { clock, msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 /** The first sentence of a suggestion's spec, for its tile when Claude's line is not there. */
 const firstLine = (body: string) => {
   const line = body.replace(/[#*_`>]/g, "").split(/\n+/).map((l) => l.trim()).find(Boolean) ?? "";

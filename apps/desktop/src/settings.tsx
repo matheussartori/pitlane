@@ -10,8 +10,8 @@ import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalSide, term
 import { t } from "./i18n";
 import { toast, ok } from "./ui";
 import { resetLayout } from "./layout";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 const shortPath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
 type Section = "general" | "repositories" | "agents" | "accounts" | "terminal" | "code" | "shortcuts" | "about";

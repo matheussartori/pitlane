@@ -5,9 +5,8 @@ import { dictation } from "./api";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
 import { t } from "./i18n";
+import { msg, clock } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
-const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 export function Dictate(props: {
   /** The field the words go into. */

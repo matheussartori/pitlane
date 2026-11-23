@@ -5,8 +5,8 @@ import { api, type Card } from "./api";
 import { Icon } from "./icons";
 import { Spinner, toast } from "./ui";
 import { t } from "./i18n";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 const EDGE = 1568;
 const TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 

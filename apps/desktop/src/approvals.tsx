@@ -3,8 +3,8 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api, type Approval, type Decision } from "./api";
 import { t } from "./i18n";
 import { ErrorLine, Spinner, toast, ownsKey } from "./ui";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 /** `Bash(npm test:*)` → `npm test`; a tool rule is the tool's name. */
 export function ruleLabel(rule: string): string {

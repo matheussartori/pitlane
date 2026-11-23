@@ -5,8 +5,8 @@ import { Icon } from "./icons";
 import { ErrorLine, Sheet, Spinner, toast, ok } from "./ui";
 import { Dictate } from "./dictate";
 import { plural, t, tx } from "./i18n";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 
 // ---------------------------------------------------------------- Ship

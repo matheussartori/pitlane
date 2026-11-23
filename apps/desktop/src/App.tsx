@@ -23,6 +23,7 @@ import { CleanSheet, NewLaneSheet, ProjectSheet, RunAllSheet, ShipSheet, type Ru
 import { Toasts, dismissable, installTips, ownsKey, toast } from "./ui";
 import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
+import { msg } from "./format";
 
 type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "terminal" | "settings";
 type SheetState =
@@ -58,7 +59,6 @@ function shortPath(p: string): string {
   return parts.length > 4 ? [parts[0], parts[1], "…", ...parts.slice(-2)].join("/") : home;
 }
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 export default function App() {
   const [settings, setSettings] = createSignal<Settings>({ repos: [], last: null });

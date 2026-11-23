@@ -8,8 +8,8 @@ import { openQuestions, type OpenQuestion } from "./cards";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
 import { Spinner, toast, ownsKey } from "./ui";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 export const MCP_INSTALL = "claude mcp add pitlane -- pit mcp";
 

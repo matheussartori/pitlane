@@ -12,8 +12,8 @@ import { toast } from "./ui";
 import { registerSize } from "./layout";
 import { ApprovalBlock } from "./approvals";
 import { Prose } from "./prose";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 /** How long an ended session stays in view (so you see how it ended) before it closes. */
 const LINGER_MS = 20_000;

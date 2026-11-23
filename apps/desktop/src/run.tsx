@@ -12,8 +12,8 @@ import type { ChipState } from "./lane";
 import { locale, plural, t, tx } from "./i18n";
 import { ErrorLine, Spinner, toast } from "./ui";
 import { Grip, RUN_SIDE_W } from "./layout";
+import { msg, clock } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; label: string }> = {
   starting: { chip: "running", icon: "run", label: "Starting" },
@@ -25,14 +25,6 @@ export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; l
   interrupted: { chip: "needs", icon: "needs", label: "Interrupted" },
 };
 
-/** 95 → 1:35, 4000 → 1:06:40. */
-export function clock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
-}
 
 /** Wall time of a run: ticking while live, fixed once it ends. */
 export function elapsed(m: RunMeta, nowMs: number): number {

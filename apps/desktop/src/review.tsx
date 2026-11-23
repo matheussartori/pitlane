@@ -5,11 +5,11 @@ import { api, type Card, type Finding, type LaneDiff, type RunMeta, type Verific
 import { reviewSummary } from "./cards";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
-import { clock, elapsed, money } from "./run";
+import { elapsed, money } from "./run";
 import { ErrorLine, Spinner, toast, ok, okLatest } from "./ui";
 import { Grip, REVIEW_SIDE_W } from "./layout";
+import { clock, msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 // ---------------------------------------------------------------- the diff
 

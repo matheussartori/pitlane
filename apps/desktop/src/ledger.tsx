@@ -3,7 +3,8 @@ import { For, Show } from "solid-js";
 import type { RunMeta } from "./api";
 import { Icon } from "./icons";
 import { ago } from "./lane";
-import { clock, elapsed, kTokens, money, runStateView } from "./run";
+import { elapsed, kTokens, money, runStateView } from "./run";
+import { clock } from "./format";
 import { plural, t } from "./i18n";
 import { Spinner } from "./ui";
 

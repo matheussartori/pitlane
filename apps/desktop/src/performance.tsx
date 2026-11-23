@@ -5,8 +5,8 @@ import { api, type PerfEvent, type PerfAgent, type PerfMode, type PerfSample, ty
 import { Icon, type IconName } from "./icons";
 import { locale, plural, t, tx } from "./i18n";
 import { Spinner, toast } from "./ui";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 /** 1.2 GB, 420 MB. */
 export function bytes(n: number): string {

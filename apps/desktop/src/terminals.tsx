@@ -20,6 +20,7 @@ import { t } from "./i18n";
 import { Icon } from "./icons";
 import { dismissable, toast } from "./ui";
 import { Grip, size } from "./layout";
+import { msg, cssHex } from "./format";
 
 /** The sidebar's width, and how much of it the agents take above the terminals (most of it). */
 const SIDE_W = size("terms.side", { def: 260, min: 180, max: () => Math.round(window.innerWidth * 0.45) });
@@ -29,7 +30,6 @@ const AGENTS_H = size("terms.agents", {
   max: () => window.innerHeight - 38 - 120,
 });
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 // ---------------------------------------------------------------- the layout
 
@@ -231,20 +231,8 @@ function setTab(id: number, f: (t: Tab) => Partial<Tab>) {
 
 // ---------------------------------------------------------------- colours from the tokens
 
-/** A CSS colour (oklch included) as #rrggbb, through a 1px canvas. */
-function hex(css: string): string {
-  const c = document.createElement("canvas");
-  c.width = c.height = 1;
-  const ctx = c.getContext("2d");
-  if (!ctx) return "#000000";
-  ctx.fillStyle = "#000";
-  ctx.fillStyle = css;
-  ctx.fillRect(0, 0, 1, 1);
-  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-  return `#${[r, g, b].map((v) => v!.toString(16).padStart(2, "0")).join("")}`;
-}
 
-const tok = (name: string) => hex(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+const tok = (name: string) => cssHex(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
 const dark = () => getComputedStyle(document.documentElement).getPropertyValue("color-scheme").includes("dark");
 
 function theme() {

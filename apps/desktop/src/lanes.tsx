@@ -2,7 +2,8 @@
 // (local, remote, integration, production). The Tower is the same lanes, compact, for the other screens.
 import { For, Show, createEffect, type JSX } from "solid-js";
 import { isLive, isOpenJob, type Lane, type RunMeta, type ShipJob, type Yard } from "./api";
-import { clock, elapsed } from "./run";
+import { elapsed } from "./run";
+import { clock } from "./format";
 import { Icon } from "./icons";
 import { ago, group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, syncView, track, worktreeName, type Group } from "./lane";
 import { ErrorLine, Spinner } from "./ui";

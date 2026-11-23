@@ -6,8 +6,8 @@ import { api, type AccountKind, type AccountView } from "./api";
 import { Icon } from "./icons";
 import { t } from "./i18n";
 import { ErrorLine, Sheet, Spinner, toast, ok } from "./ui";
+import { msg } from "./format";
 
-const msg = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
 
 const ADD = "pit account add <name> && pit account login <name>";
 
