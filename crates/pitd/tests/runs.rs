@@ -1623,3 +1623,29 @@ fn pit_supervisor_opts_no_brief() -> pitd::supervisor::StartOpts {
         ..Default::default()
     }
 }
+
+/// With the real Claude Code (signed in): a card blocked on a question you answered is read
+/// again and goes back to the Backlog. `cargo test -p pitd --test runs -- --ignored rechecks`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "runs the real claude"]
+async fn rechecks_an_answered_card_with_the_real_claude() {
+    let fx = fx();
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::add(&r, NewCard { title: "Add a doubling helper".into(), body: "Add a small function to README.md's example section that doubles a number.".into(), ..Default::default() }).unwrap();
+    cards::ask(&r, c.id, vec![cards::NewQuestion { text: "What should the function be called?".into(), options: vec!["double".into(), "twice".into()], recommended: Some(0), context: Some("Only the name changes.".into()) }]).unwrap();
+    let q = cards::get(&r, c.id).unwrap().questions[0].id;
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Blocked), blocked: Some(cards::Block::new(cards::BlockReason::Questions, "Needs the function's name.", None)), ..Default::default() }).unwrap();
+    cards::answer(&r, c.id, q, "1").unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: "claude".into(), pit_bin: None });
+    assert!(s.recheck(fx.repo.clone(), c.id).unwrap(), "a reading starts");
+    for _ in 0..360 {
+        let now = cards::get(&r, c.id).unwrap();
+        if now.blocked.as_ref().is_none_or(|b| b.checking.is_none()) {
+            eprintln!("state {:?}, open {}, notes {:?}", now.state, now.open_questions(), now.notes.iter().map(|n| &n.text).collect::<Vec<_>>());
+            assert!(now.state == CardState::Ready || now.open_questions() > 0);
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    panic!("the reading never ended");
+}
