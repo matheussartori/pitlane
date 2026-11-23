@@ -332,12 +332,16 @@ export default function App() {
       },
       async (_run, m) => {
         const fresh = loadRuns();
-        void loadCards();
+        const cardsFresh = loadCards();
         void load(false);
         if (!m || !prefs().notify_runs || document.hasFocus()) return;
         // A failure needs you now. A finished lane waits until every running lane is done:
         // one notification when the whole batch is ready, not one per card.
         if (m.state === "failed") {
+          // Unless Pitlane carries on by itself: more turns in the same session, or a retry it set.
+          if (m.goes_on) return;
+          await cardsFresh;
+          if (m.repo === repo() && cards()?.find((c) => c.id === m.card)?.blocked?.retry_at) return;
           void say(t("#{card} {title} stopped", { card: m.card, title: m.card_title }), t("The run failed. Open it in Pitlane to see why."));
           return;
         }

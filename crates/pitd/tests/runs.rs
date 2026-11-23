@@ -18,6 +18,7 @@ use tempfile::TempDir;
 /// FAKE_MODE=fold takes a message that arrives mid-turn into that turn, as Claude Code does: it
 /// gets no result of its own. FAKE_MODE=server hands off with a background task still running.
 /// FAKE_MODE=linger hands off and then never leaves, whatever stdin does.
+/// FAKE_MODE=turns-once runs out of turns the first time in a worktree, then finishes.
 /// FAKE_MODE=partial hands off one stage of a larger card, with what is left.
 const FAKE: &str = r#"#!/bin/bash
 # The judge, a side session: one prompt line on stdin, one result. FAKE_VERDICT picks the verdict.
@@ -55,6 +56,9 @@ while IFS= read -r line; do
     elif [ "$FAKE_MODE" = "linger" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Did it, and stayed."}}'
       sleep 600
+    elif [ "$FAKE_MODE" = "turns-once" ] && [ ! -f "$PWD/.turned" ]; then
+      touch "$PWD/.turned"
+      echo '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"duration_ms":100,"total_cost_usd":0.02,"usage":{}}'
     elif [ "$FAKE_MODE" = "self-turn" ]; then
       # Out of turns while a background task was due; Claude Code then starts a turn by itself.
       echo '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"duration_ms":100,"total_cost_usd":0.02,"usage":{}}'
@@ -1779,4 +1783,32 @@ async fn a_run_asks_while_you_are_here_and_decides_while_you_are_away() {
 
     s.stop(&run).unwrap();
     wait_end(&s, &run).await;
+}
+
+/// Out of turns under Run all goes on in the same session: the run says so before it ends, so
+/// nobody is told it stopped, and the card never waits on you in between.
+#[tokio::test(flavor = "multi_thread")]
+async fn out_of_turns_under_run_all_goes_on_without_stopping_the_card() {
+    let fx = fx();
+    let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap();
+    fs::write(fx.repo.join(".pitlane/flow.toml"), format!("{flow}\n[run]\nmax_turns = 4\n")).unwrap();
+    let id = card(&fx, "A long one");
+    let s = fake_in(&fx, "turns-once");
+    let opts = pitd::supervisor::StartOpts { autopilot: true, ..Default::default() };
+    let first = s.start(fx.repo.clone(), id, None, opts).unwrap();
+    let mut next = None;
+    for _ in 0..1000 {
+        assert_ne!(card_state(&fx, id).0, CardState::Blocked, "the card waited on nobody");
+        next = s.list(None).unwrap().into_iter().find(|m| m.resumed_from.as_deref() == Some(first.id.as_str()));
+        if next.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let next = next.expect("the same session went on");
+    let ended = wait_end(&s, &first.id).await;
+    assert_eq!(ended.state, RunState::Failed);
+    assert!(ended.goes_on, "the failed run says it goes on");
+    assert_eq!(next.extensions, 1);
+    assert!(!wait_end(&s, &next.id).await.goes_on);
 }

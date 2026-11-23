@@ -363,6 +363,8 @@ export interface RunMeta {
   /** Card questions the agent asked while working and waits on (Presence: Here). */
   asking?: number[];
   /** The account the route chose (`default` is the normal Claude Code login). */
+  /** Failed, but Pitlane carries it on by itself (out of turns under Run all): not worth a notice. */
+  goes_on?: boolean;
   account?: string;
   /** Why the route chose this account and model. */
   reason?: string | null;

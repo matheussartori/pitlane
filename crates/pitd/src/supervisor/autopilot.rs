@@ -15,6 +15,17 @@ use super::verify::fix_request;
 /// Times a run that ran out of turns goes on in the same session.
 const MAX_EXTENSIONS: u32 = 2;
 
+/// The run stopped at its turn limit without a handoff.
+pub(super) fn out_of_turns(m: &RunMeta, max_turns: u32) -> bool {
+    m.handoff.is_none() && m.turns.is_some_and(|t| t + 1 >= max_turns)
+}
+
+/// A Run all run that failed only for running out of turns, with extensions left: the same
+/// session goes on by itself, so the failure is nobody's to look at, and the card stays in progress.
+pub(super) fn goes_on(m: &RunMeta, max_turns: u32) -> bool {
+    m.autopilot && m.state == RunState::Failed && m.extensions < MAX_EXTENSIONS && out_of_turns(m, max_turns)
+}
+
 impl Supervisor {
     /// Run all's next step for a finished run, with nobody watching: more turns for a run that ran
     /// out of them, a fix round for what the proofs or the judge found, else the work lands in its
@@ -37,10 +48,7 @@ impl Supervisor {
         };
         match m.state {
             // Out of turns: the same session goes on, twice at most.
-            RunState::Failed
-                if m.handoff.is_none()
-                    && m.turns.is_some_and(|t| t + 1 >= r.flow.run.max_turns) =>
-            {
+            RunState::Failed if out_of_turns(&m, r.flow.run.max_turns) => {
                 if m.extensions >= MAX_EXTENSIONS {
                     say(format!(
                         "Run {} ran out of turns a third time; the card waits for you.",
@@ -66,10 +74,21 @@ impl Supervisor {
                             text: format!("Out of turns: continues as run {}.", n.id),
                         },
                     ),
-                    Err(e) => say(format!(
-                        "Run {} ran out of turns and could not continue: {e:#}",
-                        m.id
-                    )),
+                    Err(e) => {
+                        // The card stayed in progress for the run that was to go on: it waits for you now.
+                        let text = format!("Run {} ran out of turns and could not continue: {e:#}", m.id);
+                        let block = cards::Block::new(cards::BlockReason::Failed, text.clone(), Some(m.id.clone()));
+                        let _ = cards::update(
+                            &r,
+                            m.card,
+                            CardPatch {
+                                state: Some(CardState::Blocked),
+                                blocked: Some(block),
+                                ..Default::default()
+                            },
+                        );
+                        say(text);
+                    }
                 }
             }
             RunState::Done

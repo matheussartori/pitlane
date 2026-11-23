@@ -417,10 +417,12 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         (RunState::Done, Some("blocked")) => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Stuck, short(summary), Some(m.id.clone())))),
         (RunState::Done, _) => (CardState::Review, None),
         (RunState::Stopped, _) => (CardState::Ready, None),
+        // Out of turns under Run all: the same session goes on at once, so the card never waits on you.
+        _ if super::autopilot::goes_on(m, r.flow.run.max_turns) => (CardState::Running, None),
         _ => {
             let retries = cards::get(&r, m.card).map(|c| c.retries).unwrap_or_default();
             // Out of turns is not tried again by itself: another run would spend as much again.
-            let out_of_turns = m.handoff.is_none() && m.turns.is_some_and(|t| t + 1 >= r.flow.run.max_turns);
+            let out_of_turns = super::autopilot::out_of_turns(m, r.flow.run.max_turns);
             let detail = if out_of_turns { "Ran out of turns before finishing." } else { m.error.as_deref().unwrap_or("The run ended without finishing.") };
             let b = cards::Block::new(cards::BlockReason::Failed, short(detail), Some(m.id.clone()));
             let at = if out_of_turns { None } else { retry_policy(cards::BlockReason::Failed, retries, m) };

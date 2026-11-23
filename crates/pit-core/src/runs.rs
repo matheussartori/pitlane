@@ -163,6 +163,10 @@ pub struct RunMeta {
     /// How many times this card's work was continued after running out of turns.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub extensions: u32,
+    /// Failed, but Pitlane carries it on by itself (out of turns under Run all, continued in the
+    /// same session): nothing for you to look at, so no "it stopped" notice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goes_on: bool,
     /// The same branch in the project's related repositories, where the agent works too.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<crate::related::RelatedLane>,

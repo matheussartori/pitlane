@@ -618,6 +618,7 @@ impl Supervisor {
             parent: side.parent.clone(),
             autopilot: false,
             extensions: 0,
+            goes_on: false,
             related: Vec::new(),
         };
         self.register(meta)?;

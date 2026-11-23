@@ -143,6 +143,7 @@ impl Supervisor {
             parent: None,
             autopilot: opts.autopilot,
             extensions: opts.extensions,
+            goes_on: false,
             related: Vec::new(),
         };
         self.register(meta.clone())?;
@@ -445,6 +446,10 @@ impl Supervisor {
         let mut settled = self.get(&id)?;
         settled.state = state;
         let home = self.cfg.home.clone();
+        // Out of turns under Run all goes on in the same session: said on the run before it ends,
+        // so nobody is told it stopped.
+        let goes_on = Repo::open(&settled.repo, &home_dir(), &home)
+            .is_ok_and(|r| super::autopilot::goes_on(&settled, r.flow.run.max_turns));
         let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home, true)).await?;
         // Said while the run is still live: once it leaves the list, nothing more is recorded.
         match &card_result {
@@ -459,6 +464,7 @@ impl Supervisor {
             m.state = state;
             m.ended_at = Some(now_secs());
             m.pid = None;
+            m.goes_on = goes_on;
             m.waiting.clear();
             m.asking.clear();
             if m.error.is_none() {
