@@ -46,6 +46,14 @@
       close();
       if (b.dataset.root !== here) location.href = "pitlane://place?root=" + encodeURIComponent(b.dataset.root);
     });
+    // VS Code's workbench cancels wheel events that reach it, so the list never scrolled by mouse:
+    // scroll it here and keep the event from going further.
+    m.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? m.clientHeight : 1;
+      m.scrollTop += e.deltaY * unit;
+    }, { passive: false });
     m.addEventListener("keydown", function (e) {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       e.preventDefault();
