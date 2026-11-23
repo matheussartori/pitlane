@@ -16,6 +16,7 @@ use tokio::sync::{broadcast, oneshot};
 mod approvals;
 mod autopilot;
 mod card;
+mod consult;
 mod control;
 mod launch;
 mod queue;
@@ -119,6 +120,10 @@ pub struct Supervisor {
     analysing: Mutex<std::collections::HashSet<(PathBuf, u32)>>,
     /// Performance: Full or Light, and the governor that keeps the agents to it.
     pub perf: crate::perf::Perf,
+    /// Presence: whether runs ask you their calls (Here) or go with their recommendation (Away).
+    pub presence: crate::presence::Presence,
+    /// How often a run waiting on your answer looks at the card again, in milliseconds.
+    consult_poll_ms: AtomicU64,
     /// How long an agent may take to leave once its session was closed, in milliseconds.
     leave_ms: AtomicU64,
     /// How long what a card's agent left running (a push, a server) holds its session after the
@@ -161,6 +166,8 @@ impl Supervisor {
             analysis_gate: Arc::new(tokio::sync::Semaphore::new(ANALYSES_AT_ONCE)),
             analysing: Mutex::new(Default::default()),
             perf: crate::perf::Perf::new(&home),
+            presence: crate::presence::Presence::new(&home),
+            consult_poll_ms: AtomicU64::new(2_000),
             leave_ms: AtomicU64::new(LEAVE_MS),
             left_running_ms: AtomicU64::new(LEFT_RUNNING_MS),
             meta_writes: Mutex::new(()),

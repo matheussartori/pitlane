@@ -10,12 +10,13 @@ import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
 import { BoardView, NewCardSheet } from "./board";
 import { CardSheet, QuestionsSheet } from "./cardsheet";
-import { openQuestions } from "./cards";
+import { openQuestions, place } from "./cards";
+import { Palette, type Command } from "./palette";
 import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalsWanting } from "./terminals";
-import { AgentDock, agentsWanting, agentsWorking, selectAgent, setAgentsRepo, startAgents } from "./agents";
+import { AgentDock, agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./agents";
 import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
@@ -119,6 +120,7 @@ export default function App() {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [sheet, setSheet] = createSignal<SheetState>(null);
   const [menu, setMenu] = createSignal(false);
+  const [palette, setPalette] = createSignal(false);
   let repoBox: HTMLDivElement | undefined;
   dismissable(() => repoBox, menu, () => setMenu(false));
   const [booted, setBooted] = createSignal(false);
@@ -381,7 +383,7 @@ export default function App() {
       if (document.visibilityState === "visible" && (runs() ?? []).some((r) => isLive(r.state))) void loadRuns();
       if (document.visibilityState === "visible" && jobs().some(isOpenJob)) void loadQueue();
     }, 4000);
-    const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn });
+    const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn, palette: () => setPalette((p) => !p) });
     window.addEventListener("focus", onFocus);
     window.addEventListener("keydown", onKey);
     onCleanup(() => {
@@ -417,6 +419,89 @@ export default function App() {
   const select = (b: string) => {
     setSelected(b);
     setTab("lanes");
+  };
+
+  /** Everything ⌘K reaches, built when it opens. */
+  const commands = (): Command[] => {
+    const out: Command[] = [];
+    const go = (to: Tab) => () => {
+      setRunView(null);
+      setReviewView(null);
+      setTab(to);
+      if (location.hash.startsWith("#run/") || location.hash.startsWith("#review/")) location.hash = `#${to}`;
+    };
+    const has = !!repo();
+    if (has) {
+      out.push(
+        { id: "a-card", group: t("Actions"), icon: "plus", title: t("New card"), keys: "C", run: () => setSheet({ kind: "new-card" }) },
+        { id: "a-lane", group: t("Actions"), icon: "branch", title: t("New lane"), keys: "N", run: () => setSheet({ kind: "new" }) },
+        { id: "a-term", group: t("Actions"), icon: "term", title: t("Terminal in the repository"), keys: "⌘T", run: () => void terminalIn(undefined) },
+        { id: "a-fetch", group: t("Actions"), icon: "refresh", title: t("Fetch the remote"), keys: "⌘R", run: () => void (fetching() || load(true)) },
+      );
+    }
+    out.push(
+      { id: "a-tower", group: t("Actions"), icon: "tower", title: towerOpen() ? t("Fold the Tower") : t("Open the Tower"), keys: "⌘\\", run: toggleTower },
+      { id: "a-settings", group: t("Actions"), icon: "settings", title: t("Settings"), keys: "⌘,", run: go("settings") },
+    );
+    if (has) {
+      out.push(
+        { id: "a-accounts", group: t("Actions"), icon: "person", title: t("Accounts"), searchOnly: true, run: () => setSheet({ kind: "accounts" }) },
+        { id: "a-project", group: t("Actions"), icon: "note", title: t("Project context"), searchOnly: true, run: () => setSheet({ kind: "project" }) },
+      );
+    }
+    // Agents at work: the ones waiting on you first.
+    const liveRuns = (runs() ?? []).filter((r) => isLive(r.state)).sort((a, b) => b.waiting.length - a.waiting.length || b.started_at - a.started_at);
+    for (const r of liveRuns)
+      out.push({
+        id: `r-${r.id}`,
+        group: t("Agents"),
+        icon: r.waiting.length ? "needs" : "run",
+        title: `#${r.card} ${r.card_title}`,
+        sub: r.waiting.length ? t("Needs you") : kindLabel(r),
+        words: r.branch ?? "",
+        run: () => openRun(r.id),
+        alt: { label: t("in Terminal › Agents"), run: () => (selectAgent(r.id), go("terminal")()) },
+      });
+    // Cards: the ones that need you first, then in progress and the Backlog; landed ones only when searched for.
+    const order = { needs: 0, progress: 1, backlog: 2, landed: 3 } as const;
+    const placed = (cards() ?? []).map((c) => ({ c, p: place(c, yard()) })).sort((x, y) => order[x.p.column] - order[y.p.column]);
+    for (const { c, p } of placed) {
+      const last = lastRun(c.id);
+      out.push({
+        id: `c-${c.id}`,
+        group: t("Cards"),
+        icon: p.icon,
+        title: `#${c.id} ${c.title}`,
+        sub: p.label,
+        words: `${c.id} ${c.lane ?? ""}`,
+        searchOnly: p.column === "landed",
+        run: () => (c.state === "review" && c.lane ? openReview(c.id) : setSheet({ kind: "card", id: c.id })),
+        alt: last ? { label: t("its last run"), run: () => openRun(last.id) } : undefined,
+      });
+    }
+    for (const l of yard()?.lanes ?? [])
+      out.push({
+        id: `l-${l.branch}`,
+        group: t("Lanes"),
+        icon: "branch",
+        title: l.branch,
+        sub: l.worktree ? shortPath(l.worktree.path) : t("no worktree"),
+        searchOnly: true,
+        run: () => select(l.branch),
+        alt: l.worktree ? { label: t("a terminal in its worktree"), run: () => void terminalIn(l) } : undefined,
+      });
+    const screens: [Tab, IconName, string, string][] = [
+      ["inbox", "inbox", t("Inbox"), "⌥1"],
+      ["board", "board", t("Board"), "⌥2"],
+      ["lanes", "lanes", t("Lanes"), "⌥3"],
+      ["terminal", "term", t("Terminal"), "⌥4"],
+      ["code", "code", t("Code"), "⌥5"],
+      ["ledger", "ledger", t("Ledger"), "⌥6"],
+      ["reports", "note", t("Reports"), "⌥7"],
+      ["performance", "gauge", t("Performance"), "⌥8"],
+    ];
+    for (const [to, icon, title, keys] of screens) out.push({ id: `s-${to}`, group: t("Go to"), icon, title, keys, run: go(to) });
+    return out;
   };
 
   return (
@@ -495,6 +580,12 @@ export default function App() {
               </div>
             </Show>
           </div>
+          {/* The command center, as in VS Code and Zed: where ⌘K lives, for those who don't know the key yet. */}
+          <button type="button" class="strip-search" onClick={() => setPalette(true)} aria-keyshortcuts="Meta+K">
+            <Icon name="search" small />
+            <span class="strip-search-text">{current() ? t("Search {name}", { name: current()!.name }) : t("Search")}</span>
+            <span class="strip-search-keys">⌘K</span>
+          </button>
       </div>
       <nav class="navrail" aria-label="Pitlane">
         <div class="navrail-items">
@@ -849,6 +940,9 @@ export default function App() {
         </Show>
       </div>
       </div>
+      <Show when={palette()}>
+        <Palette commands={commands} onClose={() => setPalette(false)} />
+      </Show>
       <Toasts />
     </div>
   );

@@ -2,7 +2,7 @@
 //! Speaks JSON, one message per line, on a Unix socket only this user can open.
 //!
 //! Requests: `ping`, `start {repo, card, fresh?}`, `resume {run}`, `list {repo?}`, `get {run}`,
-//! `say {run, text}`, `tune {run, model?, effort?}`, `stop {run}`, `stop_all`, `perf`, `perf_set {config}`, `perf_hold {run, hold}`, `shutdown`, `hold` (the app; its end stops all
+//! `say {run, text}`, `tune {run, model?, effort?}`, `stop {run}`, `stop_all`, `perf`, `perf_set {config}`, `perf_hold {run, hold}`, `presence`, `presence_set {config}`, `consult {run, question, costly}`, `shutdown`, `hold` (the app; its end stops all
 //! and ends the daemon), `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
 //! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
 //! `{i, event}` lines and ends with `{end: <run>}`. The messages are typed in
@@ -10,6 +10,7 @@
 
 mod peer;
 pub mod perf;
+pub mod presence;
 pub mod supervisor;
 
 use std::os::unix::fs::PermissionsExt;
@@ -197,6 +198,12 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
         Request::Perf => Ok(sup.perf.snapshot()),
         Request::PerfSet { config } => Ok(json!({ "config": sup.perf.set(&config)? })),
         Request::PerfHold { run, hold } => reply(Changed { changed: sup.perf_hold(run_arg(&run)?, hold)? }),
+        Request::Presence => Ok(sup.presence.snapshot(sup.perf.config().away_minutes)),
+        Request::PresenceSet { config } => {
+            sup.presence.set(&config)?;
+            Ok(sup.presence.snapshot(sup.perf.config().away_minutes))
+        }
+        Request::Consult { run, question, costly } => Ok(json!({ "text": sup.consult(run_arg(&run)?, question, costly).await })),
         Request::StopAnalyses => reply(Stopped { stopped: sup.stop_where(|m| m.kind == pit_core::runs::SessionKind::Analysis) }),
         Request::Shutdown => {
             let sup = Arc::clone(sup);

@@ -112,7 +112,8 @@ impl Supervisor {
                 .collect::<Vec<_>>()
                 .join(","),
         )
-        // Nobody is watching a run: it decides, notes the choice, or ends blocked.
+        // A run never waits on Claude Code's own question: it asks through Pitlane's `ask` tool,
+        // which waits only while you are here (Presence), or it decides and notes the choice.
         .args(["--disallowedTools", "AskUserQuestion"])
         .args(prep.related.iter().flat_map(|l| {
             [

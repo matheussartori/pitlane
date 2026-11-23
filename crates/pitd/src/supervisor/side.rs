@@ -602,6 +602,7 @@ impl Supervisor {
             denied: Vec::new(),
             resumed_from: None,
             waiting: Vec::new(),
+            asking: Vec::new(),
             account: side.account.clone(),
             reason: None,
             handoff_from: None,

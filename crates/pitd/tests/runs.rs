@@ -1704,3 +1704,79 @@ async fn a_stuck_agent_gets_questions_with_the_real_claude() {
     }
     panic!("the reading never ended");
 }
+
+/// Presence: away, a run takes its recommendation (written on the card as taken for you) and
+/// leaves a costly call for the handoff; here, it asks on the card and waits for your answer, and
+/// going away meanwhile frees it. Past its share of questions it decides by itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_asks_while_you_are_here_and_decides_while_you_are_away() {
+    use pit_core::cards::NewQuestion;
+    use serde_json::json;
+    let fx = fx();
+    let id = card(&fx, "Has a call to make");
+    let s = fake_in(&fx, "slow");
+    s.set_consult_poll(Duration::from_millis(30));
+    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap().id;
+    for _ in 0..100 {
+        if s.get(&run).unwrap().pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let q = |text: &str| NewQuestion { text: text.into(), options: vec!["A".into(), "B".into()], recommended: Some(1), context: Some("Why.".into()) };
+    let questions = || cards::get(&r, id).unwrap().questions;
+
+    // Away (the default): the recommendation, on the card as taken for you.
+    let said = s.consult(&run, q("Which one?"), false).await;
+    assert!(said.contains("go with your recommendation, \"B\""), "{said}");
+    let first = questions().pop().unwrap();
+    assert_eq!((first.answer.as_deref(), first.auto, first.run.as_deref()), (Some("B"), true, Some(run.as_str())));
+    // A costly call is never taken for you, and is not put on the card twice.
+    let said = s.consult(&run, q("Drop the table?"), true).await;
+    assert!(said.contains("blocked") && said.contains("in the handoff"), "{said}");
+    assert_eq!(questions().len(), 1);
+
+    // Here: it waits on the card until you answer.
+    s.presence.set(&json!({ "mode": "here", "per_run": 4 })).unwrap();
+    let ask = |text: &'static str, costly: bool| {
+        let (s, run, q) = (Arc::clone(&s), run.clone(), q(text));
+        tokio::spawn(async move { s.consult(&run, q, costly).await })
+    };
+    let open = |n: usize| async move {
+        for _ in 0..200 {
+            if questions().iter().filter(|q| q.is_open()).count() == n {
+                return questions().into_iter().rfind(|q| q.is_open());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("never {n} open: {:?}", questions().iter().map(|q| (q.id, q.text.clone(), q.answer.clone())).collect::<Vec<_>>());
+    };
+    let waiting = ask("Which colour?", false);
+    let asked = open(1).await.unwrap();
+    assert_eq!(s.get(&run).unwrap().asking, vec![asked.id]);
+    cards::answer(&r, id, asked.id, "1").unwrap();
+    let said = waiting.await.unwrap();
+    assert!(said.contains("The person answered: \"A\""), "{said}");
+    assert!(s.get(&run).unwrap().asking.is_empty());
+
+    // You go away while it waits: the recommendation, or for a costly call, it stays open.
+    let waiting = ask("Which font?", false);
+    let asked = open(1).await.unwrap();
+    s.presence.set(&json!({ "mode": "away" })).unwrap();
+    assert!(waiting.await.unwrap().contains("went away: go with your recommendation"));
+    assert!(questions().iter().any(|x| x.id == asked.id && x.auto && x.answer.as_deref() == Some("B")));
+    s.presence.set(&json!({ "mode": "here" })).unwrap();
+    let waiting = ask("Migrate the data?", true);
+    open(1).await;
+    s.presence.set(&json!({ "mode": "away" })).unwrap();
+    assert!(waiting.await.unwrap().contains("stays open on the card"));
+
+    // Past its share (four here), it decides by itself even while you are here.
+    s.presence.set(&json!({ "mode": "here" })).unwrap();
+    let said = s.consult(&run, q("One more?"), false).await;
+    assert!(said.contains("already asked the person 4 times"), "{said}");
+
+    s.stop(&run).unwrap();
+    wait_end(&s, &run).await;
+}

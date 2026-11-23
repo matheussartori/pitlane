@@ -170,6 +170,7 @@ pub(super) fn prepare(
     note(format!("Working in {}", worktree.display()));
     let mut tools: Vec<String> = RUN_BASE_TOOLS.iter().map(|s| s.to_string()).collect();
     tools.push("mcp__pitlane_run__note".into());
+    tools.push("mcp__pitlane_run__ask".into());
     tools.extend(r.flow.run.allow.iter().cloned());
     let the_card = cards::get(&r, card)?;
     // The same branch in each related repository, made and landed like this one.
@@ -404,6 +405,10 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
                 let _ = cards::note(&r, m.card, "claude", &unasked(&q));
             }
         }
+    }
+    // A costly call it asked while working and nobody answered stays open on the card: it stopped on that.
+    if status == Some("blocked") && !asked {
+        asked = cards::get(&r, m.card).is_ok_and(|c| c.questions.iter().any(|q| q.is_open() && q.run.as_deref() == Some(m.id.as_str())));
     }
     let summary = m.handoff.as_ref().and_then(|h| h.get("summary")).and_then(Value::as_str).unwrap_or_default();
     let (next, block) = match (m.state, status) {

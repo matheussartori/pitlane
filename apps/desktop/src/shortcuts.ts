@@ -15,15 +15,22 @@ interface Shell {
   setMenu: (open: boolean) => void;
   toggleTower: () => void;
   terminalIn: (lane: Lane | undefined) => Promise<void>;
+  /** ⌘K / ⌘P: the palette. */
+  palette: () => void;
 }
 
 /** The window's keydown listener; the shell adds it on mount and removes it on cleanup. */
 export function shortcuts(shell: Shell): (e: KeyboardEvent) => void {
-  const { tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn } = shell;
+  const { tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn, palette } = shell;
 
   const onKey = (e: KeyboardEvent) => {
     const typing = ownsKey(e);
-    if (e.metaKey && e.key === "\\") {
+    const k = e.key.toLowerCase();
+    // ⌘P everywhere (Warp's key); ⌘K too, except on the terminal, where it clears the screen.
+    if (e.metaKey && !e.shiftKey && !e.altKey && (k === "p" || (k === "k" && tab() !== "terminal"))) {
+      e.preventDefault();
+      palette();
+    } else if (e.metaKey && e.key === "\\") {
       e.preventDefault();
       toggleTower();
     } else if (e.metaKey && e.key === ",") {

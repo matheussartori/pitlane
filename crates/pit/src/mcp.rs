@@ -59,6 +59,16 @@ pub fn serve_approver(run: String) -> Result<()> {
                     "tool_name": { "type": "string" }, "input": { "type": "object" }, "tool_use_id": { "type": "string" } },
                     "required": ["tool_name", "input"] }
             }, {
+                "name": "ask",
+                "description": ASK_TOOL,
+                "inputSchema": { "type": "object", "properties": {
+                    "text": { "type": "string", "description": "The question, one call." },
+                    "options": { "type": "array", "items": { "type": "string" }, "description": "Two to four options." },
+                    "recommended": { "type": "integer", "description": "0-based index of the option you recommend." },
+                    "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is, what you found, what each option changes." },
+                    "costly": { "type": "boolean", "description": "True only when the choice would be costly to undo: deleting or migrating data, a public API or schema change, spending money, a different product behaviour." } },
+                    "required": ["text", "options", "recommended", "context"] }
+            }, {
                 "name": "note",
                 "description": "Adds a note to the card you are working: context the next session needs (where the code is, what you found, a choice you made and why, what is left). Short markdown; one note per finding.",
                 "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
@@ -69,6 +79,19 @@ pub fn serve_approver(run: String) -> Result<()> {
                     Ok(()) => json!({ "content": [{ "type": "text", "text": "Noted on the card." }] }),
                     Err(e) => json!({ "content": [{ "type": "text", "text": format!("{e:#}") }], "isError": true }),
                 }
+            }
+            ("tools/call", "ask") => {
+                let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                let (out, run) = (out.clone(), run.clone());
+                // It may wait for a person: on a thread of its own, like an approval.
+                std::thread::spawn(move || {
+                    let result = match consult_daemon(&run, &args) {
+                        Ok(text) => json!({ "content": [{ "type": "text", "text": text }] }),
+                        Err(e) => json!({ "content": [{ "type": "text", "text": format!("Pitlane could not ask anyone ({e:#}): go with your recommendation and record it with the note tool.") }] }),
+                    };
+                    send(&out, json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+                });
+                continue;
             }
             ("tools/call", "approve") => {
                 let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -129,6 +152,22 @@ fn note_on_run(run: &str, text: &str) -> Result<()> {
     let repo = Repo::open(&meta.repo, &home, &pitlane)?;
     cards::note(&repo, meta.card, "claude", text)?;
     Ok(())
+}
+
+/// What the run's `ask` tool tells the agent.
+const ASK_TOOL: &str = "Asks the person a call that is theirs to make and that the spec, the decisions and the code \
+do not settle: behaviour they will see, where scope ends, a choice between real alternatives. Never how to do the work, \
+and never what you can find out by reading. It waits for the answer while they are here; when they are away or do not \
+answer in time it tells you to go with your recommendation and records it for them. Ask one call at a time and rarely: \
+each question can hold the run up for minutes.";
+
+fn consult_daemon(run: &str, args: &Value) -> Result<String> {
+    let (_, home) = pit_core::default_homes();
+    // Never start a daemon from here: it would inherit the agent's environment and outlive the app.
+    let mut c = pit_core::runs::Client::connect(&home, None)?;
+    let question: NewQuestion = serde_json::from_value(args.clone()).context("the question does not read")?;
+    let costly = args.get("costly").and_then(Value::as_bool).unwrap_or(false);
+    c.consult(run, question, costly)
 }
 
 fn ask_daemon(run: &str, args: &Value) -> Result<Value> {

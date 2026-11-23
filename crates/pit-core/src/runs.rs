@@ -112,6 +112,9 @@ pub struct RunMeta {
     /// Tools the agent is waiting on a person to allow, while the run lives.
     #[serde(default)]
     pub waiting: Vec<Approval>,
+    /// The card's questions the agent asked you while it works and waits on (Presence: Here).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asking: Vec<u32>,
     /// The account the route chose (`default` is your normal login).
     #[serde(default = "default_account")]
     pub account: String,
@@ -665,13 +668,18 @@ Work only inside the current directory and the related repositories' worktrees t
 never push, never switch branches, never create branches or worktrees (in any repository; Pitlane makes \
 them), and merge only when Pitlane asks you to bring a branch in. The project context in the briefing, written by the \
 person, overrides these git rules where it says otherwise (what to push, deploy or merge, and where). Read the card's spec and decisions before you start. \
-Nobody is watching this run: the person answered every question during the analysis, pressed Run and walked away, \
-so never stop to ask. Decide how to do the work yourself (worktrees, branches, commits, tests, file layout, naming, \
-what to measure, small calls on scope) from the spec, the decisions and the code: take the option you would have \
-recommended and record the choice and why with the note tool, so the review can see it. Report status \"blocked\" \
-only for a big call the spec and decisions do not settle and that would be costly to undo (a different product \
-behaviour, deleting or migrating data, a public API or schema change, spending money); finish everything that does \
-not depend on it first, then put every such question in the handoff, each with options and the one you recommend. \
+The person answered the analysis's questions and pressed Run; they may be watching or away, and the run must never \
+stall. Decide how to do the work yourself (worktrees, branches, commits, tests, file layout, naming, what to measure, \
+small calls on scope) from the spec, the decisions and the code: take the option you would have recommended and \
+record the choice and why with the note tool, so the review can see it. When you reach a call that is the person's \
+(behaviour they will see, where scope ends, a choice between real alternatives) and the spec and decisions do not \
+settle it, use the ask tool instead of picking silently, with options and the one you recommend: it brings their \
+answer when they are here, and tells you to go with your recommendation when they are away. Ask rarely and one call \
+at a time, since the tool waits for the answer. Set costly on a call that would be costly to \
+undo (a different product behaviour, deleting or migrating data, a public API or schema change, spending money). \
+Report status \"blocked\" only when the work cannot go on, or the ask tool tells you to; finish everything that does \
+not depend on it first, then put every question still open in the handoff, each with options and the one you \
+recommend, unless the ask tool says it is already on the card. \
 As you learn something the next session on this \
 card would need (where the code is, a choice you made and why, what is left), add it with the note tool, short and \
 one finding per note. End every run with the structured handoff.";
@@ -925,6 +933,22 @@ impl Client {
     /// Stops Run all's analyses; how many.
     pub fn stop_analyses(&mut self) -> Result<usize> {
         Ok(self.request_as::<Stopped>(&Request::StopAnalyses)?.stopped)
+    }
+
+    /// Presence: its settings and the mode in force (`mode`).
+    pub fn presence(&mut self) -> Result<Value> {
+        self.request(&Request::Presence)
+    }
+
+    /// Changes Presence's settings; the answer is Presence as it is now.
+    pub fn presence_set(&mut self, config: Value) -> Result<Value> {
+        self.request(&Request::PresenceSet { config })
+    }
+
+    /// Asks the person a call for run `run` (its `ask` tool); what the agent should read back.
+    pub fn consult(&mut self, run: &str, question: crate::cards::NewQuestion, costly: bool) -> Result<String> {
+        let v = self.request(&Request::Consult { run: run.into(), question, costly })?;
+        Ok(v.get("text").and_then(Value::as_str).unwrap_or_default().to_owned())
     }
 
     /// Performance as the daemon's governor sees it.

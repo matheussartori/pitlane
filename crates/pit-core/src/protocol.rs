@@ -63,6 +63,10 @@ pub enum Request {
     PerfSet { config: Value },
     /// Pauses or resumes one session by hand.
     PerfHold { run: String, hold: bool },
+    /// Presence: whether runs ask you their calls (Here) or go with their recommendation (Away).
+    Presence,
+    /// Changes Presence's settings: a patch of the keys to change.
+    PresenceSet { config: Value },
     StopAnalyses,
     Shutdown,
     /// The desktop app holds the connection while it is open; when it closes, everything the
@@ -86,6 +90,13 @@ pub enum Request {
         #[serde(default)]
         input: Value,
         tool_use_id: Option<String>,
+    },
+    /// A call a run asks you while it works (its `ask` tool); the answer is what the agent reads.
+    Consult {
+        run: String,
+        question: crate::cards::NewQuestion,
+        #[serde(default)]
+        costly: bool,
     },
     /// A person's answer to what a run waits on; without `approval`, the oldest one.
     Decide { run: String, approval: Option<String>, decision: Decision, message: Option<String> },
@@ -143,7 +154,7 @@ impl ReviewAction {
 pub const OPS: &[&str] = &[
     "ping", "start", "analyze", "recheck", "unblock", "report_digest", "describe", "talk", "stop_talk", "finish", "assist", "resume", "list", "sessions", "get",
     "say", "tune", "stop", "stop_all", "perf", "perf_set", "perf_hold", "stop_analyses", "shutdown", "hold", "quota", "review", "enqueue",
-    "queue", "queue_resume", "dequeue", "continue", "ask", "decide", "approvals", "follow",
+    "queue", "queue_resume", "dequeue", "continue", "ask", "consult", "decide", "approvals", "follow", "presence", "presence_set",
 ];
 
 /// The op a message names, whether or not it reads as a request ("" when it names none).
@@ -198,6 +209,9 @@ impl Request {
             Self::Dequeue { .. } => "dequeue",
             Self::Continue { .. } => "continue",
             Self::Ask { .. } => "ask",
+            Self::Consult { .. } => "consult",
+            Self::Presence => "presence",
+            Self::PresenceSet { .. } => "presence_set",
             Self::Decide { .. } => "decide",
             Self::Approvals => "approvals",
             Self::Follow { .. } => "follow",
@@ -208,7 +222,7 @@ impl Request {
 // ---------------------------------------------------------------- replies
 //
 // The ops whose answer the daemon builds itself have one of these. The others (`analyze`,
-// `describe`, `talk`, `finish`, `review`, `report_digest`, `perf`, `perf_set`) answer with what
+// `describe`, `talk`, `finish`, `review`, `report_digest`, `perf`, `perf_set`, `presence`, `presence_set`, `consult`) answer with what
 // the step that did the work returned, and stay JSON.
 
 /// `ok`: done. The answer of `say`, `tune`, `stop`, `assist`, `shutdown`, `hold`, `queue_resume`

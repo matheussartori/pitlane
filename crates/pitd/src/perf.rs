@@ -854,7 +854,7 @@ unsafe extern "C" {
 }
 
 /// Seconds since the last key press or mouse move anywhere on this Mac.
-fn idle_seconds() -> f64 {
+pub(crate) fn idle_seconds() -> f64 {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: a pure query; combined session state (0), any input event (!0).

@@ -127,6 +127,7 @@ impl Supervisor {
             denied: Vec::new(),
             resumed_from,
             waiting: Vec::new(),
+            asking: Vec::new(),
             account: choice.account.clone(),
             reason: Some(reason),
             handoff_from: opts.handoff_from.clone(),
@@ -459,6 +460,7 @@ impl Supervisor {
             m.ended_at = Some(now_secs());
             m.pid = None;
             m.waiting.clear();
+            m.asking.clear();
             if m.error.is_none() {
                 m.error = error;
             }

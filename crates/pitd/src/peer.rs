@@ -10,7 +10,7 @@ use std::collections::HashSet;
 const MAX_DEPTH: usize = 64;
 
 /// What a session's own processes may still ask of the daemon: reading, and asking you.
-const AGENT_OPS: &[&str] = &["ping", "ask", "get", "list", "sessions", "quota", "follow", "approvals", "perf"];
+const AGENT_OPS: &[&str] = &["ping", "ask", "get", "list", "sessions", "quota", "follow", "approvals", "perf", "consult", "presence"];
 
 pub fn allowed_from_agent(op: &str) -> bool {
     AGENT_OPS.contains(&op)
