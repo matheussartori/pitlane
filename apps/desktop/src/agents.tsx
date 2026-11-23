@@ -304,6 +304,7 @@ export function AgentList(props: { compact: boolean }) {
               </span>
             </Show>
             <span class="ag-bar-fill" />
+            <CloseEnded />
             <StopAll />
           </div>
           {/* Keyed by card number and by subagent id, not by the objects rebuilt on every refresh:
@@ -386,9 +387,32 @@ function SubRow(props: { m: RunMeta; s: Subagent }) {
 }
 
 function close(id: string) {
-  keep(id, false);
-  if (selected()?.id === id) setSelected(null);
-  setClosed([...closed(), id]);
+  closeAll([id]);
+}
+
+/** Takes ended sessions out of view (live ones only stop, never hide: nothing runs unseen). */
+function closeAll(ids: string[]) {
+  if (!ids.length) return;
+  setKept(kept().filter((x) => !ids.includes(x)));
+  try {
+    localStorage.setItem(KEPT_KEY, JSON.stringify(kept()));
+  } catch {
+    /* private window: kept for this launch only */
+  }
+  if (ids.includes(selected()?.id ?? "")) setSelected(null);
+  setClosed([...closed(), ...ids]);
+}
+
+/** Close every session that ended, in one go. */
+function CloseEnded() {
+  const ended = () => agentSessions().filter((m) => !live(m));
+  return (
+    <Show when={ended().length > 0}>
+      <button type="button" class="pane-btn" aria-label={t("Close ended")} data-tip={t("Close every session that ended")} onClick={() => closeAll(ended().map((m) => m.id))}>
+        <Icon name="close" small />
+      </button>
+    </Show>
+  );
 }
 
 // ---------------------------------------------------------------- one session, as a terminal
@@ -1027,6 +1051,7 @@ export function AgentDock(props: { onOpen: (id: string) => void; onOpenAll: () =
             </span>
           </button>
           <span class="ag-bar-fill" />
+          <CloseEnded />
           <StopAll />
           <button type="button" class="btn btn-ghost" onClick={props.onOpenAll}>
             <Icon name="term" small /> {t("Open in Terminal")}

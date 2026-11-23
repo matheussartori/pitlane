@@ -884,6 +884,9 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 /* The close button sits over the time, on hover only, so the row never gets wider. */
 .ag-row .tt-close { position: absolute; right: var(--space-3xs); top: 50%; transform: translateY(-50%); margin: 0; background: var(--color-paper-3); }
 .ag-row[data-ended] { color: var(--color-muted); }
+/* An ended row shows its close button always, in the flow and dimmed, so it never covers the time. */
+.ag-row[data-ended] .tt-close { position: static; transform: none; margin-inline-end: var(--space-2xs); background: none; opacity: 0.6; }
+.ag-row[data-ended]:hover .tt-close, .ag-row[data-ended] .tt-close:focus-visible { opacity: 1; }
 .ag-row[data-ended] .tt-name { color: var(--color-ink-2); font-weight: var(--weight-regular); }
 .ag-sub .tt-main { padding-inline-start: calc(var(--space-xs) + 14px * (var(--depth, 0) + 1)); min-height: 28px; }
 .ag-sub-name { font-weight: var(--weight-regular); color: var(--color-ink-2); }
