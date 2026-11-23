@@ -1,6 +1,7 @@
 // The shell: top bar, the current screen, the Tower. Inbox, Board and Lanes read the repository; Ledger arrives with runs.
 import { For, Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { NEEDS_API_KEY, api, isLive, onRun, type Lane, type RepoEntry, type RunMeta, type Settings, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
@@ -432,6 +433,20 @@ export default function App() {
     setTab(to);
     if (location.hash.startsWith("#run/") || location.hash.startsWith("#review/")) location.hash = `#${to}`;
   };
+
+  // The Dock icon counts what waits on you (the Inbox and terminals that want you), as Mail counts
+  // unread: seen from any Space without opening Pitlane. Nothing waiting, no badge.
+  createEffect(
+    on(
+      () => asking() + terminalsWanting(),
+      (n) => {
+        if (!("__TAURI_INTERNALS__" in window)) return;
+        void getCurrentWindow()
+          .setBadgeCount(n > 0 ? n : undefined)
+          .catch(() => {});
+      },
+    ),
+  );
 
   /** Everything ⌘K reaches, built when it opens. */
   const commands = (): Command[] => {
