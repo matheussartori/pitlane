@@ -814,8 +814,14 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .img-zone[data-over] .img-drop { border-color: var(--color-accent); color: var(--color-ink); }
 
 .prose { display: grid; gap: var(--space-xs); font: var(--weight-regular) var(--text-lg)/var(--leading-prose) var(--font-body); color: var(--color-ink); max-width: var(--measure); overflow-wrap: anywhere; }
-.prose p, .prose ul, .prose pre { margin: 0; }
-.prose ul { padding-inline-start: 1.2em; display: grid; gap: 2px; }
+.prose p, .prose ul, .prose ol, .prose pre, .prose blockquote { margin: 0; }
+.prose ul, .prose ol { padding-inline-start: 1.2em; display: grid; gap: 2px; }
+.prose blockquote { padding-inline-start: var(--space-sm); border-inline-start: 2px solid var(--color-rule-strong); color: var(--color-muted); }
+.prose hr { width: 100%; border: 0; border-top: 1px solid var(--color-rule); margin: var(--space-2xs) 0; }
+.prose-table { max-width: 100%; overflow-x: auto; }
+.prose-table .table { width: auto; min-width: 50%; font-size: 0.9em; overflow-wrap: normal; }
+.prose-table .table td { height: auto; vertical-align: top; }
+.prose-table .table th { color: var(--color-ink); font-weight: var(--weight-strong); font-size: inherit; white-space: normal; }
 .prose .prose-h { font-weight: var(--weight-strong); }
 .prose code { font: var(--weight-regular) 0.88em/1 var(--font-mono); padding: 1px 4px; border-radius: var(--radius-sm); background: var(--color-paper-sunk); color: var(--color-ink); }
 .prose pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); font: var(--weight-regular) var(--text-sm)/1.5 var(--font-mono); white-space: pre-wrap; }
