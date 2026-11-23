@@ -47,6 +47,9 @@ export function RunScreen(props: {
   onBack: () => void;
   onChanged: () => void;
   onOpenFile: (branch: string | null | undefined, path: string) => void;
+  /** The run's worktree in a terminal, or in Code. */
+  onTerminal: (path: string, label: string) => void;
+  onCode: (path: string) => void;
 }) {
   const [events, setEvents] = createSignal<Map<number, RunEvent>>(new Map());
   const [text, setText] = createSignal("");
@@ -292,6 +295,20 @@ export function RunScreen(props: {
               {m().branch || t("Preparing the lane")}
             </span>
             <LaneTrack branch={m().branch} yard={props.yard} now={props.now} />
+            <Show when={m().worktree}>
+              {(wt) => (
+                <span class="run-where-go">
+                  <button type="button" class="btn btn-ghost run-go" title={wt()} onClick={() => props.onTerminal(wt(), m().branch || t("Run"))}>
+                    <Icon name="term" small />
+                    {t("Terminal")}
+                  </button>
+                  <button type="button" class="btn btn-ghost run-go" title={wt()} onClick={() => props.onCode(wt())}>
+                    <Icon name="code" small />
+                    {t("Code")}
+                  </button>
+                </span>
+              )}
+            </Show>
             <span title={m().reason ?? undefined}>
               {m().model ?? t("default model")}
               {m().account ? ` ${t("on {account}", { account: m().account! })}` : ""}

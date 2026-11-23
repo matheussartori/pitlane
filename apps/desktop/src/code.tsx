@@ -190,6 +190,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     pending = null;
     if (p.root !== root()) setRootSig(p.root);
     await place();
+    if (!p.path) return; // the folder alone: it is the place now
     try {
       await vscode.open(`${p.root}/${p.path}`, p.line, p.col);
     } catch (e) {

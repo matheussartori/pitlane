@@ -425,15 +425,18 @@ export default function App() {
     setTab("lanes");
   };
 
+  /** A screen, leaving a run or a review that sits over it. */
+  const leaveTo = (to: Tab) => {
+    setRunView(null);
+    setReviewView(null);
+    setTab(to);
+    if (location.hash.startsWith("#run/") || location.hash.startsWith("#review/")) location.hash = `#${to}`;
+  };
+
   /** Everything ⌘K reaches, built when it opens. */
   const commands = (): Command[] => {
     const out: Command[] = [];
-    const go = (to: Tab) => () => {
-      setRunView(null);
-      setReviewView(null);
-      setTab(to);
-      if (location.hash.startsWith("#run/") || location.hash.startsWith("#review/")) location.hash = `#${to}`;
-    };
+    const go = (to: Tab) => () => leaveTo(to);
     const has = !!repo();
     if (has) {
       out.push(
@@ -716,6 +719,8 @@ export default function App() {
                       yard={yard()}
                       now={now()}
                       onOpenFile={(branch, file) => codeFile(branch, file)}
+                      onTerminal={(wt, label) => void openTerminal(wt, label).then((ok) => ok && leaveTo("terminal"))}
+                      onCode={(wt) => (openInCode(wt, ""), leaveTo("code"))}
                       onBack={() => setTab(tab() === "lanes" ? "board" : tab())}
                       onChanged={() => {
                         void loadQueue();
