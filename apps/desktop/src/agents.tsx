@@ -2,16 +2,14 @@
 // card, with the subagents each one opens. Shown in the Terminal screen and in a dock on the
 // Board. You can write to a session while it works and stop it with Ctrl+C. A session closes
 // itself a moment after it ends, unless you talked to it.
-import { For, Show, createEffect, createMemo, createResource, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
-import { Portal } from "solid-js/web";
+import { For, Show, createEffect, createMemo, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
 import { plural, t, tx } from "./i18n";
-import { toast, tailFollower } from "./ui";
+import { toast } from "./ui";
 import { registerSize } from "./layout";
-import { ApprovalBlock } from "./approvals";
-import { Prose } from "./prose";
+import { AgentConsole } from "./console";
 import { msg } from "./format";
 
 
@@ -417,174 +415,8 @@ function CloseEnded() {
 
 // ---------------------------------------------------------------- one session, as a terminal
 
-/** The models `/model` offers: Claude Code's aliases for the newest of each. */
-const MODELS: { id: string; hint: string }[] = [
-  { id: "opus", hint: "Most capable, for the hard parts" },
-  { id: "sonnet", hint: "Fast and strong, for most work" },
-  { id: "haiku", hint: "Fastest, for small steps" },
-  { id: "fable", hint: "The newest family" },
-];
-const EFFORTS: { id: string; hint: string }[] = [
-  { id: "low", hint: "Quick, little thinking" },
-  { id: "medium", hint: "Balanced" },
-  { id: "high", hint: "Thinks more before acting" },
-  { id: "xhigh", hint: "Thinks a lot" },
-  { id: "max", hint: "Thinks the most, slowest" },
-];
-
-/** A model as Claude Code names it: `claude-opus-5-5` is Opus 5.5, `sonnet` is Sonnet. */
-export function modelLabel(m: string | null | undefined): string {
-  if (!m) return t("default model");
-  const wide = /\[1m\]$/i.test(m) ? " (1M)" : "";
-  const id = m.replace(/\[1m\]$/i, "");
-  const full = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);
-  const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
-  if (full) return `${cap(full[1]!)} ${full[2]}${full[3] ? `.${full[3]}` : ""}${wide}`;
-  return /^[a-z]+$/.test(id) ? cap(id) + wide : m;
-}
-
-interface Suggestion {
-  label: string;
-  hint: string;
-  /** What the field holds once picked; `run`: picking it also sends it. */
-  value: string;
-  run: boolean;
-  on?: boolean;
-}
-
 export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?: (id: string) => Promise<boolean> }) {
   const m = () => sessions().find((x) => x.id === selected()?.id) ?? null;
-  const sub = () => selected()?.sub ?? null;
-  const subLabel = () => {
-    const s = sub();
-    const mm = m();
-    return s && mm ? (subagentsOf(mm).find((x) => x.id === s)?.label ?? t("subagent")) : null;
-  };
-  const events = createMemo(() => {
-    const mm = m();
-    if (!mm) return [];
-    const s = sub();
-    // Results show under their tool call, as in Claude Code; a result with no call in view
-    // (a failure, say) still shows on its own.
-    const shown = new Set((timelines[mm.id] ?? []).filter((e) => e.kind === "tool").map((e) => (e as { id: string }).id));
-    return (timelines[mm.id] ?? []).filter((e) => {
-      const p = "parent" in e ? e.parent : undefined;
-      if (e.kind === "quota") return false;
-      if (e.kind === "tool-done" && shown.has(e.id)) return false;
-      if (s) return p === s;
-      return !p;
-    });
-  });
-  const results = createMemo(() => {
-    const mm = m();
-    const out = new Map<string, Extract<RunEvent, { kind: "tool-done" }>>();
-    for (const e of mm ? (timelines[mm.id] ?? []) : []) if (e.kind === "tool-done") out.set(e.id, e);
-    return out;
-  });
-  const [text, setText] = createSignal("");
-  let input: HTMLInputElement | undefined;
-  let pane: HTMLDivElement | undefined;
-  const tail = tailFollower(24);
-
-  createEffect(on([() => events().length, () => selected()?.sub], () => tail.follow()));
-  createEffect(on(() => selected()?.id, () => (tail.restart(), requestAnimationFrame(() => input?.focus()))));
-  // A new question takes the keys, like a terminal prompt: 1-4 answer it, Esc goes back to typing.
-  createEffect(
-    on(
-      () => m()?.waiting.length ?? 0,
-      (n, prev) => {
-        if (n > (prev ?? 0) && document.activeElement === input) pane?.focus();
-        // A new question shows at the end; you are taken there only if you were following.
-        if (n > (prev ?? 0)) tail.follow();
-      },
-    ),
-  );
-
-  // Slash commands, as in Claude Code: /model and /effort change the live session.
-  const [pick, setPick] = createSignal(0);
-  const suggestions = createMemo<Suggestion[]>(() => {
-    const v = text();
-    const mm = m();
-    if (!v.startsWith("/") || !mm || !live(mm)) return [];
-    const [cmd, ...rest] = v.slice(1).split(" ");
-    const arg = rest.join(" ").trim().toLowerCase();
-    if (rest.length === 0) {
-      return [
-        { label: "/model", hint: t("Switch the model ({now})", { now: modelLabel(mm.model) }), value: "/model ", run: false },
-        { label: "/effort", hint: t("Set how hard it thinks ({now})", { now: mm.effort ?? t("default") }), value: "/effort ", run: false },
-      ].filter((x) => x.label.startsWith(`/${cmd}`));
-    }
-    const list = cmd === "model" ? MODELS : cmd === "effort" ? EFFORTS : [];
-    const current = cmd === "model" ? (mm.model ?? "") : (mm.effort ?? "");
-    return list
-      .filter((x) => x.id.startsWith(arg))
-      .map((x) => ({
-        label: cmd === "model" ? modelLabel(x.id) : x.id,
-        hint: t(x.hint),
-        value: `/${cmd} ${x.id}`,
-        run: true,
-        on: current === x.id || current.includes(`-${x.id}-`),
-      }));
-  });
-  createEffect(on(() => suggestions().length, () => setPick(0)));
-  const tune = async (what: { model?: string; effort?: string }) => {
-    const mm = m();
-    if (!mm) return;
-    try {
-      await api.runTune(mm.id, what);
-      setText("");
-      keep(mm.id, true);
-    } catch (e) {
-      toast({ tone: "fail", title: t("Could not change it"), body: msg(e) });
-    }
-  };
-  /** A slash command it knows: run it and say true. Others (a skill, /compact) go to Claude Code as typed. */
-  const command = (line: string): boolean => {
-    const mt = /^\/(model|effort)(?:\s+(\S+))?\s*$/.exec(line);
-    if (!mt) return false;
-    const [, cmd, arg] = mt;
-    if (!arg) {
-      setText(`/${cmd} `);
-      input?.focus();
-      return true;
-    }
-    if (cmd === "effort" && !EFFORTS.some((x) => x.id === arg.toLowerCase())) {
-      toast({ tone: "fail", title: t("No such effort"), body: t("Use one of: {list}", { list: EFFORTS.map((x) => x.id).join(", ") }) });
-      return true;
-    }
-    void tune(cmd === "model" ? { model: arg } : { effort: arg.toLowerCase() });
-    return true;
-  };
-  const choose = (sg: Suggestion) => {
-    if (sg.run) command(sg.value);
-    else (setText(sg.value), input?.focus());
-  };
-  const ask = (cmd: "model" | "effort") => {
-    setText(`/${cmd} `);
-    input?.focus();
-  };
-
-  // One message at a time (Enter twice sends once), and the box is cleared when it goes, so
-  // what you type while it is on its way stays yours.
-  let sending = false;
-  const send = async () => {
-    const mm = m();
-    const msgText = text().trim();
-    if (!mm || !msgText || sending) return;
-    if (command(msgText)) return;
-    sending = true;
-    setText("");
-    try {
-      await api.runSay(mm.id, msgText);
-      keep(mm.id, true);
-    } catch (e) {
-      // Not sent: the words come back, unless something new was typed meanwhile.
-      if (!text()) setText(msgText);
-      toast({ tone: "fail", title: t("The agent did not get it"), body: msg(e) });
-    } finally {
-      sending = false;
-    }
-  };
   // Continue in Claude Code. A live session is stopped first (and asked once): two Claude Codes
   // must never write the same session.
   const [taking, setTaking] = createSignal<"ask" | "stopping" | null>(null);
@@ -626,41 +458,17 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
     await props.onContinue(id);
   };
 
-  const stop = async () => {
-    const mm = m();
-    if (!mm || !live(mm)) return;
-    try {
-      await api.runStop(mm.id);
-      toast({ tone: "info", title: t("Stopping #{card} {kind}", { card: mm.card, kind: kindLabel(mm) }), body: t("It ends its current step, then stops.") });
-    } catch (e) {
-      toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) });
-    }
-  };
-  const onKey = (e: KeyboardEvent) => {
-    // Ctrl+C stops the agent, like in a terminal (unless you are copying a selection).
-    if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "c" && !window.getSelection()?.toString()) {
-      e.preventDefault();
-      void stop();
-    }
-  };
-
   return (
     <Show when={m()}>
       {(mm) => (
-        <div class="ag-pane" ref={pane} tabindex="-1" onKeyDown={onKey}>
+        <div class="ag-pane">
           <div class="ag-bar">
             <span class="ag-dot" data-s={look(mm()).s} />
             <span class="ag-bar-title">
               <span class="ag-num">#{mm().card}</span> {mm().card_title}
             </span>
             <span class="ag-bar-sep">·</span>
-            <Show when={sub()} fallback={<span class="ag-bar-kind">{kindLabel(mm())}</span>}>
-              <button type="button" class="ag-crumb" onClick={() => selectAgent(mm().id)}>
-                {kindLabel(mm())}
-              </button>
-              <span class="ag-bar-sep">›</span>
-              <span class="ag-bar-kind">{subLabel()}</span>
-            </Show>
+            <span class="ag-bar-kind">{kindLabel(mm())}</span>
             <span class="ag-bar-meta">
               {[since(mm()), mm().cost_usd != null ? `$${mm().cost_usd!.toFixed(2)}` : null].filter(Boolean).join("  ·  ")}
             </span>
@@ -691,265 +499,24 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
                 </button>
               }
             >
-              <button type="button" class="btn btn-ghost" title={t("Stop this agent (Ctrl+C)")} onClick={() => void stop()}>
-                <Icon name="stop" small /> {t("Stop")} <span class="kbd">⌃C</span>
+              <button type="button" class="btn btn-ghost" title={t("Stop this agent (Ctrl+C)")} onClick={() => void api.runStop(mm().id).catch((e) => toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) }))}>
+                <Icon name="stop" small /> {t("Stop")}
               </button>
             </Show>
           </div>
-          <div class="ag-log" ref={tail.ref}>
-            <For each={events()} fallback={<div class="ag-line ag-muted">{live(mm()) ? t("Starting…") : t("Nothing recorded.")}</div>}>
-              {(e) => <Line e={e} m={mm()} done={e.kind === "tool" ? results().get(e.id) : undefined} />}
-            </For>
-            <Show when={live(mm())}>
-              <div class="ag-asks">
-                <For each={mm().waiting}>{(a, i) => <ApprovalBlock run={mm().id} approval={a} keys={i() === 0} />}</For>
-              </div>
-            </Show>
-          </div>
-          <div class="ag-input" data-off={live(mm()) ? undefined : ""}>
-            <Show when={suggestions().length > 0}>
-              <div class="ag-suggest" role="listbox" aria-label={t("Commands")}>
-                <For each={suggestions()}>
-                  {(sg, i) => (
-                    <button
-                      type="button"
-                      role="option"
-                      class="ag-suggest-item"
-                      aria-selected={pick() === i()}
-                      data-on={sg.on ? "" : undefined}
-                      onPointerDown={(e) => e.preventDefault()}
-                      onPointerEnter={() => setPick(i())}
-                      onClick={() => choose(sg)}
-                    >
-                      <span class="ag-suggest-label">{sg.label}</span>
-                      <span class="ag-suggest-hint">{sg.hint}</span>
-                      <Show when={sg.on}>
-                        <span class="ag-suggest-on">{t("current")}</span>
-                      </Show>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-            <span class="ag-prompt">›</span>
-            <input
-              ref={input}
-              class="ag-field"
-              disabled={!live(mm())}
-              placeholder={
-                live(mm())
-                  ? sub()
-                    ? t("Message the agent that opened this subagent (Enter). Ctrl+C stops it")
-                    : t("Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it")
-                  : t("This session ended ({state})", { state: look(mm()).word.toLowerCase() })
-              }
-              aria-label={t("Message the agent")}
-              value={text()}
-              onInput={(e) => setText(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                const list = suggestions();
-                if (list.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-                  e.preventDefault();
-                  setPick((pick() + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length);
-                } else if (list.length > 0 && (e.key === "Tab" || (e.key === "Enter" && !e.isComposing))) {
-                  e.preventDefault();
-                  choose(list[Math.min(pick(), list.length - 1)]!);
-                } else if (list.length > 0 && e.key === "Escape") {
-                  e.preventDefault();
-                  setText("");
-                } else if (e.key === "Enter" && !e.isComposing) (e.preventDefault(), void send());
-                e.stopPropagation();
-                onKey(e);
-              }}
-            />
-          </div>
-          <div class="ag-status" data-off={live(mm()) ? undefined : ""}>
-            <button type="button" class="ag-chip ag-chip-model" disabled={!live(mm())} title={live(mm()) ? t("Switch the model (/model)") : undefined} onClick={() => ask("model")}>
-              <span class="ag-chip-mark" aria-hidden="true">✻</span>
-              {modelLabel(mm().model)}
-            </button>
-            <button type="button" class="ag-chip" disabled={!live(mm())} title={live(mm()) ? t("Set the effort (/effort)") : undefined} onClick={() => ask("effort")}>
-              <span class="ag-effort" data-level={mm().effort ?? "default"} aria-hidden="true">
-                <i />
-                <i />
-                <i />
-                <i />
-                <i />
-              </span>
-              {t("{level} effort", { level: mm().effort ?? t("default") })}
-            </button>
-            <span class="ag-bar-fill" />
-            <Show when={live(mm())}>
-              <span class="ag-status-hint">
-                <span class="kbd">/</span> {t("for commands")}
-              </span>
-            </Show>
-          </div>
+          <AgentConsole
+            m={mm()}
+            events={timelines[mm().id] ?? []}
+            sub={selected()?.sub ?? null}
+            onSub={(s) => selectAgent(mm().id, s)}
+            kind={kindLabel(mm())}
+            ended={look(mm()).word}
+            onTalked={() => keep(mm().id, true)}
+          />
         </div>
       )}
     </Show>
   );
-}
-
-/** Claude Code's names for its tools, as its own terminal shows them. */
-const TOOL_LABEL: Record<string, string> = { Edit: "Update", MultiEdit: "Update", Grep: "Search", WebFetch: "Fetch", WebSearch: "Web search", NotebookEdit: "Update" };
-// The browser's tools (`mcp__browser__browser_take_screenshot`) read as "Browser · take screenshot".
-const toolLabel = (name: string) =>
-  name.startsWith("mcp__browser__browser_") ? `${t("Browser")} · ${name.slice(22).replace(/_/g, " ")}` : t(TOOL_LABEL[name] ?? name);
-
-/** What a finished tool came to, in one line, the way Claude Code sums it up. */
-function resultLine(name: string, d: Extract<RunEvent, { kind: "tool-done" }>): string {
-  const n = d.lines ?? (d.detail ? 1 : 0);
-  if (!d.ok) return d.detail || t("Failed");
-  if (name === "Read") return plural(n, "Read {n} line", "Read {n} lines");
-  if (name === "Edit" || name === "MultiEdit" || name === "Write" || name === "NotebookEdit") return d.detail || t("Done");
-  if (name === "Grep" || name === "Glob") return n > 1 ? t("Found {n} results", { n }) : d.detail || t("No matches");
-  const more = n > 1 ? `  … ${plural(n - 1, "+{n} line", "+{n} lines")}` : "";
-  return `${d.detail || t("Done")}${more}`;
-}
-
-/** An edit as Claude Code shows it: removed lines, then added ones. */
-function Diff(props: { change: { old: string; new: string; cut: number } }) {
-  const old = () => (props.change.old ? props.change.old.split("\n") : []);
-  const add = () => (props.change.new ? props.change.new.split("\n") : []);
-  return (
-    <div class="cc-diff">
-      <For each={old()}>{(l) => <div class="cc-del"><span class="cc-sign">-</span>{l || " "}</div>}</For>
-      <For each={add()}>{(l) => <div class="cc-add"><span class="cc-sign">+</span>{l || " "}</div>}</For>
-      <Show when={props.change.cut > 0}>
-        <div class="cc-more">… {plural(props.change.cut, "{n} more line", "{n} more lines")}</div>
-      </Show>
-    </div>
-  );
-}
-
-/** A screenshot a tool gave back, under its call: a thumbnail that opens full size. */
-function Shot(props: { run: string; file: string }) {
-  const [src] = createResource(() => [props.run, props.file] as const, ([r, f]) => api.runShot(r, f).catch(() => ""));
-  const [big, setBig] = createSignal(false);
-  const key = (ev: KeyboardEvent) => ev.key === "Escape" && setBig(false);
-  createEffect(() => (big() ? window.addEventListener("keydown", key) : window.removeEventListener("keydown", key)));
-  onCleanup(() => window.removeEventListener("keydown", key));
-  return (
-    <Show when={src()}>
-      {(u) => (
-        <div class="cc-shot">
-          <span class="cc-sign">⎿</span>
-          <button type="button" class="cc-shot-thumb" title={t("Open full size")} onClick={() => setBig(true)}>
-            <img src={u()} alt={t("Screenshot")} loading="lazy" />
-          </button>
-          <Show when={big()}>
-            <Portal>
-              <div class="shot-view" role="dialog" aria-label={t("Screenshot")} onClick={() => setBig(false)}>
-                <img src={u()} alt={t("Screenshot")} />
-              </div>
-            </Portal>
-          </Show>
-        </div>
-      )}
-    </Show>
-  );
-}
-
-export function Line(props: { e: RunEvent; m: RunMeta; done?: Extract<RunEvent, { kind: "tool-done" }> }) {
-  const e = props.e;
-  switch (e.kind) {
-    case "text":
-      return (
-        <div class="cc-msg">
-          <span class="cc-dot">●</span>
-          <div class="cc-text">
-            <Prose text={e.text.trim()} />
-          </div>
-        </div>
-      );
-    case "tool": {
-      if (e.name === "Task" || e.name === "Agent")
-        return (
-          <button type="button" class="ag-line ag-spawn cc-call" onClick={() => selectAgent(props.m.id, e.id)}>
-            <span class="cc-dot" data-s={props.done ? (props.done.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
-            <span>
-              <b class="cc-name">Task</b>
-              <span class="cc-arg">({e.detail || e.name})</span> <span class="ag-muted">› {t("open")}</span>
-            </span>
-          </button>
-        );
-      const d = props.done;
-      return (
-        <div class="cc-tool">
-          <div class="cc-call">
-            <span class="cc-dot" data-s={d ? (d.ok ? "ok" : "fail") : live(props.m) ? "work" : "ended"}>●</span>
-            <span>
-              <b class="cc-name">{toolLabel(e.name)}</b>
-              <Show when={e.detail}>
-                <span class="cc-arg">({e.detail})</span>
-              </Show>
-            </span>
-          </div>
-          <Show when={e.change}>{(c) => <Diff change={c()} />}</Show>
-          <Show when={d} fallback={<Show when={live(props.m)}><div class="cc-result ag-muted">⎿  {t("Running…")}</div></Show>}>
-            {(d) => <div class={`cc-result ${d().ok ? "ag-muted" : "ag-fail"}`}>⎿  {resultLine(e.name, d())}</div>}
-          </Show>
-        </div>
-      );
-    }
-    case "tool-done":
-      return e.ok ? (
-        <div class="ag-line ag-muted">  ⎿ {e.detail}</div>
-      ) : (
-        <div class="ag-line ag-fail">  ✕ {e.detail}</div>
-      );
-    case "shot":
-      return <Shot run={props.m.id} file={e.file} />;
-    case "said":
-      return (
-        <div class="ag-line ag-said">
-          <span class="ag-glyph">›</span> {e.text}
-        </div>
-      );
-    case "note":
-      return <div class="ag-line ag-muted">{e.text}</div>;
-    case "tuned":
-      return (
-        <div class="ag-line ag-muted">
-          {[e.model ? t("Model set to {model}", { model: modelLabel(e.model) }) : null, e.effort ? t("Effort set to {level}", { level: e.effort }) : null].filter(Boolean).join("  ·  ")}
-        </div>
-      );
-    case "started":
-      return <div class="ag-line ag-muted">{e.model ? t("Session started on {model}", { model: modelLabel(e.model) }) : t("Session started")}</div>;
-    case "approval":
-      return (
-        <div class="ag-line ag-needs">
-          <span class="ag-glyph">?</span> {t("Asks to use {tool}: {detail}", { tool: e.approval.tool, detail: e.approval.detail })}
-        </div>
-      );
-    case "decided":
-      return <div class="ag-line ag-muted">{t("You answered: {decision}", { decision: e.decision })}</div>;
-    case "proof":
-      return (
-        <div class={`ag-line ${e.ok ? "ag-muted" : "ag-fail"}`}>
-          {e.ok ? "✓" : "✕"} {e.command}
-        </div>
-      );
-    case "judged":
-      return (
-        <div class="ag-line ag-text">
-          {e.verdict === "approve" ? t("Judge: approves. {summary}", { summary: e.summary }) : t("Judge: asks for changes. {summary}", { summary: e.summary })}
-        </div>
-      );
-    case "limited":
-      return <div class="ag-line ag-fail">{t("Hit the {window} usage limit.", { window: e.window.replace("_", "-") })}</div>;
-    case "finished":
-      return (
-        <div class="ag-line ag-muted">
-          — {e.ok ? t("finished") : t("stopped with an error")} · {plural(e.turns, "{n} turn", "{n} turns")} · ${e.cost_usd.toFixed(2)}
-        </div>
-      );
-    case "exited":
-      return <div class="ag-line ag-muted">— {t("session ended: {state}", { state: e.state })}</div>;
-    default:
-      return null;
-  }
 }
 
 // ---------------------------------------------------------------- the dock on the Board

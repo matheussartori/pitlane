@@ -27,7 +27,6 @@ export default {
   "Stopped": "Parado",
   "Interrupted": "Interrompido",
   // run
-  "Not sent": "Não enviado",
   "Stopping": "Parando",
   "The agent ends its current step, then the card goes back to Ready.": "O agente termina o passo atual e o card volta para Pronto.",
   "Not stopped": "Não parou",
@@ -66,7 +65,6 @@ export default {
   "You allowed it for this run.": "Você permitiu para esta execução.",
   "You allowed it in this repository.": "Você permitiu neste repositório.",
   "You denied it.": "Você negou.",
-  "Finished. What it did is beside the log.": "Concluído. O que ele fez está ao lado do log.",
   "Finished with an error.": "Terminou com erro.",
   "The agent exited: {state}.": "O agente saiu: {state}.",
   "Working": "Trabalhando",
@@ -100,8 +98,6 @@ export default {
   "changed": "alterado",
   "Not allowed": "Não permitido",
   "Add these to [run] allow in .pitlane/flow.toml if the agent should run them.": "Adicione estes a [run] allow em .pitlane/flow.toml se o agente puder executá-los.",
-  "Tell the agent": "Fale com o agente",
-  "Tell the agent something without stopping it": "Diga algo ao agente sem pará-lo",
   "Send": "Enviar",
   // agents
   "Stopping {n} agent": "Parando {n} agente",
@@ -205,4 +201,11 @@ export default {
   "Try again once the agent has stopped.": "Tente de novo quando o agente tiver parado.",
   "Stop the agent here and go on with this session in Claude Code, in a terminal tab": "Para o agente aqui e segue com esta sessão no Claude Code, numa aba de terminal",
   "Resume this session in Claude Code, in a terminal tab": "Retoma esta sessão no Claude Code, numa aba de terminal",
+  // the console (a session as a terminal)
+  "Asked to use {tool}": "Pediu para usar {tool}",
+  "Finished": "Terminou",
+  "Open what this subagent did": "Abrir o que este subagente fez",
+  "Stopped with an error": "Parou com um erro",
+  "Working…": "Trabalhando…",
+  "stops": "para",
 } as Record<string, string>;

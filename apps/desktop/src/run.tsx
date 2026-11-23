@@ -1,8 +1,8 @@
 // One run: what the agent is doing, live, beside the figures and its handoff.
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { api, isLive, onRun, type Card, type RunEvent, type RunMeta, type RunState, type Yard } from "./api";
-import { Line } from "./agents";
-import { ApprovalBlock } from "./approvals";
+import { kindLabel } from "./agents";
+import { AgentConsole } from "./console";
 import { LaneTrack } from "./board";
 import { ago, noteBy } from "./cardsheet";
 import { Counts, DiffViewer, statusLetter, statusWord, type ChangedFile } from "./diffview";
@@ -11,7 +11,7 @@ import { parsePatch } from "./review";
 import { Icon, type IconName } from "./icons";
 import type { ChipState } from "./lane";
 import { locale, plural, t } from "./i18n";
-import { ErrorLine, Spinner, toast, tailFollower } from "./ui";
+import { ErrorLine, toast } from "./ui";
 import { Grip, RUN_SIDE_W } from "./layout";
 import { msg, clock } from "./format";
 
@@ -52,8 +52,7 @@ export function RunScreen(props: {
   onCode: (path: string) => void;
 }) {
   const [events, setEvents] = createSignal<Map<number, RunEvent>>(new Map());
-  const [text, setText] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
+  const [sub, setSub] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [more, setMore] = createSignal(false);
   const [side, setSide] = createSignal<"run" | "card">("run");
@@ -74,7 +73,6 @@ export function RunScreen(props: {
   };
   window.addEventListener("keydown", onEscape);
   onCleanup(() => window.removeEventListener("keydown", onEscape));
-  const tail = tailFollower(40);
 
   const add = (pairs: [number, RunEvent][]) =>
     setEvents((prev) => {
@@ -116,53 +114,10 @@ export function RunScreen(props: {
   );
 
   const ordered = createMemo(() => [...events().entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e));
-  const doneById = createMemo(() => {
-    const m = new Map<string, Extract<RunEvent, { kind: "tool-done" }>>();
-    for (const e of ordered()) if (e.kind === "tool-done") m.set(e.id, e);
-    return m;
-  });
+  // A Task's steps show in the log when you open it; another run starts on the session itself.
+  createEffect(on(() => props.meta?.id, () => setSub(null)));
 
-  createEffect(() => {
-    ordered();
-    tail.follow();
-  });
-
-  // Paths inside the worktree read relative to it; anything under a Pitlane worktree root too.
-  const rel = (detail: string) => {
-    const wt = props.meta?.worktree;
-    let d = wt ? detail.replaceAll(`${wt}/`, "").replaceAll(wt, ".") : detail;
-    d = d.replace(/\/[^\s"']*?\/wt\/[^/\s]+\/[^/\s]+\//g, "");
-    return d;
-  };
-  // Setup notes matter until the agent starts; after that one line says it.
-  const startedAt = createMemo(() => ordered().findIndex((e) => e.kind === "started"));
-  const openTool = createMemo(() => ordered().some((e) => e.kind === "tool" && !doneById().has(e.id)));
   const steps = (cmd: string) => cmd.split(/\s*(?:;|&&)\s*/).filter(Boolean);
-
-  // Tool lines read relative to the worktree; one copy per event, so the log keeps its rows.
-  const relCache = new WeakMap<RunEvent, RunEvent>();
-  const relative = (e: RunEvent): RunEvent => {
-    if (e.kind !== "tool" && e.kind !== "tool-done") return e;
-    let r = relCache.get(e);
-    if (!r) relCache.set(e, (r = { ...e, detail: rel(e.detail) }));
-    return r;
-  };
-  const doneRel = (id: string) => {
-    const d = doneById().get(id);
-    return d ? (relative(d) as Extract<RunEvent, { kind: "tool-done" }>) : undefined;
-  };
-  // The log as Claude Code shows it: results under their call, subagents' steps behind their Task.
-  const shownTools = createMemo(() => new Set(ordered().flatMap((e) => (e.kind === "tool" ? [e.id] : []))));
-  const logEvents = createMemo(() =>
-    ordered().filter((e, i) => {
-      if ("parent" in e && e.parent) return false;
-      if (e.kind === "quota" || e.kind === "tuned") return false;
-      if (e.kind === "tool-done" && shownTools().has(e.id)) return false;
-      // Setup notes matter until the agent starts; after that one line says it.
-      if (e.kind === "note" && startedAt() >= 0 && i < startedAt()) return false;
-      return true;
-    }).map(relative),
-  );
 
   // What the lane changed in this run (from the commit it started on), with counts per file.
   const diffKey = () => {
@@ -185,21 +140,6 @@ export function RunScreen(props: {
     return out;
   });
   const totals = createMemo(() => changed().reduce((a, f) => ({ add: a.add + (f.added ?? 0), del: a.del + (f.removed ?? 0) }), { add: 0, del: 0 }));
-
-  async function say(e: Event) {
-    e.preventDefault();
-    const m = props.meta;
-    if (!m || !text().trim()) return;
-    setBusy(true);
-    try {
-      await api.runSay(m.id, text().trim());
-      setText("");
-    } catch (err) {
-      toast({ tone: "fail", title: t("Not sent"), body: msg(err) });
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function stop() {
     const m = props.meta;
@@ -309,10 +249,6 @@ export function RunScreen(props: {
                 </span>
               )}
             </Show>
-            <span title={m().reason ?? undefined}>
-              {m().model ?? t("default model")}
-              {m().account ? ` ${t("on {account}", { account: m().account! })}` : ""}
-            </span>
             <Show when={m().resumed_from}>
               {(prev) => (
                 <a href={`#run/${prev()}`} title={t("The same Claude Code session: the agent has all that run did and said")}>
@@ -347,65 +283,15 @@ export function RunScreen(props: {
 
           <div class="run-body" data-live={isLive(m().state) ? "" : undefined} style={{ "--side-w": `${RUN_SIDE_W.get()}px` }}>
             <Grip size={RUN_SIDE_W} edge="left" label={t("Resize the side column")} style={{ left: "auto", right: "calc(var(--side-w) + var(--space-lg) / 2 - 5px)" }} />
-            <div
-              class="timeline ag-log"
-              ref={tail.ref}
-              aria-live="polite"
-            >
-              <For each={logEvents()}>
-                {(e) => (
-                  <Switch fallback={<Line e={e} m={m()} done={e.kind === "tool" ? doneRel(e.id) : undefined} />}>
-                    <Match when={e.kind === "approval" && e}>
-                      {(x) => (
-                        <p class="tl-note tl-asked" data-pending={m().waiting.some((w) => w.id === x().approval.id) ? "" : undefined}>
-                          <Icon name="needs" small /> {x().approval.tool === "Bash" ? t("Asked to run") : t("Asked to use")}{" "}
-                          <code>{rel(x().approval.detail || x().approval.tool)}</code>
-                        </p>
-                      )}
-                    </Match>
-                    <Match when={e.kind === "judged" && e}>
-                      {(x) => (
-                        <p class="tl-finished" data-ok={x().verdict === "approve" ? "" : undefined}>
-                          <Icon name={x().verdict === "approve" ? "done" : "needs"} small />
-                          {x().verdict === "approve" ? t("The judge approves: {summary}", { summary: x().summary }) : t("The judge asks for changes ({findings}): {summary}", { findings: plural(x().findings, "{n} finding", "{n} findings"), summary: x().summary })}
-                        </p>
-                      )}
-                    </Match>
-                    <Match when={e.kind === "limited" && e}>
-                      {(x) => (
-                        <p class="tl-note tl-limit">
-                          <Icon name="needs" small /> {t("Hit the {window} usage limit on {account}.", { window: x().window.replace("_", "-"), account: m().account ?? t("default") })}
-                        </p>
-                      )}
-                    </Match>
-                    <Match when={e.kind === "decided" && e}>
-                      {(x) => (
-                        <p class="tl-note">
-                          {t({ once: "You allowed it once.", run: "You allowed it for this run.", always: "You allowed it in this repository.", deny: "You denied it." }[x().decision])}
-                          {x().message ? ` ${x().message}` : ""}
-                        </p>
-                      )}
-                    </Match>
-                    <Match when={e.kind === "finished" && e}>
-                      {(x) => (
-                        <p class="tl-finished" data-ok={x().ok ? "" : undefined}>
-                          <Icon name={x().ok ? "done" : "fail"} small />
-                          {x().ok ? t("Finished. What it did is beside the log.") : t("Finished with an error.")}
-                        </p>
-                      )}
-                    </Match>
-                    <Match when={e.kind === "exited" && e}>
-                      {(x) => (x().state !== "done" ? <p class="tl-note">{t("The agent exited: {state}.", { state: t(runStateView[x().state].label).toLowerCase() })}</p> : null)}
-                    </Match>
-                  </Switch>
-                )}
-              </For>
-              <Show when={isLive(m().state) && !openTool() && m().waiting.length === 0}>
-                <p class="tl-note tl-working">
-                  <Spinner /> {t("Working")}
-                </p>
-              </Show>
-            </div>
+            <AgentConsole
+              m={m()}
+              events={ordered()}
+              sub={sub()}
+              onSub={setSub}
+              kind={kindLabel(m())}
+              ended={t(runStateView[m().state].label)}
+              framed
+            />
 
             <aside class="run-side" aria-label={t("What this run did")}>
               <div class="rs-tabs" role="tablist" aria-label={t("Beside the log")}>
@@ -547,27 +433,6 @@ export function RunScreen(props: {
             )}
           </Show>
 
-          <For each={m().waiting}>{(a, i) => <ApprovalBlock run={m().id} approval={a} keys={i() === 0} />}</For>
-
-          <Show when={isLive(m().state)}>
-            <form class="composer" onSubmit={say}>
-              <label class="visually-hidden" for="say">
-                {t("Tell the agent")}
-              </label>
-              <input
-                id="say"
-                class="input"
-                placeholder={t("Tell the agent something without stopping it")}
-                autocomplete="off"
-                value={text()}
-                disabled={busy()}
-                onInput={(e) => setText(e.currentTarget.value)}
-              />
-              <button type="submit" class="btn" disabled={busy() || !text().trim()}>
-                {t("Send")}
-              </button>
-            </form>
-          </Show>
         </div>
       )}
     </Show>

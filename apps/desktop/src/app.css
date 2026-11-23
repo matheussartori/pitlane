@@ -282,23 +282,7 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .run-where-go { order: 99; display: inline-flex; gap: var(--space-3xs); margin-inline-start: auto; }
 .run-go { height: 22px; padding-inline: var(--space-2xs); font-size: var(--text-xs); color: var(--color-muted); }
 .run-go:hover { color: var(--color-ink); }
-.run-body { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--side-w, 300px); gap: var(--space-lg); min-height: 0; align-items: start; }
-.timeline { overflow: auto; min-height: 0; max-height: 100%; display: grid; align-content: start; gap: var(--space-xs); padding: var(--space-sm) var(--space-md) var(--space-lg); background: var(--color-paper-sunk); border-radius: var(--radius-lg); box-shadow: var(--ring); }
-.tl-text { font-size: var(--text-md); line-height: 1.6; color: var(--color-ink); white-space: pre-wrap; max-width: 80ch; margin-block: var(--space-2xs); }
-.tl-note { font-size: var(--text-xs); color: var(--color-muted); display: flex; align-items: center; gap: var(--space-xs); }
-.tl-working { margin-top: var(--space-xs); }
-.tl-tool { display: grid; grid-template-columns: 72px minmax(0, 1fr) 16px; gap: var(--space-xs); align-items: center; font-size: var(--text-sm); }
-.tl-tool-name { color: var(--color-muted); }
-.tl-tool-detail { font: var(--weight-regular) var(--text-sm)/1.4 var(--font-mono); color: var(--color-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tl-tool-mark { display: inline-flex; color: var(--color-muted); }
-.tl-tool[data-state="ok"] .tl-tool-mark { color: var(--color-done); }
-.tl-tool[data-state="fail"] .tl-tool-mark, .tl-tool-fail { color: var(--color-fail); }
-.tl-tool-fail { grid-column: 2 / 4; font: var(--weight-regular) var(--text-xs)/1.4 var(--font-mono); }
-.tl-said { display: grid; gap: var(--space-3xs); padding-left: var(--space-sm); box-shadow: inset 2px 0 0 var(--color-accent); font-size: var(--text-md); color: var(--color-ink); margin-block: var(--space-2xs); }
-.tl-said b { font-size: var(--text-xs); color: var(--color-accent-text); font-weight: var(--weight-strong); }
-.tl-finished { display: flex; gap: var(--space-xs); align-items: center; font-size: var(--text-sm); color: var(--color-ink); margin-top: var(--space-xs); }
-.tl-finished .icon { margin-top: var(--space-3xs); color: var(--color-fail); }
-.tl-finished[data-ok] .icon { color: var(--color-done); }
+.run-body { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--side-w, 300px); gap: var(--space-lg); min-height: 0; align-items: stretch; }
 .run-side { display: grid; align-content: start; gap: var(--space-md); overflow: auto; min-height: 0; max-height: 100%; }
 /* The run's side, in the order you ask: what happened, what changed, how it was checked, what it says, and only then the figures. */
 .rs-outcome { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2xs) var(--space-xs); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-lg); background: var(--color-paper-2); font-size: var(--text-sm); color: var(--color-ink-2); }
@@ -364,13 +348,9 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .approval .option:not(:has(.kbd)) { grid-template-columns: minmax(0, 1fr) auto; }
 .approval .option > span:not(.kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inbox-approval { display: grid; gap: var(--space-2xs); }
-.tl-asked { color: var(--color-muted); }
-.tl-asked[data-pending] { color: var(--color-accent-text); }
 .approval-why { font-size: var(--text-xs); color: var(--color-muted); }
 .approval-why code { font-family: var(--font-mono); color: var(--color-ink-2); }
-.run-body[data-live] { align-items: stretch; }
 .figures > div { align-content: start; }
-.tl-asked code { font-family: var(--font-mono); color: var(--color-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .accounts-rule { font-size: var(--text-sm); color: var(--color-ink-2); }
 .accounts-rule code, .route code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .accounts { list-style: none; margin: 0; padding: 0; display: grid; }
@@ -389,7 +369,6 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .account-usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
 .account-signin { height: var(--control-h); font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); }
 .route { margin: 0; padding-left: var(--space-lg); display: grid; gap: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink-2); }
-.tl-limit { color: var(--color-accent-text); }
 .review-screen { width: 100%; margin-inline: 0; display: flex; flex-direction: column; gap: var(--space-sm); height: 100%; min-height: 0; }
 .main:has(.review-screen) { overflow: hidden; padding-bottom: var(--space-md); }
 .review-body { position: relative; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) var(--side-w, 320px); gap: var(--space-lg); min-height: 0; }
@@ -449,7 +428,6 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .link-btn:hover { color: var(--color-ink); }
 .link-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 @media (max-width: 60rem) { .review-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; } .review-side { max-height: 40vh; } }
-.composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); }
 /* Narrow windows: the figures and the handoff stack under the log instead of disappearing. */
 @media (max-width: 60rem) { .run-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; } .run-side { max-height: 38vh; } }
 
@@ -911,7 +889,16 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 /* Beside the nav rail: the name and its key, a size up. */
 .tip[data-side] { max-width: none; font-size: var(--text-sm); line-height: 1; white-space: pre; }
 
-.ag-pane { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--color-paper-sunk); outline: none; }
+.ag-pane { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--color-paper-sunk); }
+/* One Claude Code session as a terminal (src/console.tsx): the same in Terminal › Agents and in a
+ * card's run. The log wears the Terminal's face and size; the agent's prose stays Geist. */
+.console { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--color-paper-sunk); outline: none; }
+.console > .ag-log { flex: 1; min-height: 0; }
+.console[data-framed] { border-radius: var(--radius-lg); box-shadow: var(--ring); overflow: hidden; }
+/* The prompt and the status line sit on the terminal's own ground, under one hairline. */
+.console > .ag-input, .console > .ag-status { background: none; }
+.console-crumb { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; height: 32px; flex: none; padding-inline: var(--space-md); border-bottom: 1px solid var(--color-rule); font-size: var(--text-sm); }
+.console-crumb-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); }
 .ag-bar { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; height: 40px; padding-inline: var(--space-md) var(--space-xs); border-bottom: 1px solid var(--color-rule); background: var(--color-paper); }
 .ag-bar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--weight-strong); color: var(--color-ink); }
 .ag-bar-sep { color: var(--color-muted); }
@@ -919,7 +906,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-crumb { flex-shrink: 0; border: 0; background: none; padding: 0; color: var(--color-ink-2); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-rule-strong); }
 .ag-bar-meta { flex-shrink: 0; font: var(--text-xs)/1 var(--font-mono); color: var(--color-muted); white-space: pre; }
 .ag-bar-fill { flex: 1; }
-.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) 12.5px/1.6 var(--font-mono); color: var(--color-term-ink); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; }
+.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) calc(var(--term-size, 14px) - 1px)/1.6 var(--term-face, var(--font-mono)); color: var(--color-term-ink); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; }
 .ag-line { display: block; width: 100%; padding-block: 1px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }
 .ag-text { margin-block: var(--space-2xs); color: var(--color-ink); }
 .ag-tool { color: var(--color-ink-2); }
@@ -935,9 +922,8 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-input { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-md); border-top: 1px solid var(--color-rule); background: var(--color-paper); }
 .ag-prompt { font: var(--weight-strong) var(--text-md)/1 var(--font-mono); color: var(--color-accent-text); }
 .ag-input[data-off] .ag-prompt { color: var(--color-muted); }
-.ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) 12.5px/1 var(--font-mono); outline: none; }
+.ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) calc(var(--term-size, 14px) - 1px)/1 var(--term-face, var(--font-mono)); outline: none; }
 .ag-field::placeholder { color: var(--color-muted); }
-.ag-pane { grid-template-rows: auto minmax(0, 1fr) auto auto; }
 .ag-input { position: relative; }
 /* The model and effort, always in sight under the prompt, as Claude Code's status line. */
 .ag-status { display: flex; align-items: center; gap: var(--space-2xs, 4px); min-width: 0; padding: 0 var(--space-sm) var(--space-xs); background: var(--color-paper); }
@@ -958,6 +944,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-effort[data-level="max"] i { background: var(--color-accent-text); }
 .ag-status[data-off] .ag-effort i { background: var(--color-rule); }
 .ag-status-hint { font: var(--text-xs)/1 var(--font-body); color: var(--color-muted); white-space: nowrap; }
+.ag-status-hint .kbd + .kbd, .ag-status-hint > .kbd:not(:first-child) { margin-inline-start: var(--space-xs); }
 /* Slash commands open above the prompt, like Claude Code's. */
 .ag-suggest { position: absolute; left: var(--space-sm); right: var(--space-sm); bottom: calc(100% + 4px); z-index: 5; display: grid; padding: 4px; border: 1px solid var(--color-rule); border-radius: var(--radius-md, 8px); background: var(--color-paper); box-shadow: var(--shadow-pop, 0 8px 24px rgb(0 0 0 / 0.18)); }
 .ag-suggest-item { display: flex; align-items: baseline; gap: var(--space-sm); min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--radius-sm, 6px); background: none; text-align: left; color: var(--color-ink-2); cursor: pointer; }
@@ -1098,6 +1085,20 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-msg, .cc-call { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); align-items: start; }
 .cc-msg { margin-block: var(--space-xs); }
 .cc-dot { color: var(--color-ink); line-height: inherit; }
+/* Lines that are not the agent's own (setup, your answers, checks, the end): a glyph in the dot's
+ * gutter, the words muted unless they matter. */
+.cc-sys { color: var(--color-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-sys code { font-family: inherit; color: var(--color-ink-2); }
+.cc-glyph { color: var(--color-muted); }
+.cc-sys[data-tone="ok"] .cc-glyph { color: var(--color-done); }
+.cc-sys[data-tone="fail"], .cc-sys[data-tone="fail"] .cc-glyph { color: var(--color-fail); }
+.cc-sys[data-tone="needs"], .cc-sys[data-tone="needs"] .cc-glyph { color: var(--color-accent-text); }
+.cc-sys[data-tone="ok"] { color: var(--color-ink-2); }
+/* What you said, as Claude Code shows your prompt: on a step lighter, the › in accent. */
+.cc-said { margin-block: var(--space-xs); padding: var(--space-3xs) var(--space-xs) var(--space-3xs) 0; border-radius: var(--radius-sm); background: var(--color-paper-2); color: var(--color-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-said .cc-glyph { color: var(--color-accent-text); text-align: center; }
+.cc-working { margin-top: var(--space-xs); align-items: center; color: var(--color-muted); }
+.cc-working .spinner { justify-self: start; }
 .cc-dot[data-s="ok"] { color: var(--color-done); }
 .cc-dot[data-s="fail"] { color: var(--color-fail); }
 .cc-dot[data-s="work"] { color: var(--color-muted); animation: shimmer 1.2s var(--ease-in-out) infinite; }
@@ -1309,12 +1310,10 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 
 /* ---------- Run screen ---------- */
 .screen-head .back { color: var(--color-ink); }
-.run-screen .timeline { display: block; }
 .q-live { display: flex; align-items: center; gap: var(--space-2xs); margin: 0 0 var(--space-3xs); font-size: var(--text-xs); color: var(--color-muted); }
 .q-live .icon, .q-live-mark { color: var(--color-accent-text); }
 .q-live-mark { font-weight: var(--weight-strong); }
 .q-live .mono { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
-.run-screen .timeline > .tl-note, .run-screen .timeline > .tl-finished { margin-block: var(--space-xs); font-family: var(--font-body); }
 .run-side { overflow-x: hidden; padding-right: var(--space-3xs); }
 .run-side > * { min-width: 0; }
 .rs-tabs { display: flex; gap: var(--space-3xs); padding: 2px; border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); }
