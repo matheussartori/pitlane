@@ -158,6 +158,10 @@ export interface Question {
   answer?: string;
   answered_at?: string;
   decision?: string;
+  /** The run that asked it while working (Presence: Here). */
+  run?: string;
+  /** Answered with the agent's recommendation because nobody was there (Presence: Away, or no answer in time). */
+  auto?: boolean;
   /** Talking it over with Claude; Claude's turns carry the options it offers from then on. */
   talk?: Turn[];
 }
@@ -354,6 +358,8 @@ export interface RunMeta {
   denied: string[];
   resumed_from: string | null;
   waiting: Approval[];
+  /** Card questions the agent asked while working and waits on (Presence: Here). */
+  asking?: number[];
   /** The account the route chose (`default` is the normal Claude Code login). */
   account?: string;
   /** Why the route chose this account and model. */
@@ -615,6 +621,24 @@ export const DEFAULT_PREFS: Prefs = {
   adaptive_agents: true,
 };
 
+/** Presence: Here, runs ask you the calls that are yours; Away, they take their recommendation. */
+export type PresenceMode = "here" | "away";
+export interface PresenceConfig {
+  mode: PresenceMode;
+  /** Here while you use the Mac, Away after Performance's `away_minutes`. */
+  auto: boolean;
+  /** How long a run waits for your answer before it takes its recommendation. */
+  wait_minutes: number;
+  /** Questions one run may ask you. */
+  per_run: number;
+}
+export interface PresenceSnapshot {
+  config: PresenceConfig;
+  /** The mode in force now (with auto, it follows whether you use the Mac). */
+  mode: PresenceMode;
+  away_minutes: number;
+}
+
 /** Performance: Full takes the Mac while you are away, Light leaves room while you use it. */
 export type PerfMode = "full" | "light";
 export interface PerfConfig {
@@ -741,6 +765,8 @@ export const api = {
   capacity: () => invoke<Capacity>("capacity"),
   perf: () => invoke<PerfSnapshot>("perf"),
   perfSet: (config: Partial<PerfConfig>) => invoke<{ config: PerfConfig }>("perf_set", { config }),
+  presence: () => invoke<PresenceSnapshot>("presence"),
+  presenceSet: (config: Partial<PresenceConfig>) => invoke<PresenceSnapshot>("presence_set", { config }),
   perfHold: (run: string, hold: boolean) => invoke<{ changed: boolean }>("perf_hold", { run, hold }),
   /** Sibling repositories this project also works in (flow.toml's [project] repos). */
   projectRepos: (path: string) => invoke<string[]>("project_repos", { path }),

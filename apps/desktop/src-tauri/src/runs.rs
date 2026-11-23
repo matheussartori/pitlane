@@ -115,6 +115,18 @@ pub(crate) async fn perf_set(config: serde_json::Value) -> CmdResult<serde_json:
     blocking(move || daemon()?.perf_set(config)).await
 }
 
+/// Presence: whether runs ask you their calls (Here) or go with their recommendation (Away).
+#[tauri::command]
+pub(crate) async fn presence() -> CmdResult<serde_json::Value> {
+    blocking(|| daemon()?.presence()).await
+}
+
+/// Changes Presence's settings (mode, auto, wait_minutes, per_run).
+#[tauri::command]
+pub(crate) async fn presence_set(config: serde_json::Value) -> CmdResult<serde_json::Value> {
+    blocking(move || daemon()?.presence_set(config)).await
+}
+
 /// Pauses or resumes one session by hand.
 #[tauri::command]
 pub(crate) async fn perf_hold(run: String, hold: bool) -> CmdResult<Changed> {

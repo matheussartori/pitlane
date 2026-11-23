@@ -31,7 +31,15 @@ export interface Sticky {
 const ICONS: Record<string, string> = {
   cmd: '<path d="M5 8l4 4-4 4M12 17h7" />',
   out: '<rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />',
+  card: '<rect x="4" y="4" width="16" height="16" rx="2" /><path d="M12 9v6M9 12h6" />',
 };
+
+/** A failed command made into a card: the terminal's owner turns it into one on the Board. */
+type CardFrom = (term: Terminal, cmd: string, output: string, exit: number) => void;
+let cardFrom: CardFrom | null = null;
+export function onBlockCard(fn: CardFrom) {
+  cardFrom = fn;
+}
 
 /** VS Code's 633;E escaping: \\ and \xAB. */
 const unescape = (s: string) => s.replace(/\\(\\|x([0-9a-f]{2}))/gi, (_, a: string, h?: string) => (h ? String.fromCharCode(parseInt(h, 16)) : a));
@@ -142,6 +150,8 @@ export class Blocks implements IDisposable {
       info.className = "tb-info";
       info.textContent = b.exit ? `${t("exit")} ${b.exit} · ${duration(b.ms ?? 0)}` : duration(b.ms ?? 0);
       bar.append(info, this.button(t("Copy command"), "cmd", () => b.cmd), this.button(t("Copy output"), "out", () => this.output(b)));
+      // A failure is work: one click puts it on the Board with the command, the place and the output.
+      if (b.exit && cardFrom) bar.append(this.action(t("Make a card to fix this"), "card", () => cardFrom?.(this.term, b.cmd, this.output(b), b.exit!)));
       el.append(bar);
       if (this.hovered === b) el.dataset.hover = "";
     });
@@ -163,6 +173,24 @@ export class Blocks implements IDisposable {
         setTimeout(() => delete btn.dataset.done, 900);
       });
       this.term.focus();
+    });
+    return btn;
+  }
+
+  private action(label: string, kind: string, run: () => void) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tb-btn";
+    btn.dataset.kind = kind;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = `<svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true">${ICONS[kind]}</svg>`;
+    btn.addEventListener("mousedown", (e) => (e.preventDefault(), e.stopPropagation()));
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      run();
+      btn.dataset.done = "";
+      setTimeout(() => delete btn.dataset.done, 900);
     });
     return btn;
   }

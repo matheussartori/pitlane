@@ -367,6 +367,9 @@ export default function App() {
       setTab("code");
     };
     window.addEventListener("pitlane-show-code", onShowCode);
+    // A card made elsewhere (a failed command in a terminal) asks to be opened.
+    const onOpenCard = (e: Event) => setSheet({ kind: "card", id: (e as CustomEvent<number>).detail });
+    window.addEventListener("pitlane-open-card", onOpenCard);
     const onTheme = () => rethemeCode();
     window.addEventListener("pitlane-theme", onTheme);
     // Coming back to the window: recheck local state (cheap, no network).
@@ -392,6 +395,7 @@ export default function App() {
       offRun();
       window.removeEventListener("hashchange", onHash);
       window.removeEventListener("pitlane-show-code", onShowCode);
+      window.removeEventListener("pitlane-open-card", onOpenCard);
       window.removeEventListener("pitlane-theme", onTheme);
       clearInterval(poll);
       window.removeEventListener("focus", onFocus);

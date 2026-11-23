@@ -83,6 +83,8 @@ pub fn run() {
             runs::perf,
             runs::perf_set,
             runs::perf_hold,
+            runs::presence,
+            runs::presence_set,
             dictate::dictate_start,
             dictate::dictate_stop,
             dictate::dictate_cancel,

@@ -11,9 +11,10 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
-import { Blocks } from "../blocks";
+import { Blocks, onBlockCard } from "../blocks";
+import { loadCards, repo, yard } from "../store/repo";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { files, onTerm, openExternal, terms, type TermInfo } from "../api";
+import { api, files, onTerm, openExternal, terms, type TermInfo } from "../api";
 import { selectAgent } from "../agents";
 import { openInCode } from "../code";
 import { t } from "../i18n";
@@ -167,6 +168,38 @@ interface Live {
 }
 
 export const live = new Map<number, Live>();
+
+// A failed command becomes a card: what ran, where, how it ended and the end of its output.
+onBlockCard((term, cmd, output, exit) => {
+  const path = repo();
+  if (!path) return;
+  const id = [...live.entries()].find(([, l]) => l.term === term)?.[0];
+  const cwd = (id != null && meta[id]?.cwd) || path;
+  const lane = yard()?.lanes.find((l) => l.worktree && (cwd === l.worktree.path || cwd.startsWith(`${l.worktree.path}/`)));
+  const lines = output.replace(/\s+$/, "").split("\n");
+  const tail = lines.slice(-80).join("\n");
+  const short = cmd.length > 60 ? `${cmd.slice(0, 59)}…` : cmd;
+  const title = t("Fix: {cmd} fails", { cmd: short || t("a command") });
+  const where = lane ? t("in the lane {branch}", { branch: lane.branch }) : t("in the repository");
+  const body = [
+    t("`{cmd}` exited with {code} {where} ({cwd}).", { cmd, code: exit, where, cwd }),
+    "",
+    t("Make it pass, and say what was wrong."),
+    "",
+    lines.length > 80 ? t("The last 80 of {n} lines of its output:", { n: lines.length }) : t("Its output:"),
+    "",
+    "```",
+    tail,
+    "```",
+  ].join("\n");
+  void api
+    .cardAdd(path, title, body)
+    .then((c) => {
+      void loadCards();
+      toast({ tone: "done", title: t("#{n} {title} is on the Board", { n: c.id, title: c.title }), action: { label: t("Open"), run: () => window.dispatchEvent(new CustomEvent("pitlane-open-card", { detail: c.id })) } });
+    })
+    .catch((e) => toast({ tone: "fail", title: t("The card was not made"), body: String(e) }));
+});
 /** Faces a terminal can wear. Hack is Warp's default face, bundled so every Mac draws the same. */
 export const TERMINAL_FACES = [
   { v: "hack", label: "Hack", css: 'Hack, Menlo, monospace' },
