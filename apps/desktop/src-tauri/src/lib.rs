@@ -177,6 +177,7 @@ pub fn run() {
             term_cmds::term_buffer,
             runs::queue_add,
             runs::queue_paused,
+            daemon::daemon_mismatch,
             runs::queue_resume,
             runs::queue_remove,
             accounts::accounts_list,

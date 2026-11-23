@@ -47,3 +47,17 @@ pub(crate) fn hold_daemon() {
         }
     });
 }
+
+/// Whether the daemon that is up speaks this build's protocol: `None` when none is up or it
+/// does. A daemon started by another `pit` (an older `cargo install` on the PATH, say) may read
+/// requests differently; it is never restarted from here, since its agents would stop.
+#[tauri::command]
+pub(crate) async fn daemon_mismatch() -> crate::CmdResult<Option<String>> {
+    crate::blocking(|| {
+        let Some(mut c) = running() else { return Ok(None) };
+        let pong = c.ping()?;
+        let ours = pit_core::protocol::fingerprint();
+        Ok((pong.protocol != ours).then(|| format!("daemon {} (pid {}), app {ours}", if pong.protocol.is_empty() { "older" } else { &pong.protocol }, pong.pid)))
+    })
+    .await
+}

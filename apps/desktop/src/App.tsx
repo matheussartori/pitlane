@@ -302,6 +302,21 @@ export default function App() {
       } finally {
         setBooted(true);
       }
+      // A daemon from another build (started by an older pit): said, never restarted from here.
+      try {
+        const other = await api.daemonMismatch();
+        if (other)
+          toast(
+            {
+              tone: "fail",
+              title: t("The daemon is from another build of Pitlane"),
+              body: t("It may not understand this app. Once its agents finish, quit and reopen Pitlane so it starts its own. ({detail})", { detail: other }),
+            },
+            0,
+          );
+      } catch {
+        /* the browser preview */
+      }
       // Pitlane closed with work in the merge queue: it waits for a yes.
       try {
         const n = await api.queuePaused();

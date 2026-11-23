@@ -1,4 +1,6 @@
 export default {
+  "The daemon is from another build of Pitlane": "O daemon é de outra build do Pitlane",
+  "It may not understand this app. Once its agents finish, quit and reopen Pitlane so it starts its own. ({detail})": "Ele pode não entender este app. Quando os agentes dele terminarem, feche e abra o Pitlane de novo para ele subir o próprio. ({detail})",
   // ui
   "Working": "Trabalhando",
   "Dismiss": "Dispensar",

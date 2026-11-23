@@ -248,6 +248,15 @@ pub struct Pong {
     pub ok: bool,
     pub version: String,
     pub pid: u32,
+    /// The daemon's `fingerprint()`: empty from a daemon older than it.
+    #[serde(default)]
+    pub protocol: String,
+}
+
+/// This build's protocol: a hash of this file, so any change to a request or reply changes it.
+/// The app compares it with the daemon's to tell a daemon from another build.
+pub fn fingerprint() -> String {
+    crate::fsutil::short_hash(include_str!("protocol.rs"))
 }
 
 /// `start`, `resume`, `continue` and `get`: the run.

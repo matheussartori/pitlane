@@ -163,7 +163,7 @@ fn reply(r: impl Serialize) -> Result<Value> {
 async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
     let ok = || reply(Done { ok: true });
     match req {
-        Request::Ping => reply(Pong { ok: true, version: env!("CARGO_PKG_VERSION").into(), pid: std::process::id() }),
+        Request::Ping => reply(Pong { ok: true, version: env!("CARGO_PKG_VERSION").into(), pid: std::process::id(), protocol: protocol::fingerprint() }),
         Request::Start(a) => {
             // Run all's cards run on autopilot (fix rounds, more turns and landing need nobody), and
             // a card stopped mid-work resumes its session unless the person starts over (`fresh`).

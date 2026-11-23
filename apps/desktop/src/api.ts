@@ -809,6 +809,8 @@ export const api = {
     invoke<string>("lane_drop_hunk", { path, branch, base, head, file, header }),
   queue: (path: string) => invoke<ShipJob[]>("queue_list", { path }),
   queuePaused: () => invoke<number>("queue_paused"),
+  /** Set when the running daemon comes from another build of Pitlane (what differs, for the toast). */
+  daemonMismatch: () => invoke<string | null>("daemon_mismatch"),
   queueResume: () => invoke<void>("queue_resume"),
   enqueue: (path: string, branch: string, to?: string) => invoke<ShipJob>("queue_add", { path, branch, to: to ?? null }),
   dequeue: (id: string) => invoke<void>("queue_remove", { id }),
