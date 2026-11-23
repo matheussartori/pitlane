@@ -233,9 +233,14 @@ fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> Result<String> {
     Ok(text)
 }
 
+/// Opening the microphone waits on the device (and, the first time, on macOS asking for it), so
+/// off the main thread: the window keeps drawing meanwhile.
 #[tauri::command]
-pub(crate) fn dictate_start(app: tauri::AppHandle, d: tauri::State<'_, Dictation>) -> CmdResult<()> {
-    d.start(&app).map_err(|e| format!("{e:#}"))
+pub(crate) async fn dictate_start(app: tauri::AppHandle) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Dictation>().start(&app))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Blocking work (the transcription), so off the main thread.

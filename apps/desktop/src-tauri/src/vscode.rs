@@ -6,6 +6,7 @@
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::os::unix::process::CommandExt as _;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -214,7 +215,7 @@ impl Vscode {
         if let Some(old) = std::fs::read_to_string(&pidfile).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
             let cmd = Command::new("ps").args(["-o", "command=", "-p", &old.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
             if cmd.contains("code-server") && cmd.contains(&dir(pitlane_home).to_string_lossy().into_owned()) {
-                let _ = Command::new("kill").arg(old.to_string()).status();
+                end_server(old);
                 // Let it let go of its port, so this one takes the same.
                 let t = Instant::now();
                 while TcpListener::bind(("127.0.0.1", STABLE_PORT)).is_err() && t.elapsed() < Duration::from_secs(2) {
@@ -244,6 +245,8 @@ impl Vscode {
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
+            // A group of its own: its extension host, language servers and watchers end with it.
+            .process_group(0)
             .spawn()
             .with_context(|| format!("could not start {}", bin.display()))?;
         let pid = child.id();
@@ -286,7 +289,24 @@ impl Vscode {
 
     pub fn stop(&self) {
         if let Some(r) = self.running.lock().unwrap().take() {
-            let _ = Command::new("kill").arg(r.pid.to_string()).status();
+            end_server(r.pid);
+        }
+    }
+}
+
+/// Ends a code-server and everything it started: SIGTERM to its process group, or to the process
+/// alone when it leads none (one started by an older Pitlane, in the app's own group).
+fn end_server(pid: u32) {
+    let Ok(pid) = i32::try_from(pid) else { return };
+    if pid <= 1 {
+        return;
+    }
+    // SAFETY: kill takes no pointers; a negative pid names the group `pid` leads.
+    unsafe {
+        if libc::getpgid(pid) == pid {
+            libc::kill(-pid, libc::SIGTERM);
+        } else {
+            libc::kill(pid, libc::SIGTERM);
         }
     }
 }
