@@ -187,7 +187,7 @@ impl Supervisor {
     }
 
     /// A Run all card whose work landed, but whose agent said more is needed (a partial handoff):
-    /// it is not done. It goes back to the backlog with what is left on it, where the batch (or
+    /// it is not done. It goes back to the queue with what is left on it, where the batch (or
     /// the next one) works it again, instead of closing with part of its spec undone.
     pub(super) fn reopen_unfinished(&self, repo: &Path, card: u32) {
         let Ok(r) = Repo::open(repo, &home_dir(), &self.cfg.home) else {
@@ -203,7 +203,7 @@ impl Supervisor {
             &r,
             card,
             CardPatch {
-                state: Some(CardState::Ready),
+                state: Some(CardState::Queued),
                 ..Default::default()
             },
         );
@@ -212,7 +212,7 @@ impl Supervisor {
             card,
             "pitlane",
             &format!(
-                "Run {} landed what it did and said more is needed, so this card is not done: it is back in the backlog for what is left (see the note above).",
+                "Run {} landed what it did and said more is needed, so this card is not done: it is back in the queue for what is left (see the note above).",
                 last.id
             ),
         );

@@ -49,11 +49,11 @@ pub struct Plan {
 }
 
 fn waiting(c: &Card) -> bool {
-    matches!(c.state, CardState::Inbox | CardState::Ready) && c.lane.is_none()
+    matches!(c.state, CardState::Inbox | CardState::Ready | CardState::Queued) && c.lane.is_none()
 }
 
 fn at_work(c: &Card) -> bool {
-    c.lane.is_some() && matches!(c.state, CardState::Running | CardState::Verifying | CardState::Review | CardState::Blocked | CardState::Ready | CardState::InDev)
+    c.lane.is_some() && matches!(c.state, CardState::Running | CardState::Verifying | CardState::Review | CardState::Blocked | CardState::Ready | CardState::Queued | CardState::InDev)
 }
 
 /// The files a lane changed itself: since it left the branch it lands in.

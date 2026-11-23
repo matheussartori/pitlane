@@ -69,7 +69,8 @@
     "updated": "2026-11-20T18:28:36Z",
     "body": "",
     "open_questions": 0,
-    "file": "0002-retry-failed-charges.md"
+    "file": "0002-retry-failed-charges.md",
+    "held": "Waits for the new art"
   },
   {
     "id": 3,
@@ -121,7 +122,7 @@
   {
     "id": 6,
     "title": "Copy invite link button",
-    "state": "ready",
+    "state": "queued",
     "created": "2026-11-20T18:29:52Z",
     "updated": "2026-11-20T18:29:52Z",
     "questions": [
@@ -141,7 +142,8 @@
     ],
     "body": "## Goal\n\nOne click copies the invite link.",
     "open_questions": 0,
-    "file": "0006-copy-invite-link-button.md"
+    "file": "0006-copy-invite-link-button.md",
+    "analyzed": "2026-11-23T10:00:00Z"
   },
   {
     "id": 7,

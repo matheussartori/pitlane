@@ -575,6 +575,52 @@ async fn stop_ends_the_turn_and_frees_the_card() {
     assert_eq!(card_state(&fx, id).0, CardState::Ready);
 }
 
+/// A slow agent, its supervisor, and a run of `id` whose agent has started.
+async fn slow_run(fx: &Fx, id: u32, autopilot: bool) -> (Arc<Supervisor>, pit_core::runs::RunMeta) {
+    let wrapper = fx.fake.with_file_name(format!("fake-slow-{id}"));
+    fs::write(&wrapper, format!("#!/bin/bash\nFAKE_MODE=slow exec {} \"$@\"\n", fx.fake.display())).unwrap();
+    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: wrapper.to_string_lossy().into_owned(), pit_bin: None });
+    let opts = pitd::supervisor::StartOpts { autopilot, ..Default::default() };
+    let meta = s.start(fx.repo.clone(), id, None, opts).unwrap();
+    for _ in 0..100 {
+        if s.get(&meta.id).unwrap().pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    (s, meta)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_all_card_stopped_waits_in_the_queue() {
+    let fx = fx();
+    let id = card(&fx, "Night batch card");
+    let (s, meta) = slow_run(&fx, id, true).await;
+    s.stop(&meta.id).unwrap();
+    assert_eq!(wait_end(&s, &meta.id).await.state, RunState::Stopped);
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!((c.state, c.paused.as_deref()), (CardState::Queued, Some(meta.id.as_str())), "in the queue, its session kept");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_a_running_card_out_stops_it_and_keeps_where_it_went() {
+    let fx = fx();
+    let id = card(&fx, "Moved mid-run");
+    let (s, meta) = slow_run(&fx, id, false).await;
+    let moved = s.move_card(fx.repo.clone(), id, cards::MoveTo::Queue, None).unwrap();
+    assert_eq!(moved.state, CardState::Queued);
+    assert_eq!(wait_end(&s, &meta.id).await.state, RunState::Stopped);
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!((c.state, c.paused.as_deref()), (CardState::Queued, Some(meta.id.as_str())), "where it was moved, resumable");
+    // Not a way to skip the orchestrator: a review is not queued by hand.
+    cards::update(&r, id, CardPatch { state: Some(CardState::Review), ..Default::default() }).unwrap();
+    assert!(s.move_card(fx.repo.clone(), id, cards::MoveTo::Queue, None).is_err());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_card_resumes_its_session_with_what_it_got_meanwhile() {
     let fx = fx();
@@ -1281,8 +1327,8 @@ async fn run_all_does_not_close_a_card_that_says_more_is_needed() {
     assert!(reopened, "the card was told it is not done");
     assert_eq!(
         card_state(&fx, id).0,
-        CardState::Ready,
-        "back in the backlog, not done"
+        CardState::Queued,
+        "back in the queue, not done"
     );
     let c = cards::get(&r, id).unwrap();
     assert!(

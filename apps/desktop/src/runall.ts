@@ -1,7 +1,8 @@
-// Run all, as a session: analyse every backlog card (questions and notes from Claude), ask the
-// open questions one at a time, then start what can start and keep going as work lands, until
-// the queue is empty. The planner speaks only here.
-import { createEffect, createSignal, on, onCleanup } from "solid-js";
+// Run all, as a session: analyse the backlog cards (questions and notes from Claude), ask the
+// open questions one at a time, then move them to Queued and work that column, starting what can
+// start and keeping going as work lands, until it is empty. Ideas added to the Backlog meanwhile
+// stay out of the run unless someone moves them to Queued. The planner speaks only here.
+import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { NEEDS_API_KEY, api, isLive, type Plan, type Finish, isOpenJob } from "./api";
 import { holdNote, onItsWay, planNote } from "./board";
 import { openQuestions } from "./cards";
@@ -37,7 +38,14 @@ export function createRunAll(shell: Shell) {
   const [plan, setPlan] = createSignal<Plan | null>(null);
 
   const [phase, setPhase] = createSignal<"idle" | "analyzing" | "asking" | "working" | "finishing">("idle");
-  const [queue, setQueue] = createSignal<number[]>([]);
+  // The cards the analysis reads, while it does.
+  const [analysing, setAnalysing] = createSignal<number[]>([]);
+  // The queue is the Queued column, kept by the daemon: it outlives a restart, and the batch
+  // works nothing else. In board order, without the ones running now.
+  const queue = createMemo(() => {
+    const live = new Set((runs() ?? []).filter((r) => isLive(r.state)).map((r) => r.card));
+    return (cards() ?? []).filter((c) => c.state === "queued" && !live.has(c.id)).map((c) => c.id);
+  });
   let advancing = false;
   // While Run all works, the agents' list looks for new sessions every moment.
   createEffect(() => setAgentsWatch(phase() !== "idle"));
@@ -55,7 +63,7 @@ export function createRunAll(shell: Shell) {
     if (!path || phase() !== "idle" || ids.length === 0) return;
     const token = ++session;
     sessionPath = path;
-    setQueue(ids);
+    setAnalysing(ids);
     setPhase("analyzing");
     try {
       const r = await api.cardsAnalyze(path, ids);
@@ -69,7 +77,7 @@ export function createRunAll(shell: Shell) {
     }
     await loadCards();
     if (!current_(token) || phase() !== "analyzing") return; // stopped meanwhile
-    const asking = openQuestions((cards() ?? []).filter((c) => queue().includes(c.id)));
+    const asking = openQuestions((cards() ?? []).filter((c) => analysing().includes(c.id)));
     if (asking.length > 0) {
       setPhase("asking");
       setSheet({ kind: "questions" });
@@ -77,8 +85,8 @@ export function createRunAll(shell: Shell) {
   }
 
   /**
-   * A card made while Run all works: Claude reads it like the first batch, its questions are asked,
-   * and it joins the queue; it starts once they are answered, like every other card.
+   * A card moved to Queued while Run all works: Claude reads it like the first batch (when it was
+   * never read), its questions are asked, and the batch takes it once they are answered.
    */
   const [joining, setJoining] = createSignal<number[]>([]);
   async function analyseInto(ids: number[]) {
@@ -102,11 +110,8 @@ export function createRunAll(shell: Shell) {
     await loadCards();
     if (!current_(token) || phase() !== "working") return;
     const all = cards() ?? [];
-    const ok = ids.filter((id) => all.find((c) => c.id === id)?.analyzed && !queue().includes(id));
+    const ok = ids.filter((id) => all.find((c) => c.id === id)?.analyzed);
     if (ok.length === 0) return;
-    sessionIds = [...sessionIds, ...ok.filter((id) => !sessionIds.includes(id))];
-    setBatchSig(sessionIds);
-    setQueue([...queue(), ...ok]);
     const asking = openQuestions(all.filter((c) => ok.includes(c.id)));
     toast({
       tone: "done",
@@ -120,14 +125,14 @@ export function createRunAll(shell: Shell) {
   /** The analysis is over (and its questions answered or left for later): development is next. */
   function analysed() {
     setPhase("idle");
-    setQueue([]);
+    setAnalysing([]);
     session++;
     toast({ tone: "done", title: t("Analysis done"), body: t("Every card has its notes and decisions. Start development on the Board when you are ready.") });
   }
 
-  /** Step two: the agents work the cards into the chosen branch, in board order. */
+  /** Step two: the cards move to Queued, and the agents work that column into the chosen branch, in board order. */
   let sessionStart = 0;
-  /** How many times each card came back to the backlog and was taken again in this batch. */
+  /** How many times each card came back to the queue and was taken again in this batch. */
   const again = new Map<number, number>();
   /** A card comes back at most this often: a run that never finishes it does not spend the night on it. */
   const AGAIN = 5;
@@ -138,12 +143,18 @@ export function createRunAll(shell: Shell) {
     if (!path || phase() !== "idle" || ids.length === 0) return;
     const token = ++session;
     sessionPath = path;
-    sessionIds = ids;
-    setBatchSig(ids);
+    // Into the Queued column first: what the batch works is on the board, not in this window.
+    const moving = ids.filter((id) => (cards() ?? []).find((x) => x.id === id)?.state !== "queued");
+    const moved = await Promise.allSettled(moving.map((id) => api.cardMove(path, id, "queue")));
+    const failed = moving.filter((_, i) => moved[i]!.status === "rejected");
+    if (failed.length > 0) toast({ tone: "fail", title: t("{cards} stayed in the Backlog", { cards: failed.map((x) => `#${x}`).join(", ") }), body: msg((moved.find((m) => m.status === "rejected") as PromiseRejectedResult).reason) }, 0);
+    if (!current_(token)) return;
+    await loadCards();
+    sessionIds = ids.filter((id) => !failed.includes(id));
+    setBatchSig(sessionIds);
     sessionStart = Math.floor(Date.now() / 1000) - 5;
     again.clear();
     setChoice(c);
-    setQueue(ids);
     setPhase("working");
     try {
       const p = await api.plan(path);
@@ -162,7 +173,6 @@ export function createRunAll(shell: Shell) {
     const token = session;
     const c = choice();
     setPhase("finishing");
-    setQueue([]);
     let finish: Finish | null = null;
     if (c.instructions) {
       toast({ tone: "info", title: t("The closing step started"), body: t("Claude does what you asked for the end. Follow it in Terminal › Agents.") });
@@ -193,7 +203,7 @@ export function createRunAll(shell: Shell) {
     const analysing = phase() === "analyzing";
     session++;
     sessionPath = null;
-    setQueue([]);
+    setAnalysing([]);
     setPhase("idle");
     setPlan(null);
     if (sheet()?.kind === "questions") setSheet(null);
@@ -201,7 +211,7 @@ export function createRunAll(shell: Shell) {
     if (analysing) void api.runsStopAnalyses().catch(() => {});
   }
 
-  /** Starts every queued card that can start now: no open question, nothing that must land first, nothing it would collide with. */
+  /** Starts every Queued card that can start now: no open question, nothing that must land first, nothing it would collide with. */
   async function advance(allowApiKeyFor: number[] = []) {
     const path = repo();
     if (!path || phase() !== "working" || advancing || path !== sessionPath) return;
@@ -212,18 +222,15 @@ export function createRunAll(shell: Shell) {
       const all = cards() ?? [];
       const liveCards = (runs() ?? []).filter((r) => isLive(r.state)).map((r) => r.card);
       const live = (id: number) => liveCards.includes(id);
-      const state = (id: number) => all.find((x) => x.id === id)?.state;
-      // A card of this batch that is back in the backlog is taken again: its run closed one
-      // stage of a larger card, its question was answered, or it was sent back. Not one whose
-      // run the person stopped, and not for ever.
-      const back = sessionIds.filter((id) => {
-        if (queue().includes(id) || live(id) || (state(id) !== "ready" && state(id) !== "inbox")) return false;
-        const last = (runs() ?? []).filter((r) => r.card === id && r.started_at >= sessionStart).sort((x, y) => y.started_at - x.started_at)[0];
-        return !!last && last.state !== "stopped" && (again.get(id) ?? 0) < AGAIN;
+      // The Queued column, minus what cannot go yet: a card Claude is still reading, one never
+      // read, one whose run the person stopped in this batch (it waits for the next Start), and
+      // one that came back too often (a run that never finishes it does not spend the night on it).
+      const q = queue().filter((id) => {
+        const c = all.find((x) => x.id === id);
+        return !!c && !live(id) && !!c.analyzed && !joining().includes(id) && !stoppedHere(id) && (again.get(id) ?? 0) < AGAIN;
       });
-      for (const id of back) again.set(id, (again.get(id) ?? 0) + 1);
-      // Cards that started, finished or left the backlog leave the queue.
-      const q = [...queue(), ...back].filter((id) => !live(id) && (state(id) === "inbox" || state(id) === "ready" || state(id) === "blocked"));
+      for (const id of q) if (!sessionIds.includes(id)) sessionIds = [...sessionIds, id];
+      if (sessionIds.length !== batchSig().length) setBatchSig(sessionIds);
       // Directly in one branch: one card at a time, in board order.
       const busy = [...liveCards];
       // The planner's file clashes hold a card only for cards on their way to landing.
@@ -244,6 +251,8 @@ export function createRunAll(shell: Shell) {
         try {
           const m = await api.runStart(path, id, allowApiKeyFor.includes(id), into, direct, choice().instructions || null, true);
           void api.runFollow(m.id, 0).catch(() => {});
+          // Taken again in this batch: its run closed one stage of a larger card, or it was freed.
+          if (ranHere(id)) again.set(id, (again.get(id) ?? 0) + 1);
           started.push(id);
           busy.push(id);
         } catch (e) {
@@ -268,7 +277,6 @@ export function createRunAll(shell: Shell) {
       }
       if (!current_(token)) return;
       const left = q.filter((id) => !started.includes(id));
-      setQueue(left);
       if (started.length > 0) {
         toast({ tone: "done", title: t("Started {cards}", { cards: started.map((x) => `#${x}`).join(", ") }), body: left.length > 0 ? t("{n} more in the queue.", { n: left.length }) : t("The queue is empty.") });
         await loadRuns();
@@ -289,7 +297,11 @@ export function createRunAll(shell: Shell) {
         const now = cards() ?? [];
         const why = (id: number): string | null => {
           const c = now.find((x) => x.id === id);
-          if (!c || c.state === "blocked" || c.state === "done" || c.state === "in-dev") return null;
+          // Out of the batch (back in the Backlog), or waiting for the next Start (you stopped it).
+          if (!c || c.state === "blocked" || c.state === "done" || c.state === "in-dev" || c.state === "inbox" || c.state === "ready") return null;
+          if (c.state === "queued" && stoppedHere(id)) return null;
+          if (c.state === "queued" && (again.get(id) ?? 0) >= AGAIN) return t("It came back {n} times without being finished.", { n: AGAIN });
+          if (c.state === "queued" && !c.analyzed && !joining().includes(id)) return t("Claude could not analyse it.");
           if (c.state === "review") return t("Its work did not land in {into}. See the run and the notes above.", { into: into ?? t("its branch") });
           if (c.state === "running" || c.state === "verifying") return t("Its run ended without handing the card back.");
           // Open questions are yours already (Needs you): the batch waits for the answers.
@@ -298,7 +310,7 @@ export function createRunAll(shell: Shell) {
           const held = holdNote(id, now, []) ?? planNote(plan(), id, now, onItsWay(now, [], queue(), []));
           return held ? `${held}.` : null;
         };
-        const stuck = [...new Set([...left, ...sessionIds])].map((id) => [id, why(id)] as const).filter((x): x is readonly [number, string] => x[1] != null);
+        const stuck = [...new Set([...queue(), ...sessionIds])].map((id) => [id, why(id)] as const).filter((x): x is readonly [number, string] => x[1] != null);
         for (const [id, reason] of stuck) {
           if (!current_(token)) return;
           try {
@@ -314,13 +326,19 @@ export function createRunAll(shell: Shell) {
         }
         if (!current_(token)) return;
         const waiting = (cards() ?? []).filter((c) => sessionIds.includes(c.id) && (c.state === "running" || c.state === "verifying" || c.state === "review"));
-        const startable = queue().filter((id) => (cards() ?? []).find((c) => c.id === id)?.state !== "blocked");
+        const startable = queue().filter((id) => !stoppedHere(id));
         if (waiting.length === 0 && startable.length === 0) void finishBatch();
       }
     } finally {
       advancing = false;
     }
   }
+
+  /** The card's latest run in this batch, if it had one. */
+  const lastHere = (id: number) => (runs() ?? []).filter((r) => r.card === id && r.started_at >= sessionStart).sort((x, y) => y.started_at - x.started_at)[0];
+  const ranHere = (id: number) => !!lastHere(id);
+  /** You stopped its run in this batch: it waits in Queued for the next Start. */
+  const stoppedHere = (id: number) => lastHere(id)?.state === "stopped";
 
   // While the session works, every change to the cards re-reads the planner and starts what can.
   createEffect(

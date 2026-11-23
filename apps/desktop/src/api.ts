@@ -145,8 +145,10 @@ export interface NewReport {
   setup_ok: boolean | null;
 }
 
-export type CardState = "inbox" | "ready" | "running" | "verifying" | "review" | "in-dev" | "done" | "blocked";
-export const cardStates: CardState[] = ["inbox", "ready", "running", "verifying", "review", "in-dev", "done", "blocked"];
+export type CardState = "inbox" | "ready" | "queued" | "running" | "verifying" | "review" | "in-dev" | "done" | "blocked";
+export const cardStates: CardState[] = ["inbox", "ready", "queued", "running", "verifying", "review", "in-dev", "done", "blocked"];
+/** Where a person can move a card: the Backlog, Run all's queue, or held in the Backlog. */
+export type MoveTo = "backlog" | "queue" | "hold";
 
 export interface Question {
   id: number;
@@ -218,6 +220,8 @@ export interface Card {
   summary?: string;
   /** The run stopped mid-work: the next Run resumes its Claude Code session instead of starting over. */
   paused?: string;
+  /** Held by you in the Backlog, with why (maybe empty): Analyse and Start leave it out. */
+  held?: string;
   /** Why it is blocked (only while it is). */
   blocked?: Block;
   created: string;
@@ -359,12 +363,12 @@ export interface RunMeta {
   error: string | null;
   denied: string[];
   resumed_from: string | null;
+  /** Failed, but Pitlane carries it on by itself (out of turns under Run all): not worth a notice. */
+  goes_on?: boolean;
   waiting: Approval[];
   /** Card questions the agent asked while working and waits on (Presence: Here). */
   asking?: number[];
   /** The account the route chose (`default` is the normal Claude Code login). */
-  /** Failed, but Pitlane carries it on by itself (out of turns under Run all): not worth a notice. */
-  goes_on?: boolean;
   account?: string;
   /** Why the route chose this account and model. */
   reason?: string | null;
@@ -830,6 +834,8 @@ export const api = {
   ) => invoke<Card>("card_update", { path, id, ...patch }),
   /** What you chose for a blocked card; the run it started, if any. */
   unblockCard: (path: string, id: number, action: "retry" | "review" | "backlog") => invoke<RunMeta | null>("card_unblock", { path, id, action }),
+  /** A move by hand, under the Board's rules; a running card stops first. */
+  cardMove: (path: string, id: number, to: MoveTo, reason?: string) => invoke<Card>("card_move", { path, id, to, reason: reason ?? null }),
   cardReorder: (path: string, ids: number[]) => invoke<void>("card_reorder", { path, ids }),
   cardNote: (path: string, id: number, text: string) => invoke<Card>("card_note", { path, id, text }),
   cardsAnalyze: (path: string, ids: number[]) =>

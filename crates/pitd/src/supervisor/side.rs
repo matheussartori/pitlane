@@ -317,8 +317,14 @@ impl Supervisor {
             };
             match (kind, out) {
                 (Reading::Recheck, Ok(true)) => {
-                    note("Read again with your answers: nothing else is open, so the card is back in the Backlog. Its next run picks up the agent's session with the answers.");
-                    let _ = cards::update(&r, id, CardPatch { state: Some(CardState::Ready), ..Default::default() });
+                    // A Run all card goes back to the queue, where the batch takes it again.
+                    let batch = me.latest_run(&r.root, id).is_some_and(|m| m.autopilot);
+                    note(if batch {
+                        "Read again with your answers: nothing else is open, so the card is back in the queue. Its next run picks up the agent's session with the answers."
+                    } else {
+                        "Read again with your answers: nothing else is open, so the card is back in the Backlog. Its next run picks up the agent's session with the answers."
+                    });
+                    let _ = cards::update(&r, id, CardPatch { state: Some(if batch { CardState::Queued } else { CardState::Ready }), ..Default::default() });
                 }
                 // Questions to answer: from here it is a card blocked on questions like any other.
                 (_, Ok(false)) => {

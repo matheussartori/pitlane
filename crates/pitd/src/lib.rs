@@ -162,6 +162,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
         Request::Analyze { repo, cards } => sup.analyze(repo, cards).await,
         Request::Recheck { repo, card } => reply(Changed { changed: sup.recheck(repo, card)? }),
         Request::Unblock { repo, card, action } => Ok(json!({ "run": sup.unblock(repo, card, action, false)? })),
+        Request::Move { repo, card, to, reason } => Ok(serde_json::to_value(pit_core::cards::CardOut::from(sup.move_card(repo, card, to, reason)?))?),
         Request::ReportDigest { repo, id } => sup.report_digest(repo, id).await,
         Request::Describe { repo, card, title } => sup.describe(repo, card, title).await,
         Request::Talk { repo, card, question, message } => sup.talk(repo, card, question, message).await,

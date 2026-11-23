@@ -242,8 +242,14 @@ pub enum CardCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Set the state: inbox, ready, running, review, in-dev, done, blocked.
-    Move { id: u32, state: String },
+    /// Move a card by hand: to the Backlog, to Run all's queue, or hold it in the Backlog.
+    Move {
+        id: u32,
+        /// backlog, queue, or hold (held in the Backlog; say why with --reason).
+        to: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
     /// Ask a question about a card, with options; mark the one you recommend.
     Ask {
         id: u32,

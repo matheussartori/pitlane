@@ -325,3 +325,59 @@ fn a_blocked_card_always_says_why_and_forgets_it_when_it_moves_on() {
     assert!(ready.blocked.is_none());
     assert!(cards::set_checking(&r, c.id, false).is_err(), "not blocked any more");
 }
+
+/// One move by hand, carried out as the daemon does (minus stopping a run).
+fn mv(r: &Repo, id: u32, to: cards::MoveTo, live: bool) -> anyhow::Result<(cards::Card, bool)> {
+    let c = cards::get(r, id)?;
+    let m = cards::move_rule(&c, to, live, Some("waits for the art"))?;
+    Ok((cards::update(r, id, m.patch)?, m.stop))
+}
+
+#[test]
+fn moves_by_hand_follow_the_board_rules() {
+    use cards::MoveTo::{Backlog, Hold, Queue};
+    let (_t, r) = repo();
+    let c = cards::add(&r, NewCard { title: "Siege map".into(), ..Default::default() }).unwrap();
+
+    // Backlog → queue → backlog: never read by Claude, so it is new again.
+    assert_eq!(mv(&r, c.id, Queue, false).unwrap().0.state, CardState::Queued);
+    assert_eq!(mv(&r, c.id, Backlog, false).unwrap().0.state, CardState::Inbox);
+
+    // Held: stays in the Backlog with why; queueing it lets it go.
+    let held = mv(&r, c.id, Hold, false).unwrap().0;
+    assert_eq!((held.state, held.held.as_deref()), (CardState::Inbox, Some("waits for the art")));
+    let queued = mv(&r, c.id, Queue, false).unwrap().0;
+    assert_eq!((queued.state, queued.held), (CardState::Queued, None));
+    // Held from the queue: back in the Backlog, held.
+    let held = mv(&r, c.id, Hold, false).unwrap().0;
+    assert_eq!((held.state, held.held.is_some()), (CardState::Inbox, true));
+
+    // Running: out of In progress stops the run; it cannot be held there, nor moved while checked.
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Running), ..Default::default() }).unwrap();
+    assert!(cards::get(&r, c.id).unwrap().held.is_none(), "held only in the Backlog");
+    assert!(mv(&r, c.id, Hold, true).is_err());
+    let (back, stop) = mv(&r, c.id, Queue, true).unwrap();
+    assert_eq!((back.state, stop), (CardState::Queued, true));
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Verifying), ..Default::default() }).unwrap();
+    assert!(mv(&r, c.id, Backlog, false).is_err());
+
+    // Review: to the Backlog is Discard (the lane stays); the queue is not a way out of a review.
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Review), lane: Some(Some("feat/siege".into())), ..Default::default() }).unwrap();
+    assert!(mv(&r, c.id, Queue, false).is_err());
+    let discarded = mv(&r, c.id, Backlog, false).unwrap().0;
+    assert_eq!((discarded.state, discarded.lane.as_deref()), (CardState::Ready, Some("feat/siege")));
+
+    // Blocked: to the queue with its retries reset, not while it asks.
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Blocked), retries: Some(2), ..Default::default() }).unwrap();
+    let freed = mv(&r, c.id, Queue, false).unwrap().0;
+    assert_eq!((freed.state, freed.retries, freed.blocked.is_none()), (CardState::Queued, 0, true));
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Blocked), ..Default::default() }).unwrap();
+    cards::ask(&r, c.id, vec![q("Day or night?", &["Day", "Night"], Some(0))]).unwrap();
+    assert!(mv(&r, c.id, Queue, false).is_err());
+
+    // Landed: reopened in the Backlog, without its old lane; never straight to the queue.
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Done), ..Default::default() }).unwrap();
+    assert!(mv(&r, c.id, Queue, false).is_err());
+    let reopened = mv(&r, c.id, Backlog, false).unwrap().0;
+    assert_eq!((reopened.state, reopened.lane), (CardState::Ready, None));
+}

@@ -287,6 +287,19 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       });
       return null as T;
     }
+    case "card_move": {
+      // The daemon's rules, roughly: enough to drag and Move to… in the preview.
+      const a = args as { id: number; to: "backlog" | "queue" | "hold"; reason: string | null };
+      const c = cards.find((x) => x.id === a.id) as unknown as { state: string; held?: string; lane?: string };
+      if (c.state === "verifying") throw new Error(`card #${a.id} is being checked; wait for its checks to end`);
+      if (a.to === "queue" && (c.state === "review" || c.state === "done" || c.state === "in-dev")) throw new Error(`card #${a.id} cannot go to the queue from ${c.state}`);
+      if (a.to === "hold") (c.state = c.state === "queued" ? "ready" : c.state), (c.held = a.reason ?? "");
+      else {
+        delete c.held;
+        c.state = a.to === "queue" ? "queued" : c.state === "inbox" ? "inbox" : "ready";
+      }
+      return c as T;
+    }
     case "card_note": {
       const a = args as { id: number; text: string };
       const c = cards.find((x) => x.id === a.id) as unknown as { notes?: { at: string; by: string; text: string }[] };

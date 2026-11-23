@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use pit_core::Repo;
-use pit_core::cards::{self, Card, CardOut, CardPatch, CardState, NewCard, NewQuestion};
+use pit_core::cards::{self, Card, CardOut, CardPatch, CardState, MoveTo, NewCard, NewQuestion};
 use serde_json::{Value, json};
 
 /// Set by the daemon in a card run's environment (the run id): the board tools then hold back
@@ -274,12 +274,12 @@ fn tools() -> Value {
         },
         {
             "name": "update_card",
-            "description": "Change a card's title, spec, state or tags, or link it to a lane (a branch name; empty string unlinks).",
+            "description": "Change a card's title, spec or tags, link it to a lane (a branch name; empty string unlinks), or move it: to the backlog (ideas, out of any batch) or to the queue (Run all takes it). Running, review and done are Pitlane's to set.",
             "inputSchema": { "type": "object", "properties": {
                 "id": { "type": "integer" },
                 "title": { "type": "string" },
                 "body": { "type": "string" },
-                "state": { "type": "string", "enum": states },
+                "state": { "type": "string", "enum": ["backlog", "queued"] },
                 "lane": { "type": "string" },
                 "tags": { "type": "array", "items": { "type": "string" } }
             }, "required": ["id"] }
@@ -400,15 +400,30 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
             json!({ "deleted": c.id, "title": c.title })
         }
         "update_card" => {
+            let id = id()?;
+            // A move follows the Board's rules; a running card is stopped from Pitlane, not here.
+            let moved = match str_arg("state") {
+                None => CardPatch::default(),
+                Some(s) => {
+                    let to = match s.as_str() {
+                        "inbox" | "ready" => MoveTo::Backlog,
+                        other => MoveTo::parse(other)?,
+                    };
+                    let card = cards::get(&repo, id)?;
+                    if matches!(card.state, CardState::Running | CardState::Verifying) {
+                        bail!("card #{id} is running; stop it or move it in Pitlane");
+                    }
+                    cards::move_rule(&card, to, false, None)?.patch
+                }
+            };
             let patch = CardPatch {
                 title: str_arg("title"),
                 body: str_arg("body"),
-                state: str_arg("state").map(|s| CardState::parse(&s)).transpose()?,
                 lane: str_arg("lane").map(|l| Some(l).filter(|l| !l.is_empty())),
                 tags: tags(),
-                ..Default::default()
+                ..moved
             };
-            card_json(&cards::update(&repo, id()?, patch)?)
+            card_json(&cards::update(&repo, id, patch)?)
         }
         "ask" => {
             let qs = questions()?;
@@ -473,8 +488,10 @@ mod tests {
         let answered = rpc(&dir, 4, "tools/call", json!({ "name": "answer", "arguments": { "id": 1, "question_id": 1, "answer": "2" } }));
         assert_eq!(answered["result"]["structuredContent"]["decision"], "D-01");
 
-        let moved = rpc(&dir, 5, "tools/call", json!({ "name": "update_card", "arguments": { "id": 1, "state": "running", "lane": "feat/invite-limits" } }));
-        assert_eq!(moved["result"]["structuredContent"]["state"], "running");
+        let moved = rpc(&dir, 5, "tools/call", json!({ "name": "update_card", "arguments": { "id": 1, "state": "queued", "lane": "feat/invite-limits" } }));
+        assert_eq!(moved["result"]["structuredContent"]["state"], "queued");
+        let set = rpc(&dir, 51, "tools/call", json!({ "name": "update_card", "arguments": { "id": 1, "state": "running" } }));
+        assert_eq!(set["result"]["isError"], true, "running is Pitlane's to set");
 
         let bad = rpc(&dir, 6, "tools/call", json!({ "name": "update_card", "arguments": { "id": 1, "state": "flying" } }));
         assert_eq!(bad["result"]["isError"], true);

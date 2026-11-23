@@ -2,7 +2,7 @@
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
 import { api, isLive, type Card, type Plan, type RunMeta, type Yard } from "./api";
 import { elapsed } from "./run";
-import { columnEmpty, columnTitle, columns, latestRun, place, reviewSummary, unblockActions, type UnblockAction } from "./cards";
+import { columnEmpty, columnIcon, columnTitle, columns, latestRun, movesFor, place, reviewSummary, unblockActions, type Column, type Move, type UnblockAction } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { attachImages, imagesIn } from "./images";
@@ -353,11 +353,11 @@ export function BoardView(props: {
   onChanged: () => void;
   /** Claude reads the backlog cards not analysed yet (questions, notes, order). */
   onAnalyse: (ids: number[]) => void;
-  /** While Run all works: backlog cards outside its queue (new ones) are analysed and join it. */
+  /** While Run all works: cards moved to Queued that Claude never read are analysed, then the batch takes them. */
   onJoin: (ids: number[]) => void;
   /** Cards being analysed to join the running batch. */
   joining: number[];
-  /** Every backlog card analysed: choose where the work lands, then start. */
+  /** Choose where the work lands, then these cards move to Queued and the agents start. */
   onStartDev: (ids: number[]) => void;
   onStopAll: () => void;
   /** The queue is empty but cards wait for review: close the batch now. */
@@ -394,29 +394,52 @@ export function BoardView(props: {
         : place(c, props.yard);
       const busy = props.runs.filter((r) => isLive(r.state)).map((r) => r.card);
       const moving = onItsWay(props.cards ?? [], busy, props.queued, props.batch ?? props.queued);
-      const note = props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [], moving)) : null;
-      return { card: c, p: note && p.column === "backlog" ? { ...p, why: note } : p };
+      const note = props.phase === "working" && props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [], moving)) : null;
+      return { card: c, p: note && p.column === "queued" ? { ...p, why: note } : p };
     }),
   );
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);
   const needs = () => byColumn("needs").length;
   const backlog = () => byColumn("backlog").filter(({ card }) => !liveRun(card.id) && card.state !== "done");
-  const colIcon = { needs: "needs", backlog: "queued", progress: "run", landed: "done" } as const;
+  /** Backlog cards a run may take: not held. */
+  const takeable = () => backlog().filter(({ card }) => card.held == null);
+  const fila = () => byColumn("queued").filter(({ card }) => !liveRun(card.id));
 
-  // ---- dragging a card up or down its column
-  // y0/s0: pointer and column scroll at the start; py: the pointer now. dy moves the lifted card
-  // with the pointer and with the column's own scrolling.
-  const [drag, setDrag] = createSignal<{ id: number; col: string; y0: number; s0: number; py: number; dy: number; live: boolean } | null>(null);
+  // ---- dragging a card: up or down its column, or to another column the rules allow
+  // x0/y0: the pointer at the start; px/py: the pointer now; over: the column under it. While it
+  // drags, a copy of the card (the ghost) follows the pointer and the card keeps its place, faded.
+  type Drag = { id: number; col: Column; x0: number; y0: number; px: number; py: number; live: boolean; over: Column | null };
+  const [drag, setDrag] = createSignal<Drag | null>(null);
   let dragged = false;
+  let ghost: HTMLElement | null = null;
+  let ghostAt = { dx: 0, dy: 0 };
+  let boardEl: HTMLElement | undefined;
   const columnEls: Record<string, HTMLElement | undefined> = {};
   const bodyEls: Record<string, HTMLElement | undefined> = {};
+  /** The column under the pointer. */
+  const columnAt = (x: number): Column | null => columns.find((c) => {
+    const r = columnEls[c]?.getBoundingClientRect();
+    return !!r && x >= r.left && x <= r.right;
+  }) ?? null;
+  /** The move that dropping this card on that column makes, if the rules allow one (holding is not a drop). */
+  const dropMove = (id: number, col: Column | null): Move | undefined => {
+    const card = (props.cards ?? []).find((c) => c.id === id);
+    if (!card || !col) return undefined;
+    return movesFor(card, !!liveRun(id)).find((m) => m.column === col && m.to !== "hold");
+  };
+  /** How a column takes the card being dragged: its own column reorders, "ok" moves it, "no" refuses. */
+  const dropMark = (col: Column): "ok" | "no" | undefined => {
+    const d = drag();
+    if (!d?.live || d.col === col) return undefined;
+    return dropMove(d.id, col) ? "ok" : "no";
+  };
   /** Near the top or bottom edge of its column, a dragged card scrolls the column, faster the closer it gets. */
   const EDGE = 64;
   let scrolling = 0;
   function autoscroll() {
     scrolling = 0;
     const d = drag();
-    const body = d?.live ? bodyEls[d.col] : undefined;
+    const body = d?.live && d.over ? bodyEls[d.over] : undefined;
     if (!d || !body) return;
     const r = body.getBoundingClientRect();
     const top = d.py - r.top;
@@ -425,9 +448,39 @@ export function BoardView(props: {
     if (speed !== 0) {
       const before = body.scrollTop;
       body.scrollTop += speed;
-      if (body.scrollTop !== before) setDrag({ ...d, dy: d.py - d.y0 + (body.scrollTop - d.s0) });
+      // The gap line follows the cards under a still pointer.
+      if (body.scrollTop !== before) setDrag({ ...d });
     }
     scrolling = requestAnimationFrame(autoscroll);
+  }
+
+  /** The card leaves its column for another: the daemon's rules, then its place there. */
+  async function moveAcross(id: number, col: Column, index: number) {
+    const m = dropMove(id, col);
+    const card = (props.cards ?? []).find((c) => c.id === id);
+    if (!m || !card || !props.repo) return;
+    if (m.stops && !window.confirm(t("#{id} is running. Stop it and move it to {column}? Its session is kept: the next run picks up where it stopped.", { id, column: t(columnTitle[col]) }))) return;
+    // Where it lands among the column's cards, in the whole board's order.
+    const target = byColumn(col).map((x) => x.card.id).filter((x) => x !== id);
+    const all = sorted().map((c) => c.id).filter((x) => x !== id);
+    const at = index < target.length ? all.indexOf(target[index]!) : target.length > 0 ? all.indexOf(target[target.length - 1]!) + 1 : all.length;
+    all.splice(at < 0 ? all.length : at, 0, id);
+    try {
+      await api.cardMove(props.repo, id, m.to);
+      setOrder(all);
+      props.onReorder(all);
+      // Run all works the queue: a card it never read is read first.
+      if (m.to === "queue" && props.phase === "working" && !card.analyzed) props.onJoin([id]);
+    } catch (e) {
+      toast({ tone: "fail", title: t("#{id} did not move", { id }), body: msg(e) });
+      props.onChanged();
+    }
+  }
+
+  /** Alt+← / Alt+→: to the column beside it, when the rules allow. */
+  function stepAcross(id: number, col: Column, dir: -1 | 1) {
+    const next = columns[columns.indexOf(col) + dir];
+    if (next && dropMove(id, next)) void moveAcross(id, next, byColumn(next).length);
   }
 
   function moveTo(col: string, id: number, index: number) {
@@ -444,15 +497,35 @@ export function BoardView(props: {
     props.onReorder(all);
   }
 
-  function onPointerDown(e: PointerEvent, col: string, id: number) {
+  function lift(el: HTMLElement, x: number, y: number) {
+    const r = el.getBoundingClientRect();
+    ghost = el.cloneNode(true) as HTMLElement;
+    ghost.removeAttribute("data-placeholder");
+    ghost.removeAttribute("data-gap");
+    ghost.removeAttribute("tabindex");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.setAttribute("data-lifted", "");
+    ghost.classList.add("card-ghost");
+    Object.assign(ghost.style, { width: `${r.width}px`, left: `${r.left}px`, top: `${r.top}px` });
+    ghostAt = { dx: x - r.left, dy: y - r.top };
+    (boardEl ?? document.body).appendChild(ghost);
+  }
+  function drop() {
+    ghost?.remove();
+    ghost = null;
+  }
+
+  function onPointerDown(e: PointerEvent, col: Column, id: number) {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input")) return;
-    setDrag({ id, col, y0: e.clientY, s0: bodyEls[col]?.scrollTop ?? 0, py: e.clientY, dy: 0, live: false });
+    const el = e.currentTarget as HTMLElement;
+    setDrag({ id, col, x0: e.clientX, y0: e.clientY, px: e.clientX, py: e.clientY, live: false, over: col });
     const move = (ev: PointerEvent) => {
       const d = drag();
       if (!d) return;
-      if (!d.live && Math.abs(ev.clientY - d.y0) < 5) return;
-      const scrolled = (bodyEls[d.col]?.scrollTop ?? 0) - d.s0;
-      setDrag({ ...d, py: ev.clientY, dy: ev.clientY - d.y0 + scrolled, live: true });
+      if (!d.live && Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0) < 5) return;
+      if (!d.live) lift(el, d.x0, d.y0);
+      if (ghost) Object.assign(ghost.style, { left: `${ev.clientX - ghostAt.dx}px`, top: `${ev.clientY - ghostAt.dy}px` });
+      setDrag({ ...d, px: ev.clientX, py: ev.clientY, live: true, over: columnAt(ev.clientX) });
       if (!scrolling) scrolling = requestAnimationFrame(autoscroll);
     };
     const up = (ev: PointerEvent) => {
@@ -461,18 +534,21 @@ export function BoardView(props: {
       window.removeEventListener("pointercancel", up);
       cancelAnimationFrame(scrolling);
       scrolling = 0;
+      drop();
       const d = drag();
       setDrag(null);
       if (!d?.live) return;
       dragged = true;
       setTimeout(() => (dragged = false), 0);
+      if (ev.type === "pointercancel" || !d.over) return;
       // Where it lands: how many of the other cards' middles sit above the pointer.
-      const others = [...(columnEls[d.col]?.querySelectorAll<HTMLElement>("[data-card-id]") ?? [])].filter((el) => Number(el.dataset.cardId) !== d.id);
+      const others = [...(columnEls[d.over]?.querySelectorAll<HTMLElement>("[data-card-id]") ?? [])].filter((el) => Number(el.dataset.cardId) !== d.id);
       const index = others.filter((el) => {
         const r = el.getBoundingClientRect();
         return r.top + r.height / 2 < ev.clientY;
       }).length;
-      moveTo(d.col, d.id, index);
+      if (d.over === d.col) moveTo(d.col, d.id, index);
+      else void moveAcross(d.id, d.over, index);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -480,9 +556,9 @@ export function BoardView(props: {
   }
 
   /** The line that shows where the dragged card would land: before or after which card. */
-  const gapMark = (col: string, id: number): "before" | "after" | undefined => {
+  const gapMark = (col: Column, id: number): "before" | "after" | undefined => {
     const d = drag();
-    if (!d?.live || d.col !== col || d.id === id) return undefined;
+    if (!d?.live || d.over !== col || d.id === id || dropMark(col) === "no") return undefined;
     const others = byColumn(col).map((x) => x.card.id).filter((x) => x !== d.id);
     const y = d.py;
     const els = others.map((x) => columnEls[col]?.querySelector<HTMLElement>(`[data-card-id="${x}"]`));
@@ -491,48 +567,62 @@ export function BoardView(props: {
       return r && r.top + r.height / 2 < y;
     }).length;
     const from = byColumn(col).findIndex((x) => x.card.id === d.id);
-    if (g === from) return undefined; // where it already is
+    if (col === d.col && g === from) return undefined; // where it already is
     if (g < others.length) return others[g] === id ? "before" : undefined;
     return others[others.length - 1] === id ? "after" : undefined;
   };
 
-  const unanalysed = () => backlog().filter(({ card }) => !card.analyzed);
-  /** While Run all works: backlog cards it does not have yet (made after it started). */
-  const outside = () => (props.phase === "working" ? backlog().filter(({ card }) => !props.queued.includes(card.id) && !props.joining.includes(card.id)).map(({ card }) => card) : []);
+  /** Backlog cards Claude never read (held ones wait). */
+  const unanalysed = () => takeable().filter(({ card }) => !card.analyzed);
+  /** Queued cards Claude never read, not being read now. */
+  const filaUnread = () => fila().filter(({ card }) => !card.analyzed && !props.joining.includes(card.id));
+  /** What Start takes when Queued is empty: the analysed Backlog, held cards aside. */
+  const startable = () => takeable().filter(({ card }) => card.analyzed);
   /** Backlog cards that carry something of Claude's: the analysis, its notes, its open questions. */
   const remembered = () => backlog().map(({ card }) => card).filter(hasMemory);
   const [forgetting, setForgetting] = createSignal<number[] | null>(null);
-  const runLabel = () =>
-    props.phase === "analyzing"
-      ? t("Stop analysing")
-      : props.phase === "asking"
-        ? t("Answer to go on")
-        : props.phase === "finishing"
-          ? t("Finishing")
-          : props.phase === "working"
-            ? props.queued.length > 0
-              ? t("Stop ({n} queued)", { n: props.queued.length })
-              : t("Finish now")
-            : unanalysed().length > 0
-              ? t("Analyse {n}", { n: unanalysed().length })
-              : t("Start development");
-  const runAction = () => {
+
+  // Backlog's head: Analyse (Claude reads the ideas, asks once). Queued's head: the run itself.
+  const analyseLabel = () =>
+    props.phase === "analyzing" ? t("Stop analysing") : props.phase === "asking" ? t("Answer to go on") : t("Analyse {n}", { n: unanalysed().length });
+  const analyseAction = () => {
     if (props.phase === "analyzing") return props.onStopAll();
+    if (props.phase === "idle") props.onAnalyse(unanalysed().map(({ card }) => card.id));
+  };
+  const showAnalyse = () => props.phase === "analyzing" || props.phase === "asking" || (props.phase === "idle" && unanalysed().length > 0);
+
+  const runLabel = () =>
+    props.phase === "finishing"
+      ? t("Finishing")
+      : props.phase === "working"
+        ? props.queued.length > 0
+          ? t("Stop ({n} queued)", { n: props.queued.length })
+          : t("Finish now")
+        : fila().length > 0
+          ? filaUnread().length > 0
+            ? t("Analyse {n}", { n: filaUnread().length })
+            : t("Continue")
+          : t("Start ({n})", { n: startable().length });
+  const runAction = () => {
     if (props.phase === "working") return props.queued.length > 0 ? props.onStopAll() : props.onFinish();
     if (props.phase !== "idle") return;
-    if (unanalysed().length > 0) return props.onAnalyse(unanalysed().map(({ card }) => card.id));
-    props.onStartDev(backlog().map(({ card }) => card.id));
+    if (fila().length > 0) {
+      if (filaUnread().length > 0) return props.onAnalyse(filaUnread().map(({ card }) => card.id));
+      return props.onStartDev(fila().map(({ card }) => card.id));
+    }
+    props.onStartDev(startable().map(({ card }) => card.id));
   };
+  const showRun = () => props.phase === "working" || props.phase === "finishing" || (props.phase === "idle" && (fila().length > 0 || startable().length > 0));
   const runTitle = () =>
     props.phase === "working"
       ? props.queued.length > 0
-        ? t("Stops starting queued cards; runs already going keep going")
+        ? t("Stops starting queued cards; runs already going keep going, and Queued keeps its cards for the next Start")
         : t("Close the batch now: the cards still in review stay there")
-      : props.phase === "analyzing"
-        ? t("Stops the analysis; nothing starts")
-        : unanalysed().length > 0
-          ? t("Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine")
-          : t("Choose where the work lands and what happens at the end, then the agents start");
+      : fila().length > 0
+        ? filaUnread().length > 0
+          ? t("Claude reads the queued cards it never read: what it needs to know, notes, and which cards must land first")
+          : t("Choose where the work lands and what happens at the end, then the agents work Queued")
+        : t("Moves the analysed Backlog to Queued, then the agents work it. Cards not analysed or on hold stay in the Backlog")
 
   return (
     <div class="board-screen">
@@ -579,53 +669,53 @@ export function BoardView(props: {
             </div>
           }
         >
-          <div class="board" data-dragging={drag()?.live ? "" : undefined}>
+          <div class="board" data-dragging={drag()?.live ? "" : undefined} ref={(el) => (boardEl = el)}>
             <For each={columns}>
               {(col) => (
-                <section class="col" aria-label={t(columnTitle[col])} ref={(el) => (columnEls[col] = el)}>
+                <section class="col" aria-label={t(columnTitle[col])} ref={(el) => (columnEls[col] = el)} data-drop={dropMark(col)}>
                   <h2 class="col-head" data-hot={col === "needs" && byColumn(col).length > 0 ? "" : undefined}>
-                    <Icon name={colIcon[col]} small />
+                    <Icon name={columnIcon[col]} small />
                     {t(columnTitle[col])}
                     <span class={col === "needs" && byColumn(col).length > 0 ? "count count-hot" : "count"}>
                       {byColumn(col).length}
                     </span>
-                    <Show when={col === "backlog" && (backlog().length > 0 || props.phase !== "idle")}>
+                    <Show when={col === "backlog" && showAnalyse()}>
                       <button
                         type="button"
                         class="btn btn-ghost col-action"
-                        disabled={props.phase === "asking" || props.phase === "finishing"}
-                        aria-busy={props.phase === "analyzing" || props.phase === "finishing"}
+                        disabled={props.phase === "asking"}
+                        aria-busy={props.phase === "analyzing"}
+                        title={props.phase === "analyzing" ? t("Stops the analysis; nothing starts") : t("Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine. Nothing starts")}
+                        onClick={analyseAction}
+                      >
+                        <Show when={props.phase === "analyzing"} fallback={<Icon name={props.phase === "asking" ? "needs" : "search"} small />}>
+                          <Spinner />
+                        </Show>
+                        <span class="col-action-label">{analyseLabel()}</span>
+                      </button>
+                    </Show>
+                    <Show when={col === "queued" && props.joining.length > 0}>
+                      <span class="col-action col-note" title={t("Claude reads the cards moved to Queued during the run; once their questions are answered the batch takes them")}>
+                        <Spinner />
+                        <span class="col-action-label">{t("Analysing {n}", { n: props.joining.length })}</span>
+                      </span>
+                    </Show>
+                    <Show when={col === "queued" && showRun()}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost col-action"
+                        aria-busy={props.phase === "finishing"}
+                        disabled={props.phase === "finishing"}
                         title={runTitle()}
                         onClick={runAction}
                       >
                         <Show
-                          when={props.phase === "analyzing" || props.phase === "finishing"}
-                          fallback={<Icon name={props.phase === "working" ? (props.queued.length > 0 ? "stop" : "done") : unanalysed().length > 0 ? "search" : "play"} small />}
+                          when={props.phase === "finishing"}
+                          fallback={<Icon name={props.phase === "working" ? (props.queued.length > 0 ? "stop" : "done") : fila().length > 0 && filaUnread().length > 0 ? "search" : "play"} small />}
                         >
                           <Spinner />
                         </Show>
                         <span class="col-action-label">{runLabel()}</span>
-                      </button>
-                    </Show>
-                    <Show when={col === "backlog" && (outside().length > 0 || props.joining.length > 0)}>
-                      <button
-                        type="button"
-                        class="btn btn-ghost col-action"
-                        disabled={props.joining.length > 0}
-                        aria-busy={props.joining.length > 0}
-                        title={t("Claude reads the cards made after Run all started; once their questions are answered they join the batch")}
-                        onClick={() => props.onJoin(outside().map((c) => c.id))}
-                      >
-                        <Show when={props.joining.length > 0} fallback={<Icon name="search" small />}>
-                          <Spinner />
-                        </Show>
-                        <span class="col-action-label">
-                          {props.joining.length > 0
-                            ? t("Analysing {n}", { n: props.joining.length })
-                            : outside().some((c) => !c.analyzed)
-                              ? t("Analyse {n} new", { n: outside().length })
-                              : t("Add {n} to the batch", { n: outside().length })}
-                        </span>
                       </button>
                     </Show>
                     <Show when={col === "backlog" && props.phase === "idle" && props.repo && remembered().length > 0}>
@@ -660,12 +750,12 @@ export function BoardView(props: {
                           data-card-id={card.id}
                           data-state={p.column === "needs" ? "needs" : p.column === "landed" ? "landed" : undefined}
                           data-tone={p.chip === "failed" ? "failed" : undefined}
-                          data-lifted={drag()?.live && drag()!.id === card.id ? "" : undefined}
+                          data-placeholder={drag()?.live && drag()!.id === card.id ? "" : undefined}
+                          data-held={card.held != null ? "" : undefined}
                           data-gap={gapMark(col, card.id)}
-                          style={drag()?.live && drag()!.id === card.id ? { transform: `translateY(${drag()!.dy}px)` } : undefined}
                           tabindex="0"
                           role="button"
-                          aria-label={t("Card {id}: {title}. Alt and the arrow keys move it; Command Backspace deletes it.", { id: card.id, title: card.title })}
+                          aria-label={t("Card {id}: {title}. Alt and the arrow keys move it, left and right to another column; Command Backspace deletes it.", { id: card.id, title: card.title })}
                           onPointerDown={(e) => onPointerDown(e, col, card.id)}
                           onClick={() => !dragged && props.onOpen(card.id)}
                           onKeyDown={(e) => {
@@ -673,6 +763,11 @@ export function BoardView(props: {
                             if (e.metaKey && (e.key === "Backspace" || e.key === "Delete") && props.repo && !liveRun(card.id)) {
                               e.preventDefault();
                               void deleteCard(props.repo, card, props.onChanged);
+                              return;
+                            }
+                            if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+                              e.preventDefault();
+                              stepAcross(card.id, col, e.key === "ArrowLeft" ? -1 : 1);
                               return;
                             }
                             if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
@@ -703,7 +798,7 @@ export function BoardView(props: {
                                 </span>
                               )}
                             </Show>
-                            <Show when={p.column === "backlog"}>
+                            <Show when={p.column === "backlog" || p.column === "queued"}>
                               <span class="card-analysis" data-on={card.analyzed ? "" : undefined} title={card.analyzed ? t("Analysed {at}", { at: card.analyzed }) : t("Not analysed: Run all reads it first")}>
                                 {card.analyzed ? t("Analysed") : t("Not analysed")}
                               </span>

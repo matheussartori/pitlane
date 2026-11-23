@@ -63,9 +63,10 @@ pub fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
                 }
             }
         }
-        CardCmd::Move { id, state } => {
-            let c = cards::update(repo, id, CardPatch { state: Some(CardState::parse(&state)?), ..Default::default() })?;
-            println!("{} #{} is {}", paint(DONE, "✓"), c.id, c.state.as_str());
+        CardCmd::Move { id, to, reason } => {
+            // The Board's rules, carried out by the daemon: a running card stops first.
+            let c = super::daemon()?.move_card(&repo.root, id, cards::MoveTo::parse(&to)?, reason)?;
+            println!("{} #{} is {}", paint(DONE, "✓"), id, c.get("state").and_then(|s| s.as_str()).unwrap_or("?"));
         }
         CardCmd::Ask { id, question, options, recommend } => {
             let recommended = match recommend {

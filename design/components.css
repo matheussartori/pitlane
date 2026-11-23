@@ -137,7 +137,7 @@
 .panel-meta { margin-inline-start: auto; display: flex; align-items: center; gap: var(--space-xs); color: var(--color-muted); font-size: var(--text-xs); }
 
 /* ---------- Board ---------- */
-.board { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: var(--space-lg); min-width: 0; overflow-x: auto; }
+.board { display: grid; grid-template-columns: repeat(5, minmax(180px, 1fr)); gap: var(--space-lg); min-width: 0; overflow-x: auto; }
 /* Columns sit open on the panel, as in Warp: no box around them, a hairline under the head and air between them. Cards are the only filled shapes. */
 .col { display: grid; align-content: start; gap: var(--space-xs); min-width: 0; padding: 0; background: none; }
 .col-head { display: flex; align-items: center; gap: var(--space-xs); height: 32px; padding-inline: var(--space-2xs); margin-bottom: var(--space-2xs); box-shadow: 0 1px 0 var(--color-rule); font: var(--weight-strong) var(--text-sm)/1 var(--font-body); color: var(--color-ink-2); }

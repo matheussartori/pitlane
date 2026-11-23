@@ -1,21 +1,24 @@
 // Where a card sits on the board and why. The card file says what someone set; the lane it is
 // linked to says where the work really is. The board groups by who acts next.
-import type { BlockReason, Card, CardState, Lane, RunMeta, Turn, Yard } from "./api";
+import type { BlockReason, Card, CardState, Lane, MoveTo, RunMeta, Turn, Yard } from "./api";
 import type { IconName } from "./icons";
 import { group, next, type ChipState } from "./lane";
 import { locale, plural, t } from "./i18n";
 
-export type Column = "needs" | "backlog" | "progress" | "landed";
-export const columns: Column[] = ["needs", "backlog", "progress", "landed"];
+export type Column = "needs" | "backlog" | "queued" | "progress" | "landed";
+export const columns: Column[] = ["needs", "backlog", "queued", "progress", "landed"];
 export const columnTitle: Record<Column, string> = {
   needs: "Needs you",
   backlog: "Backlog",
+  queued: "Queued",
   progress: "In progress",
   landed: "Landed",
 };
+export const columnIcon: Record<Column, IconName> = { needs: "needs", backlog: "inbox", queued: "queued", progress: "run", landed: "done" };
 export const columnEmpty: Record<Column, string> = {
   needs: "Cards with open questions or a lane waiting on you show here.",
-  backlog: "New and ready cards wait here.",
+  backlog: "Ideas wait here. No run takes them until you move them to Queued.",
+  queued: "Run all works these, in order. Start moves the analysed Backlog here; drag a card in to add it to the run.",
   progress: "Cards being worked on, in a lane or by an agent.",
   landed: "Cards finished and committed in the branch they were asked for.",
 };
@@ -23,6 +26,7 @@ export const columnEmpty: Record<Column, string> = {
 export const stateLabel: Record<CardState, string> = {
   inbox: "New",
   ready: "Ready",
+  queued: "Queued",
   running: "Running",
   verifying: "Checking",
   review: "In review",
@@ -65,8 +69,45 @@ export function unblockActions(card: Card): { action: UnblockAction; label: stri
   const out: { action: UnblockAction; label: string; title: string; icon: IconName }[] = [{ action: "retry", label, title, icon: "refresh" }];
   if (card.lane && (reason === "checks" || reason === "conflict" || reason === "stuck"))
     out.push({ action: "review", label: "Review as it is", title: "Leave it for your review, as the lane holds it now", icon: "review" });
-  out.push({ action: "backlog", label: "Back to Backlog", title: "Back to Backlog: its next run picks up from your notes and its lane", icon: "queued" });
+  out.push({ action: "backlog", label: "Back to Backlog", title: "Back to Backlog: its next run picks up from your notes and its lane", icon: "inbox" });
   return out;
+}
+
+/** A move a person can make, as the daemon's rules allow it (crates/pit-core/src/cards.rs `move_rule`). */
+export interface Move {
+  to: MoveTo;
+  /** The column the card lands in. */
+  column: Column;
+  label: string;
+  /** A running card stops first: ask before. */
+  stops?: boolean;
+}
+
+/** Where a person can move this card, the first being the likeliest. `live`: a run of it is going. */
+export function movesFor(card: Card, live: boolean): Move[] {
+  const backlog: Move = { to: "backlog", column: "backlog", label: "Backlog" };
+  const queue: Move = { to: "queue", column: "queued", label: "Queued" };
+  const hold: Move = { to: "hold", column: "backlog", label: "Hold in the Backlog" };
+  switch (card.state) {
+    case "verifying":
+      return [];
+    case "running":
+      return [{ ...queue, stops: live }, { ...backlog, stops: live }];
+    case "inbox":
+    case "ready":
+      return card.held != null ? [queue, { ...backlog, label: "Release the hold" }] : [queue, hold];
+    case "queued":
+      return [backlog, hold];
+    case "blocked": {
+      const stuck = !!card.blocked?.checking || (card.questions ?? []).some((q) => q.answer == null);
+      return stuck ? [backlog] : [queue, backlog];
+    }
+    case "review":
+      return [{ ...backlog, label: "Backlog (discard the review)" }];
+    case "done":
+    case "in-dev":
+      return [{ ...backlog, label: "Backlog (open again)" }];
+  }
 }
 
 export interface Placement {
@@ -124,9 +165,16 @@ export function place(card: Card, yard: Yard | null): Placement {
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.production ?? "main" }) };
   if (card.state === "in-dev" || lane?.in_integration)
     return { column: "landed", chip: "done", icon: "done", label: t("In {name}", { name: card.target ?? yard?.integration ?? "dev" }) };
+  // In Run all's queue: the batch takes it in board order.
+  if (card.state === "queued")
+    return card.paused
+      ? { column: "queued", chip: "queued", icon: "pause", label: t("Paused"), why: about(card) }
+      : { column: "queued", chip: "queued", icon: "queued", label: t("Queued"), why: about(card) };
   // Ready or inbox with a lane: sent back to the backlog (from Blocked, say); its next run goes on in that lane.
   if (card.state === "running" || (lane && card.state !== "ready" && card.state !== "inbox"))
     return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? t("Running") : t("In a lane") };
+  // Held by you: Analyse and Start leave it out.
+  if (card.held != null) return { column: "backlog", chip: "queued", icon: "pause", label: t("On hold"), why: card.held || about(card) };
   // Stopped mid-work: its next run resumes the session, with all the agent did and said.
   if (card.paused) return { column: "backlog", chip: "queued", icon: "pause", label: t("Paused"), why: about(card) };
   return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]), why: about(card) };

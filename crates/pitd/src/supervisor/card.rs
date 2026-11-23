@@ -416,7 +416,13 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         (RunState::Done, Some("blocked")) if asked => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Questions, short(summary), Some(m.id.clone())))),
         (RunState::Done, Some("blocked")) => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Stuck, short(summary), Some(m.id.clone())))),
         (RunState::Done, _) => (CardState::Review, None),
-        (RunState::Stopped, _) => (CardState::Ready, None),
+        // Moved by hand while it stopped: where it was moved stands. Else a Run all card waits in
+        // the queue for the next Start, and any other card goes back to the Backlog.
+        (RunState::Stopped, _) => match cards::get(&r, m.card).map(|c| c.state) {
+            Ok(s) if !matches!(s, CardState::Running | CardState::Verifying) => (s, None),
+            _ if m.autopilot => (CardState::Queued, None),
+            _ => (CardState::Ready, None),
+        },
         // Out of turns under Run all: the same session goes on at once, so the card never waits on you.
         _ if super::autopilot::goes_on(m, r.flow.run.max_turns) => (CardState::Running, None),
         _ => {

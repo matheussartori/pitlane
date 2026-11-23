@@ -1,14 +1,14 @@
 // The one-card view (its notes, its questions, its runs) and Run all's questions, asked one at a time.
 import { For, Show, createEffect, createSignal, on } from "solid-js";
-import { api, cardStates, isLive, type Card, type CardState, type RunMeta, type Yard } from "./api";
+import { api, isLive, type Card, type RunMeta, type Yard } from "./api";
 import { elapsed, money, runStateView } from "./run";
-import { columnTitle, openQuestions, place, stateLabel, unblockActions } from "./cards";
+import { columnIcon, columnTitle, movesFor, openQuestions, place, unblockActions, type Move } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { CardImages, imagesIn } from "./images";
 import { Prose, inline } from "./prose";
 import { DecisionItem, LiveMark, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
-import { ErrorLine, Sheet, Spinner, toast } from "./ui";
+import { ErrorLine, Sheet, Spinner, dismissable, toast } from "./ui";
 import { CARD_SIDE_W, Grip } from "./layout";
 import { locale, plural, t } from "./i18n";
 import { clock, msg } from "./format";
@@ -186,7 +186,11 @@ export function CardSheet(props: {
   // The spec reads as text (its links open) until Edit; an empty one opens for writing.
   const [editing, setEditing] = createSignal(!props.card.body.trim());
   let addImages: ((files: File[]) => void) | undefined;
-  const [state, setState] = createSignal<CardState>(props.card.state);
+  // Move to…: the same rules as the Board's drag (the daemon's), never a free choice of state.
+  const [moveMenu, setMoveMenu] = createSignal(false);
+  const [holding, setHolding] = createSignal<string | null>(null);
+  let moveBox: HTMLDivElement | undefined;
+  dismissable(() => moveBox, moveMenu, () => setMoveMenu(false));
   const [lane, setLane] = createSignal(props.card.lane ?? "");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -197,7 +201,6 @@ export function CardSheet(props: {
   const dirty = () =>
     title().trim() !== props.card.title ||
     body() !== props.card.body ||
-    state() !== props.card.state ||
     lane().trim() !== (props.card.lane ?? "");
   const open = () => openQuestions([props.card]);
   const live = () => props.runs.find((r) => isLive(r.state));
@@ -211,22 +214,40 @@ export function CardSheet(props: {
     el.style.height = `${el.scrollHeight + 2}px`;
   };
 
-  async function save(to?: CardState) {
+  async function save() {
     setBusy(true);
     setError(null);
     try {
-      const next = to ?? state();
       await api.cardUpdate(props.repo, props.card.id, {
         title: title().trim() !== props.card.title ? title().trim() : undefined,
         body: body() !== props.card.body ? body() : undefined,
-        state: next !== props.card.state ? next : undefined,
         lane: lane().trim() !== (props.card.lane ?? "") ? lane().trim() : undefined,
       });
-      toast(
-        to
-          ? { tone: "done", title: t("#{id} back in Backlog", { id: props.card.id }), body: t("Its next run picks up from your notes and its lane.") }
-          : { tone: "done", title: t("#{id} saved", { id: props.card.id }) },
-      );
+      toast({ tone: "done", title: t("#{id} saved", { id: props.card.id }) });
+      props.onChanged();
+      props.onClose();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const moves = () => movesFor(props.card, !!live());
+  /** Moves the card under the Board's rules; a running card stops first, after you say so. */
+  async function move(m: Move, reason?: string) {
+    setMoveMenu(false);
+    if (m.stops && !window.confirm(t("#{id} is running. Stop it and move it to {column}? Its session is kept: the next run picks up where it stopped.", { id: props.card.id, column: t(columnTitle[m.column]) }))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cardMove(props.repo, props.card.id, m.to, reason);
+      toast({
+        tone: "done",
+        title: m.to === "hold" ? t("#{id} on hold", { id: props.card.id }) : t("#{id} in {column}", { id: props.card.id, column: t(columnTitle[m.column]) }),
+        body: m.to === "queue" ? t("Run all takes it in board order.") : m.to === "hold" ? t("Analyse and Start leave it out until you release it.") : undefined,
+      });
+      setHolding(null);
       props.onChanged();
       props.onClose();
     } catch (e) {
@@ -318,17 +339,6 @@ export function CardSheet(props: {
                 </button>
               )}
             </For>
-          </Show>
-          <Show when={props.card.state === "blocked" && !live()}>
-            <button
-              type="button"
-              class="btn btn-ghost"
-              disabled={busy() || !title().trim()}
-              title={t("Save your changes and send it back to Backlog, to be worked again")}
-              onClick={() => void save("ready")}
-            >
-              <Icon name="queued" small /> {t("Back to Backlog")}
-            </button>
           </Show>
           <button type="button" class="btn btn-ghost" onClick={props.onClose} disabled={busy()}>
             {dirty() ? t("Cancel") : t("Close")}
@@ -538,12 +548,62 @@ export function CardSheet(props: {
         <Grip size={CARD_SIDE_W} edge="left" label={t("Resize the side column")} style={{ left: "auto", right: "calc(var(--side-w) - 5px)" }} />
         <aside class="cs-side">
           <div class="field">
-            <label class="field-label" for="card-state">
-              {t("State")}
-            </label>
-            <select id="card-state" class="select" value={state()} onChange={(e) => setState(e.currentTarget.value as CardState)}>
-              <For each={cardStates}>{(s) => <option value={s}>{t(stateLabel[s])}</option>}</For>
-            </select>
+            <span class="field-label">{t("State")}</span>
+            <div class="cs-move">
+              <span class="cs-move-where">
+                <Icon name={columnIcon[where().column]} small />
+                {t(columnTitle[where().column])}
+                <Show when={where().label !== t(columnTitle[where().column])}>
+                  <span class="cs-move-label">· {where().label}</span>
+                </Show>
+              </span>
+              <Show when={moves().length > 0}>
+                <div class="anchor" ref={moveBox}>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    aria-expanded={moveMenu()}
+                    disabled={busy() || dirty()}
+                    title={dirty() ? t("Save your changes first") : t("Where you can move it: running, checking, review and landing are Pitlane's to set")}
+                    onClick={() => setMoveMenu(!moveMenu())}
+                  >
+                    {t("Move to…")}
+                  </button>
+                  <Show when={moveMenu()}>
+                    <div class="pop cs-move-pop" role="menu">
+                      <For each={moves()}>
+                        {(m) => (
+                          <button type="button" class="menu-item" role="menuitem" onClick={() => (m.to === "hold" ? (setMoveMenu(false), setHolding("")) : void move(m))}>
+                            <Icon name={m.to === "hold" ? "pause" : columnIcon[m.column]} small />
+                            <span>{t(m.label)}</span>
+                            <Show when={m.stops}>
+                              <span class="cs-move-label">{t("stops the run")}</span>
+                            </Show>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+            <Show when={holding() != null}>
+              <form
+                class="cs-hold"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const m = moves().find((x) => x.to === "hold");
+                  if (m) void move(m, holding() ?? "");
+                }}
+              >
+                <input class="input" autofocus placeholder={t("Why, in a few words (optional)")} value={holding() ?? ""} onInput={(e) => setHolding(e.currentTarget.value)} />
+                <button type="submit" class="btn btn-ghost" disabled={busy()}>{t("Hold")}</button>
+                <button type="button" class="btn btn-ghost" onClick={() => setHolding(null)}>{t("Cancel")}</button>
+              </form>
+            </Show>
+            <Show when={props.card.held != null}>
+              <p class="field-help">{props.card.held ? t("On hold: {why}", { why: props.card.held }) : t("On hold: Analyse and Start leave it out.")}</p>
+            </Show>
           </div>
           <div class="field">
             <label class="field-label" for="card-lane">

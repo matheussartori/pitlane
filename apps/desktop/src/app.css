@@ -755,6 +755,14 @@ body[data-resizing] .pane { pointer-events: none; }
 .board[data-dragging] { cursor: grabbing; user-select: none; }
 .board[data-dragging] .card { cursor: grabbing; }
 .card[data-lifted] { position: relative; z-index: var(--z-raised); background: var(--color-paper-3); box-shadow: var(--ring-strong), var(--shadow-pop); }
+/* Across columns: a copy follows the pointer, the card keeps its place faded; a column that cannot take it says so with the cursor and a muted head, no wash. */
+.card.card-ghost { position: fixed; margin: 0; z-index: var(--z-dropdown); pointer-events: none; }
+.card[data-placeholder] { opacity: 0.4; }
+.board[data-dragging] .col[data-drop="no"], .board[data-dragging] .col[data-drop="no"] .card { cursor: not-allowed; }
+.col[data-drop="no"] > .col-head, .col[data-drop="no"] > .col-head > .icon { color: var(--color-muted); }
+.col[data-drop="no"] > .col-body { opacity: 0.6; }
+.col-head .col-note { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--color-muted); }
+.card[data-held] .card-title { color: var(--color-ink-2); }
 .board:not([data-dragging]) .card { transition: transform var(--dur-short) var(--ease-out); }
 .card[data-gap="before"] { box-shadow: 0 -5px 0 -3px var(--color-accent), var(--ring); }
 .card[data-gap="after"] { box-shadow: 0 5px 0 -3px var(--color-accent), var(--ring); }
@@ -1444,3 +1452,19 @@ body[data-resizing] iframe, body[data-resizing] .xterm { pointer-events: none; }
 .preview-server-place { font-family: var(--font-body); color: var(--color-muted); }
 .preview-host { position: relative; min-height: 0; background: var(--color-paper-sunk); display: grid; place-items: center; }
 .preview-host > .empty { justify-items: center; text-align: center; }
+
+/* Card sheet › State: where it sits and Move to… (the Board's rules). */
+.cs-move { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+.cs-move-where { display: inline-flex; align-items: center; gap: var(--space-2xs); min-width: 0; color: var(--color-ink); font-size: var(--text-sm); }
+.cs-move-where > .icon { color: var(--color-muted); }
+.cs-move-label { color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-move > .anchor { margin-inline-start: auto; }
+.cs-move > .anchor > .pop.cs-move-pop { left: auto; right: 0; width: 260px; z-index: var(--z-dropdown); }
+.cs-move-pop .menu-item .cs-move-label { margin-inline-start: auto; font-size: var(--text-xs); }
+.cs-hold { display: flex; gap: var(--space-2xs); margin-top: var(--space-2xs); }
+.cs-hold > .input { flex: 1; min-width: 0; }
+.cs-move-pop { display: grid; }
+.cs-move-pop .menu-item { width: 100%; border: 0; font: inherit; font-size: var(--text-md); text-align: start; }
+.cs-move-pop .menu-item:not(:hover):not(:focus-visible) { background: transparent; }
+.cs-move-pop .menu-item > .icon { color: var(--color-muted); }
+.col[data-drop="no"] > .col-head .count { color: var(--color-muted); }

@@ -116,6 +116,18 @@ pub(crate) async fn card_unblock(path: String, id: u32, action: String) -> CmdRe
     .await
 }
 
+/// A card moved by hand (the drag, Move to): the Backlog, Run all's queue, or held with why. The
+/// daemon carries it out with the same rules everywhere, stopping a running card first.
+#[tauri::command]
+pub(crate) async fn card_move(path: String, id: u32, to: String, reason: Option<String>) -> CmdResult<serde_json::Value> {
+    blocking(move || {
+        let to = cards::MoveTo::parse(&to)?;
+        let root = open(&path)?.root;
+        daemon()?.move_card(&root, id, to, reason)
+    })
+    .await
+}
+
 /// Run all's analysis: questions and notes on each card not analysed yet.
 #[tauri::command]
 pub(crate) async fn cards_analyze(path: String, ids: Vec<u32>) -> CmdResult<serde_json::Value> {

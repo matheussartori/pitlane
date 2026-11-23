@@ -19,6 +19,7 @@ mod card;
 mod consult;
 mod control;
 mod launch;
+mod moves;
 mod queue;
 mod record;
 mod route;

@@ -71,7 +71,8 @@ impl Supervisor {
                             &r,
                             m.card,
                             CardPatch {
-                                state: Some(CardState::Ready),
+                                // A Run all card waits in the queue for the next Start.
+                                state: Some(if m.autopilot { CardState::Queued } else { CardState::Ready }),
                                 paused: Some(paused),
                                 ..Default::default()
                             },

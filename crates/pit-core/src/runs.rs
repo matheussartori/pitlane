@@ -886,6 +886,11 @@ impl Client {
         Ok(serde_json::from_value(v.get("run").cloned().unwrap_or(Value::Null))?)
     }
 
+    /// Moves a card by hand (see `cards::move_rule`); the card as it is now (a `CardOut`).
+    pub fn move_card(&mut self, repo: &Path, card: u32, to: crate::cards::MoveTo, reason: Option<String>) -> Result<Value> {
+        self.request(&Request::Move { repo: repo.to_owned(), card, to, reason })
+    }
+
     /// Claude's short reading of a report, written on it; the report as it is now.
     pub fn report_digest(&mut self, repo: &Path, id: &str) -> Result<crate::report::Report> {
         self.request_as(&Request::ReportDigest { repo: repo.to_owned(), id: id.into() })

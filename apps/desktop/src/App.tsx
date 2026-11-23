@@ -558,7 +558,7 @@ export default function App() {
         alt: { label: t("in Terminal › Agents"), run: () => (selectAgent(r.id), go("terminal")()) },
       });
     // Cards: the ones that need you first, then in progress and the Backlog; landed ones only when searched for.
-    const order = { needs: 0, progress: 1, backlog: 2, landed: 3 } as const;
+    const order = { needs: 0, progress: 1, queued: 2, backlog: 3, landed: 4 } as const;
     const placed = (cards() ?? []).map((c) => ({ c, p: place(c, yard()) })).sort((x, y) => order[x.p.column] - order[y.p.column]);
     for (const { c, p } of placed) {
       const last = lastRun(c.id);

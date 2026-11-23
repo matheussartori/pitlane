@@ -37,6 +37,9 @@ pub enum CardState {
     Inbox,
     /// Specced and answered: can run.
     Ready,
+    /// In Run all's queue: the batch takes it as soon as it can. New ideas stay in the Backlog,
+    /// out of the batch, until someone moves them here.
+    Queued,
     Running,
     /// The run finished; proofs and the judge are checking it.
     Verifying,
@@ -47,13 +50,14 @@ pub enum CardState {
 }
 
 impl CardState {
-    pub const ALL: [CardState; 8] =
-        [Self::Inbox, Self::Ready, Self::Running, Self::Verifying, Self::Review, Self::InDev, Self::Done, Self::Blocked];
+    pub const ALL: [CardState; 9] =
+        [Self::Inbox, Self::Ready, Self::Queued, Self::Running, Self::Verifying, Self::Review, Self::InDev, Self::Done, Self::Blocked];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Inbox => "inbox",
             Self::Ready => "ready",
+            Self::Queued => "queued",
             Self::Running => "running",
             Self::Verifying => "verifying",
             Self::Review => "review",
@@ -61,6 +65,11 @@ impl CardState {
             Self::Done => "done",
             Self::Blocked => "blocked",
         }
+    }
+
+    /// New or ready: in the Backlog, out of any batch.
+    pub fn in_backlog(self) -> bool {
+        matches!(self, Self::Inbox | Self::Ready)
     }
 
     pub fn parse(s: &str) -> Result<Self> {
@@ -215,6 +224,79 @@ impl Unblock {
     }
 }
 
+/// Where a person moves a card: the Board's drag and the card's "Move to" both ask for one of
+/// these, and only these. Running, checking, review and landing are the orchestrator's to set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MoveTo {
+    /// Ideas, out of any batch.
+    Backlog,
+    /// Run all's queue: the batch takes it.
+    Queue,
+    /// Held in the Backlog, with why: Analyse and Start leave it out.
+    Hold,
+}
+
+impl MoveTo {
+    pub fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "backlog" => Self::Backlog,
+            "queue" | "queued" => Self::Queue,
+            "hold" => Self::Hold,
+            _ => bail!("unknown destination {s:?} (backlog, queue or hold)"),
+        })
+    }
+}
+
+/// What a move does to a card.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Moved {
+    pub patch: CardPatch,
+    /// Its run is live and stops first (the session is kept: the next run resumes it).
+    pub stop: bool,
+}
+
+/// The rules for moving a card by hand, the same for the drag, the card and MCP. `live`: a run
+/// of the card is going now. An error says why not, in words for the person who tried.
+pub fn move_rule(card: &Card, to: MoveTo, live: bool, reason: Option<&str>) -> Result<Moved> {
+    use CardState::*;
+    let id = card.id;
+    let patch = |state: CardState| CardPatch { state: Some(state), held: Some(None), ..Default::default() };
+    // Back in the Backlog: new if Claude never read it, else ready.
+    let backlog = if card.analyzed.is_none() && card.questions.is_empty() && card.state != Ready { Inbox } else { Ready };
+    let moved = |p: CardPatch| Ok(Moved { patch: p, stop: false });
+    match (card.state, to) {
+        (Verifying, _) => bail!("card #{id} is being checked; wait for its checks to end"),
+        (Running, MoveTo::Hold) => bail!("card #{id} is running; move it to the Backlog first, then hold it"),
+        (Running, MoveTo::Backlog) => Ok(Moved { patch: patch(Ready), stop: live }),
+        (Running, MoveTo::Queue) => Ok(Moved { patch: patch(Queued), stop: live }),
+        (Inbox | Ready, MoveTo::Backlog) => moved(CardPatch { held: Some(None), ..Default::default() }),
+        (Inbox | Ready | Queued, MoveTo::Queue) => moved(patch(Queued)),
+        (Queued, MoveTo::Backlog) => moved(patch(backlog)),
+        (Inbox | Ready, MoveTo::Hold) => moved(CardPatch { held: Some(Some(reason.unwrap_or_default().to_owned())), ..Default::default() }),
+        (Queued, MoveTo::Hold) => moved(CardPatch { state: Some(backlog), held: Some(Some(reason.unwrap_or_default().to_owned())), ..Default::default() }),
+        (Blocked, MoveTo::Hold) | (Review, MoveTo::Hold) | (Done | InDev, MoveTo::Hold) => {
+            bail!("only a Backlog card can be held; move card #{id} to the Backlog first")
+        }
+        (Blocked, MoveTo::Backlog) => moved(CardPatch { retries: Some(0), ..patch(Ready) }),
+        (Blocked, MoveTo::Queue) => {
+            if card.blocked.as_ref().is_some_and(|b| b.checking.is_some()) {
+                bail!("card #{id} is being read again; wait for it, or send it to the Backlog");
+            }
+            if card.open_questions() > 0 {
+                bail!("card #{id} has {} open question(s); answer them first", card.open_questions());
+            }
+            moved(CardPatch { retries: Some(0), ..patch(Queued) })
+        }
+        // The review's Discard: back to the Backlog with its lane, for the next run to go on in.
+        (Review, MoveTo::Backlog) => moved(patch(Ready)),
+        (Review, MoveTo::Queue) => bail!("card #{id} waits for your review: approve it, ask for changes, or send it to the Backlog"),
+        // Reopened: its work landed, so the next run starts a lane of its own.
+        (Done | InDev, MoveTo::Backlog) => moved(CardPatch { lane: Some(None), paused: Some(None), ..patch(Ready) }),
+        (Done | InDev, MoveTo::Queue) => bail!("card #{id} already landed; move it to the Backlog to open it again"),
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Card {
     pub id: u32,
@@ -262,6 +344,10 @@ pub struct Card {
     /// further) or you sent it on; it gives up after a few and waits for you.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub retries: u32,
+    /// Held by you in the Backlog, with why (maybe empty): Analyse and Start leave it out.
+    /// Only in the Backlog; any other state forgets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<String>,
     /// Why it is Blocked; none in any other state. A table, so after the plain values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked: Option<Block>,
@@ -381,7 +467,7 @@ pub struct NewCard {
 }
 
 /// Only the fields that are `Some` change. `lane: Some(None)` unlinks.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CardPatch {
     pub title: Option<String>,
     pub body: Option<String>,
@@ -394,6 +480,8 @@ pub struct CardPatch {
     /// Why the card is blocked, with `state: Blocked`. Leaving Blocked forgets it.
     pub blocked: Option<Block>,
     pub retries: Option<u32>,
+    /// `Some(Some(why))` holds the card in the Backlog, `Some(None)` lets it go.
+    pub held: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -727,6 +815,7 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         paused: None,
         blocked: None,
         retries: 0,
+        held: None,
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
@@ -776,6 +865,13 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     }
     if let Some(n) = patch.retries {
         card.retries = n;
+    }
+    if let Some(h) = patch.held {
+        card.held = h.map(|w| w.trim().to_owned());
+    }
+    // Held only in the Backlog.
+    if !card.state.in_backlog() {
+        card.held = None;
     }
     // Got through, or sent on by you: a later block starts with its retries again.
     if matches!(card.state, CardState::Ready | CardState::Review | CardState::InDev | CardState::Done) {
@@ -1308,6 +1404,7 @@ mod tests {
             paused: None,
             blocked: None,
             retries: 0,
+            held: None,
             created: "2026-11-20T10:00:00Z".into(),
             updated: "2026-11-20T10:00:00Z".into(),
             questions: vec![Question {
