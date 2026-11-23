@@ -263,4 +263,6 @@ export default {
   "Claude could not analyse it.": "O Claude não conseguiu analisá-lo.",
   "It came back {n} times without being finished.": "Voltou {n} vezes sem ser terminado.",
   "{cards} stayed in the Backlog": "{cards} ficaram no Backlog",
+  "Run all works in {n} repositories: they share the {total} agents this Mac takes now. One with nothing ready lends its share to the others.": "O Run all trabalha em {n} repositórios: eles dividem os {total} agentes que este Mac aguenta agora. Um sem nada pronto empresta sua parte aos outros.",
+  "{mine} of {total} agents": "{mine} de {total} agentes",
 } as Record<string, string>;

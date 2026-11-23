@@ -29,7 +29,7 @@ import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
 import { msg } from "./format";
 import { cards, dropCardPoll, dropLoads, error, fetchedAt, fetching, jobs, load, loadCards, loadQueue, loadReports, loadRuns, problems, queueAll, dequeue, quota, reports, repo, runs, setCards, setError, setFetchedAt, setFetching, setProblems, setRepo, setRuns, setYard, yard } from "./store/repo";
-import { createRunAll, batchIds } from "./runall";
+import { createRunAll, batchIds, phaseIn, agentShare } from "./runall";
 import { shortcuts } from "./shortcuts";
 
 export type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "preview" | "terminal" | "settings";
@@ -244,13 +244,12 @@ export default function App() {
   }
 
   // Run all: its session, its steps and the effects that keep it going live in runall.ts.
-  const { plan, phase, queue, joining, analyse, analyseInto, analysed, startDev, finishBatch, stopRunAll } = createRunAll({ sheet, setSheet, setTab });
+  const { plan, phase, queue, joining, analyse, analyseInto, analysed, startDev, finishBatch, stopRunAll } = createRunAll({ sheet, setSheet, setTab, switchTo, nameOf: (path) => settings().repos.find((r) => r.path === path)?.name });
 
   async function switchTo(path: string) {
     setMenu(false);
     if (path === repo()) return;
-    // Run all belongs to the repository it started in.
-    if (phase() !== "idle") stopRunAll();
+    // Run all belongs to the repository it started in, and keeps going there while another one is open.
     dropLoads();
     setRepo(path);
     setYard(null);
@@ -630,7 +629,14 @@ export default function App() {
                     >
                       <Icon name="folder" small />
                       <span class="repo-entry">
-                        <span class="repo-name">{r.name}</span>
+                        <span class="repo-name">
+                          {r.name}
+                          <Show when={phaseIn(r.path) !== "idle"}>
+                            <span class="repo-run" title={t("Run all is going in this repository")}>
+                              {phaseIn(r.path) === "working" ? t("Run all") : phaseIn(r.path) === "asking" ? t("Questions") : t("Analysing")}
+                            </span>
+                          </Show>
+                        </span>
                         <span class="repo-path" title={r.path}>
                           {shortPath(r.path)}
                         </span>
@@ -897,6 +903,7 @@ export default function App() {
                     onStopAll={stopRunAll}
                     phase={phase()}
                     queued={queue()}
+                    share={agentShare()}
                     onReorder={(ids) => {
                       const path = repo();
                       if (!path) return;

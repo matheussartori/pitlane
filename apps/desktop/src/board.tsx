@@ -366,6 +366,8 @@ export function BoardView(props: {
   phase: "idle" | "analyzing" | "asking" | "working" | "finishing";
   /** Cards Run all still has to start. */
   queued: number[];
+  /** This repository's part of the agents while Run all works in more than one. */
+  share?: { mine: number; total: number; repos: number } | null;
   /** The whole board's new order, after a card was dragged. */
   onReorder: (ids: number[]) => void;
   /** The planner's view of open cards, only while Run all works. */
@@ -699,6 +701,17 @@ export function BoardView(props: {
                         <Spinner />
                         <span class="col-action-label">{t("Analysing {n}", { n: props.joining.length })}</span>
                       </span>
+                    </Show>
+                    <Show when={col === "queued" && props.phase === "working" && props.share}>
+                      {(sh) => (
+                        <span
+                          class="col-action col-note"
+                          title={t("Run all works in {n} repositories: they share the {total} agents this Mac takes now. One with nothing ready lends its share to the others.", { n: sh().repos, total: sh().total })}
+                        >
+                          <Icon name="gauge" small />
+                          <span class="col-action-label">{t("{mine} of {total} agents", { mine: sh().mine, total: sh().total })}</span>
+                        </span>
+                      )}
                     </Show>
                     <Show when={col === "queued" && showRun()}>
                       <button

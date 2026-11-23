@@ -107,4 +107,13 @@ export default {
   "{cards} joined the batch": "{cards} entraram no lote",
   "Answer their questions and they start.": "Responda as perguntas e eles começam.",
   "They start as soon as there is room.": "Eles começam assim que houver espaço.",
+  "Questions": "Perguntas",
+  "Analysing": "Analisando",
+  "Run all is going in this repository": "O Run all está rodando neste repositório",
+  "Claude has questions": "O Claude tem perguntas",
+  "The analysis is done. Answer them and the batch can start.": "A análise terminou. Responda e o lote pode começar.",
+  "{n} repositories share the agents": "{n} repositórios dividem os agentes",
+  "{parts}, of {total} at once.": "{parts}, de {total} ao mesmo tempo.",
+  "{repos} starts no new card until it is down to its share; its agents at work finish what they do.": "{repos} não começa card novo até descer à sua parte; os agentes que já trabalham terminam o que fazem.",
+  "A repository with nothing ready lends its share to the others.": "Um repositório sem nada pronto empresta sua parte aos outros.",
 } as Record<string, string>;
