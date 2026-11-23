@@ -2,7 +2,8 @@
 import type { JSX } from "solid-js";
 
 const paths: Record<string, () => JSX.Element> = {
-  mark: () => (<><path d="M4 20V4" /><path d="M4 5h12l-2.5 4L16 13H4" /><path d="M14 20h6" /></>),
+  // Pitlane: the straight and the pit lane leaving and rejoining it (a P), the car in the pit.
+  mark: () => (<><path d="M7 9c0-3 2-5 5-5 3.4 0 6 2.2 6 5s-2.6 5-6 5c-3 0-5 1.5-5 4.5" /><path d="M7 3v18" /><circle cx="18" cy="9" r="1.8" fill="currentColor" stroke="none" /></>),
   needs: () => (<><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>),
   run: () => (<><path d="M21 12a9 9 0 1 1-9-9" /><path d="M12 7v5l3 2" /></>),
   mic: () => (<><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></>),

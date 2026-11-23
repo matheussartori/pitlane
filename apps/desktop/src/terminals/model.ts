@@ -580,7 +580,7 @@ function make(info: TermInfo, run?: string): Live {
     fontSize: st.font,
     fontWeight: "normal",
     fontWeightBold: "bold",
-    lineHeight: 1.3, // Warp-like air between lines (Hack is already tall)
+    lineHeight: 1.35, // Warp-like air between lines (Hack is already tall)
     cursorStyle: "bar",
     cursorWidth: 2,
     cursorInactiveStyle: "outline",

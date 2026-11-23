@@ -148,24 +148,33 @@ export function Sheet(props: {
  *  back, and the end is checked when that scroll runs, not when it was asked for. */
 export function tailFollower(slack = 32) {
   let el: HTMLElement | undefined;
-  let stick = true;
+  // Whether the log follows its end; a signal, so a "Jump to present" can show while it does not.
+  const [stick, setStick] = createSignal(true);
+  // A scroll we made ourselves (to the end) says nothing about where you want to be.
+  let ours = false;
   const atEnd = (e: HTMLElement) => e.scrollHeight - e.scrollTop - e.clientHeight < slack;
+  const toEnd = () => {
+    if (!el) return;
+    ours = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => (ours = false));
+  };
   return {
     ref(node: HTMLElement) {
       el = node;
-      node.addEventListener("scroll", () => (stick = atEnd(node)), { passive: true });
-      node.addEventListener("wheel", (e) => e.deltaY < 0 && (stick = false), { passive: true });
-      node.addEventListener("keydown", (e) => ["ArrowUp", "PageUp", "Home"].includes(e.key) && (stick = false));
+      node.addEventListener("scroll", () => !ours && setStick(atEnd(node)), { passive: true });
+      node.addEventListener("wheel", (e) => e.deltaY < 0 && ((ours = false), setStick(false)), { passive: true });
+      node.addEventListener("keydown", (e) => ["ArrowUp", "PageUp", "Home"].includes(e.key) && ((ours = false), setStick(false)));
     },
+    /** Whether it follows the end now (false once you scrolled up to read). */
+    following: stick,
     /** New lines came: back to the end, if you are still following when the frame is drawn. */
     follow() {
-      requestAnimationFrame(() => {
-        if (el && stick) el.scrollTop = el.scrollHeight;
-      });
+      requestAnimationFrame(() => stick() && toEnd());
     },
-    /** Another log in the same box (another session): follow it from its end. */
+    /** Another log in the same box (another session), or "Jump to present": follow from the end. */
     restart() {
-      stick = true;
+      setStick(true);
       this.follow();
     },
   };

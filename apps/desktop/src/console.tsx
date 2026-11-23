@@ -8,6 +8,7 @@ import { api, isLive, type RunEvent, type RunMeta } from "./api";
 import { plural, t } from "./i18n";
 import { Spinner, toast, tailFollower } from "./ui";
 import { ApprovalBlock } from "./approvals";
+import { Icon } from "./icons";
 import { Prose } from "./prose";
 import { msg } from "./format";
 import { TERMINAL_FACES, terminalPrefs } from "./terminals";
@@ -139,9 +140,12 @@ export function AgentConsole(props: {
   createEffect(on([() => shown().length, () => props.sub], () => tail.follow()));
   // A new session in view: follow it from its end. The prompt takes the keys, unless a question
   // waits: then 1-4 answer it.
+  // Keyed on the id itself: `on` runs whenever the run's record is read anew (every update of
+  // the run), and that pulled you back to the end and took the focus while you read above.
+  const sessionId = createMemo(() => m().id);
   createEffect(
     on(
-      () => m().id,
+      sessionId,
       () => {
         tail.restart();
         requestAnimationFrame(() => (m().waiting.length > 0 ? root?.focus() : input?.focus()));
@@ -289,6 +293,15 @@ export function AgentConsole(props: {
             <For each={m().waiting}>{(a, i) => <ApprovalBlock run={m().id} approval={a} keys={i() === 0} />}</For>
           </div>
         </Show>
+        {/* Floats over the log's end while you read above it; no room taken, so nothing shifts. */}
+        <Show when={!tail.following() && shown().length > 0}>
+          <div class="ag-jump-dock">
+            <button type="button" class="ag-jump" onClick={() => tail.restart()}>
+              <Icon name="chev" small />
+              {t("Jump to present")}
+            </button>
+          </div>
+        </Show>
       </div>
       <div class="ag-input" data-off={live() ? undefined : ""}>
         <Show when={suggestions().length > 0}>
@@ -415,7 +428,12 @@ function Diff(props: { change: { old: string; new: string; cut: number } }) {
 
 /** A screenshot a tool gave back, under its call: a thumbnail that opens full size. */
 function Shot(props: { run: string; file: string }) {
-  const [src] = createResource(() => [props.run, props.file] as const, ([r, f]) => api.runShot(r, f).catch(() => ""));
+  // Keyed by a string, so a fresh record of the run (every update) neither fetches it again nor
+  // closes it while it is open full size.
+  const [src] = createResource(() => `${props.run}\n${props.file}`, (k) => {
+    const [r, f] = k.split("\n") as [string, string];
+    return api.runShot(r, f).catch(() => "");
+  });
   const [big, setBig] = createSignal(false);
   const key = (ev: KeyboardEvent) => ev.key === "Escape" && setBig(false);
   createEffect(() => (big() ? window.addEventListener("keydown", key) : window.removeEventListener("keydown", key)));

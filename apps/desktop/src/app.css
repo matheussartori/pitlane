@@ -345,6 +345,11 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .approval-cmd { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); background: var(--color-paper-sunk); box-shadow: var(--ring); font: var(--weight-regular) var(--text-sm)/1.5 var(--font-mono); color: var(--color-ink); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9lh; overflow: auto; }
 .approval .option code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-ink); }
 .approval .option { white-space: nowrap; }
+/* A permission's answers read as a question's do: rows with a ring, the same in the Inbox and the log. */
+.approval .options { gap: var(--space-2xs); }
+.approval .option { border-radius: var(--radius-md); background: var(--color-paper); box-shadow: var(--ring); color: var(--color-ink-2); text-align: left; }
+.approval .option:hover { background: var(--color-paper-3); color: var(--color-ink); }
+.approval .option-deny, .approval .option-deny:hover { color: var(--color-fail); }
 .approval .option:not(:has(.kbd)) { grid-template-columns: minmax(0, 1fr) auto; }
 .approval .option > span:not(.kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .inbox-approval { display: grid; gap: var(--space-2xs); }
@@ -601,7 +606,7 @@ body[data-resizing] .pane { pointer-events: none; }
 .pane-place { flex: 1; min-width: 0; font-family: var(--font-mono); color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pane-btn { display: inline-grid; place-items: center; flex-shrink: 0; width: 22px; height: 22px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-muted); cursor: pointer; }
 .pane-btn:hover { background: var(--color-paper-3); color: var(--color-ink); }
-.pane-body { grid-row: 2; position: relative; min-width: 0; min-height: 0; padding: 6px var(--space-2xs) var(--space-2xs) 10px; } /* just enough air that the text never touches the edge */
+.pane-body { grid-row: 2; position: relative; min-width: 0; min-height: 0; padding: 12px var(--space-2xs) var(--space-2xs) 16px; } /* Warp's air around the text */
 .pane-host { width: 100%; height: 100%; }
 .pane:not([data-focus]) .pane-host { opacity: 0.78; }
 .split .pane:not([data-focus]) .pane-host:hover { opacity: 1; }
@@ -613,6 +618,8 @@ body[data-resizing] .pane { pointer-events: none; }
 .pane-drop[data-side="center"] { inset: 0; }
 .term-surface { width: 100%; height: 100%; }
 .term-surface .xterm-viewport { scrollbar-width: thin; }
+/* macOS's own text smoothing, as Warp draws it: fuller strokes, soft edges, easy to read for hours. */
+.term-surface .xterm { -webkit-font-smoothing: subpixel-antialiased; }
 
 /* Command blocks, as in Warp (src/blocks.ts): a hairline above each command, a fail stripe and a
  * faint fail tint when it failed, its time and two copies on hover. Never in the way of selecting. */
@@ -858,7 +865,8 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; padding: 0 var(--space-2xs) var(--space-sm); }
 .ag-head { display: flex; align-items: center; gap: var(--space-xs); height: 36px; padding-inline: var(--space-xs) var(--space-2xs); }
 .ag-head .terms-title { flex: none; }
-.ag-working { display: inline-flex; align-items: center; gap: var(--space-3xs); height: 18px; padding-inline: 6px; border-radius: var(--radius-pill); background: var(--color-paper-2); color: var(--color-ink-2); font: var(--weight-strong) var(--text-xs)/1 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A count beside a head: quiet text, never a pill (design.md). */
+.ag-working { display: inline-flex; align-items: center; gap: var(--space-3xs); color: var(--color-muted); font: var(--weight-regular) var(--text-xs)/1 var(--font-body); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ag-working .ag-spin { width: 9px; height: 9px; border-width: 1.5px; }
 .ag-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
 .ag-group + .ag-group { margin-top: var(--space-xs); padding-top: var(--space-xs); border-top: 1px solid var(--color-rule); }
@@ -917,7 +925,14 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-crumb { flex-shrink: 0; border: 0; background: none; padding: 0; color: var(--color-ink-2); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-rule-strong); }
 .ag-bar-meta { flex-shrink: 0; font: var(--text-xs)/1 var(--font-mono); color: var(--color-muted); white-space: pre; }
 .ag-bar-fill { flex: 1; }
-.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) calc(var(--term-size, 14px) - 1px)/1.6 var(--term-face, var(--font-mono)); color: var(--color-term-ink); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; }
+.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) calc(var(--term-size, 14px) - 1px)/1.45 var(--term-face, var(--font-mono)); color: var(--color-term-ink); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; -webkit-font-smoothing: subpixel-antialiased; }
+/* Jump to present: sticks to the log's bottom edge while you read above, as in Discord and Warp. */
+.ag-jump-dock { position: sticky; bottom: 0; height: 0; display: flex; justify-content: center; pointer-events: none; }
+.ag-jump { pointer-events: auto; display: inline-flex; align-items: center; gap: var(--space-2xs); height: 26px; padding-inline: var(--space-xs) var(--space-sm); transform: translateY(calc(-100% - var(--space-sm))); border: 0; border-radius: var(--radius-md); background: var(--color-paper-3); box-shadow: var(--ring), var(--shadow-pop); color: var(--color-ink); font: var(--weight-strong) var(--text-xs)/1 var(--font-body); cursor: pointer; animation: ag-jump-in 200ms ease-out; }
+.ag-jump:hover { background: color-mix(in oklch, var(--color-paper-3), var(--color-ink) 6%); }
+.ag-jump:active { transform: translateY(calc(-100% - var(--space-sm))) scale(.97); }
+.ag-jump .icon { color: var(--color-accent); }
+@keyframes ag-jump-in { from { opacity: 0; } }
 .ag-line { display: block; width: 100%; padding-block: 1px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }
 .ag-text { margin-block: var(--space-2xs); color: var(--color-ink); }
 .ag-tool { color: var(--color-ink-2); }
@@ -1094,7 +1109,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 
 /* ---------------------------------------------------------------- agent sessions, as Claude Code draws them */
 .cc-msg, .cc-call { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); align-items: start; }
-.cc-msg { margin-block: var(--space-xs); }
+.cc-msg { margin-block: 0.8lh; }
 .cc-dot { color: var(--color-ink); line-height: inherit; }
 /* Lines that are not the agent's own (setup, your answers, checks, the end): a glyph in the dot's
  * gutter, the words muted unless they matter. */
@@ -1114,14 +1129,21 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-dot[data-s="fail"] { color: var(--color-fail); }
 .cc-dot[data-s="work"] { color: var(--color-muted); animation: shimmer 1.2s var(--ease-in-out) infinite; }
 .cc-dot[data-s="ended"] { color: var(--color-muted); }
-.cc-text { min-width: 0; max-width: 76ch; color: var(--color-term-ink); font-family: var(--font-body); font-size: 14px; line-height: 1.65; letter-spacing: 0.003em; }
-.cc-text :where(p, ul, pre) { margin: 0 0 var(--space-2xs); }
-.cc-text code { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-accent-text); }
-.cc-text pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: var(--color-paper-2); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; }
-.cc-tool { margin-block: var(--space-2xs); }
+/* The agent's words read as Claude Code's do in Warp: the terminal's own face and size, brighter
+ * than the calls around them, a blank line's worth of air between paragraphs. */
+.cc-text { min-width: 0; max-width: 100ch; color: var(--color-term-ink); }
+.cc-text .prose { font: inherit; color: inherit; max-width: none; }
+.cc-text .prose > * + * { margin-top: 0.7lh; }
+.cc-text .prose li + li { margin-top: 0; }
+.cc-text .prose :where(b, strong), .cc-text .prose .prose-h { color: var(--color-ink); font-weight: 700; }
+.cc-text code, .cc-text .prose code { padding: 0; border-radius: 0; background: none; font: inherit; color: var(--color-term-code); }
+.cc-text .prose .link { color: var(--color-term-code); }
+.cc-text pre, .cc-text .prose pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: var(--color-paper-2); font: inherit; white-space: pre-wrap; }
+.cc-text pre code { color: var(--color-term-ink); }
+.cc-tool { margin-block: 0.8lh; }
 .ag-spawn.cc-call { padding: 0; margin-block: var(--space-2xs); }
 .cc-name { color: var(--color-ink); font-weight: var(--weight-strong); }
-.cc-arg { color: var(--color-muted); overflow-wrap: anywhere; }
+.cc-arg { color: var(--color-ink-2); overflow-wrap: anywhere; }
 .cc-result { padding-inline-start: 1.4em; color: var(--color-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cc-shot { display: flex; gap: var(--space-2xs); padding-inline-start: 1.4em; margin-block: var(--space-2xs); color: var(--color-muted); }
 .cc-shot-thumb { display: block; padding: 0; border: 1px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-paper-2); overflow: hidden; cursor: zoom-in; max-width: min(100%, 420px); }

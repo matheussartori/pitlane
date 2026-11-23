@@ -207,5 +207,6 @@ export default {
   "Open what this subagent did": "Abrir o que este subagente fez",
   "Stopped with an error": "Parou com um erro",
   "Working…": "Trabalhando…",
+  "Jump to present": "Voltar ao presente",
   "stops": "para",
 } as Record<string, string>;
