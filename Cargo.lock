@@ -3045,6 +3045,7 @@ dependencies = [
  "clap",
  "pit-core",
  "pitd",
+ "serde",
  "serde_json",
  "tempfile",
  "terminal_size",

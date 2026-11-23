@@ -12,6 +12,7 @@ path = "src/main.rs"
 pit-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 pitd.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread"] }
