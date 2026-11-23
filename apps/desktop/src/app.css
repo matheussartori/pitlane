@@ -408,6 +408,20 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .diff-finding { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm) var(--space-xs) 40px; font: var(--weight-regular) var(--text-sm)/1.45 var(--font-body); color: var(--color-ink); background: var(--color-paper-2); box-shadow: inset 2px 0 0 var(--color-rule-strong); white-space: normal; cursor: pointer; }
 .diff-finding[data-severity="blocker"], .diff-finding[data-severity="major"] { box-shadow: inset 2px 0 0 var(--color-fail); }
 .diff-finding .check { margin-top: var(--space-3xs); }
+/* Comment on a line, as on GitHub: the line number is the target; a + shows on hover. */
+.line .ln-btn { border: 0; background: none; font: inherit; cursor: pointer; position: relative; }
+.line .ln-btn:hover { color: var(--color-ink); }
+.line .ln-btn:hover::before { content: "+"; position: absolute; left: 4px; color: var(--color-accent-text); }
+.line .ln-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.line[data-noted] .ln { color: var(--color-accent-text); }
+.diff-note { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm) var(--space-xs) 40px; font: var(--weight-regular) var(--text-sm)/1.45 var(--font-body); color: var(--color-ink); background: var(--color-paper-2); box-shadow: inset 2px 0 0 var(--color-accent); white-space: normal; }
+.diff-note > .icon { margin-top: 3px; color: var(--color-accent-text); flex-shrink: 0; }
+.diff-note-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-note .actions { display: flex; gap: var(--space-3xs); }
+.diff-note .actions .btn { height: 22px; padding-inline: var(--space-2xs); font-size: var(--text-xs); }
+.diff-note-edit { display: grid; gap: var(--space-xs); }
+.diff-note-edit .textarea { min-height: 56px; font-size: var(--text-sm); }
+.diff-note-edit .row-actions { justify-content: flex-end; }
 .finding-sev { font-size: var(--text-xs); font-weight: var(--weight-strong); color: var(--color-ink-2); flex-shrink: 0; padding-top: var(--space-3xs); }
 .proofs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2xs); }
 .proof-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--space-xs); align-items: center; font-size: var(--text-sm); }

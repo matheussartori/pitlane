@@ -1,4 +1,11 @@
 export default {
+  "What should change here?": "O que deve mudar aqui?",
+  "Comment": "Comentar",
+  "Comment on line {n}": "Comentar a linha {n}",
+  "Remove": "Remover",
+  "{n} comment on the diff goes along.": "{n} comentário no diff vai junto.",
+  "{n} comments on the diff go along.": "{n} comentários no diff vão junto.",
+  "Your comments. Findings you tick and comments on lines go along.": "Seus comentários. Os achados que você marcar e os comentários nas linhas vão junto.",
   "Allowed once": "Permitido uma vez",
   "Allowed {rule} for this run": "{rule} permitido nesta execução",
   "Allowed {rule} in this repository": "{rule} permitido neste repositório",

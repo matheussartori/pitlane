@@ -1,6 +1,6 @@
 // Review: what the agent did and what the checks found, beside the diff. The verdict leads; the
 // primary action follows the evidence (changes when something fails, approve when all passes).
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, onMount } from "solid-js";
 import { api, type Card, type Finding, type LaneDiff, type RunMeta, type Verification } from "./api";
 import { reviewSummary } from "./cards";
 import { Icon } from "./icons";
@@ -113,8 +113,50 @@ function FindingLine(props: { f: Finding; i: number; picked: boolean; onPick: (i
   );
 }
 
+/** Your comment on one line of the diff; it goes to the agent with the next round. */
+export interface LineNote {
+  file: string;
+  side: "new" | "old";
+  line: number;
+  text: string;
+}
+const noteKey = (file: string, side: string, line: number) => `${file}\0${side}\0${line}`;
+
+/** The composer under a line: ⌘↩ saves, Esc lets go. */
+function NoteEditor(props: { text: string; onSave: (text: string) => void; onCancel: () => void }) {
+  let box!: HTMLTextAreaElement;
+  onMount(() => box.focus());
+  return (
+    <div class="diff-note diff-note-edit">
+      <textarea
+        ref={box}
+        class="input textarea"
+        rows="2"
+        value={props.text}
+        placeholder={t("What should change here?")}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter" && e.metaKey) (e.preventDefault(), props.onSave(box.value));
+          if (e.key === "Escape") (e.preventDefault(), props.onCancel());
+        }}
+      />
+      <div class="row-actions">
+        <button type="button" class="btn btn-ghost" onClick={props.onCancel}>
+          {t("Cancel")}
+        </button>
+        <button type="button" class="btn" onClick={() => props.onSave(box.value)}>
+          {t("Comment")} <span class="kbd">⌘↵</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DiffView(props: {
   diff: LaneDiff;
+  /** Comments on lines, and how to change them (only while the card waits on your review). */
+  notes: LineNote[];
+  onNote?: (file: string, side: "new" | "old", line: number, text: string) => void;
   findings: Finding[];
   picked: Set<number>;
   onPick: (i: number, on: boolean) => void;
@@ -138,6 +180,8 @@ function DiffView(props: {
   const at = (path: string, line: number | undefined) =>
     line == null ? [] : props.findings.map((f, i) => ({ f, i })).filter(({ f }) => f.file === path && f.line === line);
   const [viewed, setViewed] = createSignal(loadViewed(props.viewedKey));
+  const [draft, setDraft] = createSignal<string | null>(null);
+  const noteAt = (file: string, side: string, line: number) => props.notes.find((n) => n.file === file && n.side === side && n.line === line);
   return (
     <div class="review-diff">
       <For each={files()}>
@@ -253,18 +297,60 @@ function DiffView(props: {
                         </div>
                         <div class="lines selectable">
                           <For each={h.lines}>
-                            {(l) => (
+                            {(l) => {
+                              const side = l.new != null ? "new" : "old";
+                              const n = l.new ?? l.old;
+                              const key = n == null ? "" : noteKey(f.path, side, n);
+                              const note = () => (n == null ? undefined : noteAt(f.path, side, n));
+                              return (
                               <>
-                                <div class={`line ${l.kind === "add" ? "add" : l.kind === "del" ? "del" : ""}`}>
-                                  <span class="ln">{l.new ?? l.old ?? ""}</span>
+                                <div class={`line ${l.kind === "add" ? "add" : l.kind === "del" ? "del" : ""}`} data-noted={note() ? "" : undefined}>
+                                  <Show when={props.onNote && n != null} fallback={<span class="ln">{n ?? ""}</span>}>
+                                    <button type="button" class="ln ln-btn" title={t("Comment on line {n}", { n: n! })} aria-label={t("Comment on line {n}", { n: n! })} onClick={() => setDraft(key)}>
+                                      {n}
+                                    </button>
+                                  </Show>
                                   <span class="sign">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}</span>
                                   <span>{l.text}</span>
                                 </div>
                                 <For each={at(f.path, l.new)}>
                                   {({ f: fi, i }) => <FindingLine f={fi} i={i} picked={props.picked.has(i)} onPick={props.onPick} />}
                                 </For>
+                                <Show
+                                  when={draft() === key && key}
+                                  fallback={
+                                    <Show when={note()}>
+                                      {(nt) => (
+                                        <div class="diff-note">
+                                          <Icon name="note" small />
+                                          <span class="diff-note-text">{nt().text}</span>
+                                          <Show when={props.onNote}>
+                                            <span class="actions">
+                                              <button type="button" class="btn btn-ghost" onClick={() => setDraft(key)}>
+                                                {t("Edit")}
+                                              </button>
+                                              <button type="button" class="btn btn-ghost" onClick={() => props.onNote!(f.path, side, n!, "")}>
+                                                {t("Remove")}
+                                              </button>
+                                            </span>
+                                          </Show>
+                                        </div>
+                                      )}
+                                    </Show>
+                                  }
+                                >
+                                  <NoteEditor
+                                    text={note()?.text ?? ""}
+                                    onCancel={() => setDraft(null)}
+                                    onSave={(text) => {
+                                      props.onNote!(f.path, side, n!, text.trim());
+                                      setDraft(null);
+                                    }}
+                                  />
+                                </Show>
                               </>
-                            )}
+                              );
+                            }}
                           </For>
                         </div>
                       </>
@@ -314,6 +400,31 @@ export function ReviewScreen(props: {
   const placed = createMemo(() => anchors(parsePatch(okLatest(diff)?.patch ?? ""), findings()));
   const [picked, setPicked] = createSignal<Set<number>>(new Set());
   const [note, setNote] = createSignal("");
+  // Comments on lines, kept per card until they are sent (leaving the screen does not lose them).
+  const notesKey = () => `pitlane.review.${props.card?.id}.notes`;
+  const readNotes = (): LineNote[] => {
+    try {
+      return JSON.parse(localStorage.getItem(notesKey()) ?? "[]") as LineNote[];
+    } catch {
+      return [];
+    }
+  };
+  const [lineNotes, setLineNotesSig] = createSignal<LineNote[]>(readNotes());
+  createEffect(on(() => props.card?.id, () => setLineNotesSig(readNotes()), { defer: true }));
+  const setLineNotes = (v: LineNote[]) => {
+    setLineNotesSig(v);
+    try {
+      if (v.length) localStorage.setItem(notesKey(), JSON.stringify(v));
+      else localStorage.removeItem(notesKey());
+    } catch {
+      /* private window: kept for this visit only */
+    }
+  };
+  const comment = (file: string, side: "new" | "old", line: number, text: string) => {
+    const rest = lineNotes().filter((n) => !(n.file === file && n.side === side && n.line === line));
+    setLineNotes(text ? [...rest, { file, side, line, text }] : rest);
+    if (text) setAsking(true);
+  };
   const [asking, setAsking] = createSignal(false);
   const [busy, setBusy] = createSignal<string | null>(null);
   const summary = () => reviewSummary(props.run);
@@ -332,7 +443,10 @@ export function ReviewScreen(props: {
   const message = () => {
     const fs = findings().filter((_, i) => picked().has(i));
     const lines = fs.map((f) => `- ${f.file ? `${f.file}${f.line ? `:${f.line}` : ""}: ` : ""}${f.text}`);
-    return [note().trim(), lines.length ? `From the review:\n${lines.join("\n")}` : ""].filter(Boolean).join("\n\n");
+    const mine = [...lineNotes()]
+      .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+      .map((n) => `- ${n.file}:${n.line}${n.side === "old" ? " (a removed line)" : ""}: ${n.text}`);
+    return [note().trim(), mine.length ? `On the diff:\n${mine.join("\n")}` : "", lines.length ? `From the review:\n${lines.join("\n")}` : ""].filter(Boolean).join("\n\n");
   };
 
   async function act(action: "approve" | "changes" | "discard") {
@@ -345,6 +459,7 @@ export function ReviewScreen(props: {
         toast({ tone: "done", title: t("#{id} is in line for {to}", { id: c.id, to: r.shipped_to ?? t("its next stage") }), body: t("The merge queue ships it next; the card moves when it lands.") });
       if (action === "discard") toast({ tone: "done", title: t("#{id} is ready again", { id: c.id }), body: t("Its lane stays as it is.") });
       props.onChanged();
+      if (action === "changes") setLineNotes([]);
       if (action === "changes" && r.run) props.onOpenRun(r.run.id);
       else props.onBack();
     } catch (e) {
@@ -453,6 +568,8 @@ export function ReviewScreen(props: {
                     <DiffView
                       diff={d()}
                       findings={findings()}
+                      notes={lineNotes()}
+                      onNote={c().state === "review" ? comment : undefined}
                       picked={picked()}
                       onPick={pick}
                       viewedKey={`${c().id}.${d().head.slice(0, 12)}`}
@@ -563,13 +680,18 @@ export function ReviewScreen(props: {
                   <textarea
                     class="input textarea"
                     rows="4"
-                    placeholder={t("Your comments. Findings you tick go along.")}
+                    placeholder={t("Your comments. Findings you tick and comments on lines go along.")}
                     value={note()}
                     onInput={(e) => setNote(e.currentTarget.value)}
                   />
                   <Show when={picked().size > 0}>
                     <p class="side-hint">
                       {plural(picked().size, "{n} finding goes along.", "{n} findings go along.")}
+                    </p>
+                  </Show>
+                  <Show when={lineNotes().length > 0}>
+                    <p class="side-hint">
+                      {plural(lineNotes().length, "{n} comment on the diff goes along.", "{n} comments on the diff go along.")}
                     </p>
                   </Show>
                   <div class="row-actions">
