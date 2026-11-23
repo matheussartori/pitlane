@@ -72,6 +72,6 @@ pub(crate) fn term_list(terms: tauri::State<'_, term::Terms>) -> Vec<term::TermI
 }
 
 #[tauri::command]
-pub(crate) fn term_buffer(terms: tauri::State<'_, term::Terms>, id: u32) -> CmdResult<String> {
+pub(crate) fn term_buffer(terms: tauri::State<'_, term::Terms>, id: u32) -> CmdResult<term::Kept> {
     terms.buffer(id).map_err(|e| format!("{e:#}"))
 }

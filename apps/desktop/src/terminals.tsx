@@ -608,8 +608,13 @@ let started = false;
 export async function startTerminals() {
   if (started) return;
   started = true;
+  // Terminals being drawn again from their kept output: what arrives meanwhile waits, and only
+  // what the kept output does not hold yet is written after it.
+  const restoring = new Map<number, [string, number][]>();
   await onTerm(
-    (id, data) => {
+    (id, data, seq) => {
+      const waiting = restoring.get(id);
+      if (waiting) return void waiting.push([data, seq]);
       live.get(id)?.term.write(data);
       output(id);
     },
@@ -632,7 +637,17 @@ export async function startTerminals() {
   let existing: TermInfo[] = [];
   try {
     existing = await terms.list();
-    for (const t of existing) make(t).term.write(await terms.buffer(t.id));
+    for (const t of existing) {
+      restoring.set(t.id, []);
+      try {
+        const term = make(t).term;
+        const kept = await terms.buffer(t.id);
+        term.write(kept.text);
+        for (const [data, seq] of restoring.get(t.id) ?? []) if (seq > kept.seq) term.write(data);
+      } finally {
+        restoring.delete(t.id);
+      }
+    }
   } catch {
     /* no backend: no terminals */
   }

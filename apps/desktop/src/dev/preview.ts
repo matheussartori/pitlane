@@ -235,7 +235,7 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
         { id: 2, cwd: "/Users/you/.pitlane/wt/demo/fix-avatar-svg", label: "fix/avatar-svg", exited: null },
       ] as T;
     case "term_buffer":
-      return "\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m git status --short\r\n M src/kart/drift.ts\r\n?? notes.md\r\n\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m npm test\r\n\r\n> demo@0.1.0 test\r\n> vitest run\r\n\r\n \x1b[32m✓\x1b[0m src/kart/drift.test.ts (4 tests) 12ms\r\n\r\n Test Files  \x1b[32m1 passed\x1b[0m (1)\r\n      Tests  \x1b[32m4 passed\x1b[0m (4)\r\n\r\n\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m " as T;
+      return { seq: 0, text: "\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m git status --short\r\n M src/kart/drift.ts\r\n?? notes.md\r\n\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m npm test\r\n\r\n> demo@0.1.0 test\r\n> vitest run\r\n\r\n \x1b[32m✓\x1b[0m src/kart/drift.test.ts (4 tests) 12ms\r\n\r\n Test Files  \x1b[32m1 passed\x1b[0m (1)\r\n      Tests  \x1b[32m4 passed\x1b[0m (4)\r\n\r\n\x1b[38;5;244m~/demo\x1b[0m main \x1b[38;5;214m❯\x1b[0m " } as T;
     case "term_open":
       return { id: nextTerm++, cwd: (args as { cwd: string }).cwd, label: (args as { label: string }).label, exited: null } as T;
     case "term_write":

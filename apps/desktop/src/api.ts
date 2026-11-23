@@ -472,7 +472,8 @@ export const terms = {
   resize: (id: number, cols: number, rows: number) => invoke<void>("term_resize", { id, cols, rows }),
   close: (id: number) => invoke<void>("term_close", { id }),
   list: () => invoke<TermInfo[]>("term_list"),
-  buffer: (id: number) => invoke<string>("term_buffer", { id }),
+  /** The terminal's recent output, and the number of the last piece it holds (see onTerm). */
+  buffer: (id: number) => invoke<{ text: string; seq: number }>("term_buffer", { id }),
 };
 
 /** A web link in the person's browser (http and https only). */
@@ -515,9 +516,9 @@ export async function onVscodeReady(cb: (folder: string) => void): Promise<() =>
 
 
 /** Terminal output and exits. Nothing in the browser preview. */
-export async function onTerm(onData: (id: number, data: string) => void, onExit: (id: number, code: number) => void): Promise<() => void> {
+export async function onTerm(onData: (id: number, data: string, seq: number) => void, onExit: (id: number, code: number) => void): Promise<() => void> {
   if (!inTauri) return () => {};
-  const a = await listen<{ id: number; data: string }>("term-data", (e) => onData(e.payload.id, e.payload.data));
+  const a = await listen<{ id: number; data: string; seq: number }>("term-data", (e) => onData(e.payload.id, e.payload.data, e.payload.seq));
   const b = await listen<{ id: number; code: number }>("term-exit", (e) => onExit(e.payload.id, e.payload.code));
   return () => {
     a();

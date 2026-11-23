@@ -21,7 +21,8 @@ pub struct Program {
 
 /// Where a terminal's output and exit go: the app's events, or a test.
 pub enum Out {
-    Data(u32, String),
+    /// Output, and its number in the terminal's sequence (see `Kept`).
+    Data(u32, String, u64),
     Exit(u32, u32),
 }
 
@@ -32,7 +33,7 @@ pub fn app_sink(app: &AppHandle) -> Sink {
     let app = app.clone();
     Arc::new(move |o| {
         let _ = match o {
-            Out::Data(id, data) => app.emit("term-data", DataOut { id, data }),
+            Out::Data(id, data, seq) => app.emit("term-data", DataOut { id, data, seq }),
             Out::Exit(id, code) => app.emit("term-exit", ExitOut { id, code }),
         };
     })
@@ -47,7 +48,7 @@ struct Term {
     /// and that must never block the app (writes keep their order through the channel).
     writer: std::sync::mpsc::Sender<Vec<u8>>,
     child: Box<dyn Child + Send + Sync>,
-    buffer: Arc<Mutex<String>>,
+    buffer: Arc<Mutex<Kept>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +73,16 @@ pub struct Terms {
 struct DataOut {
     id: u32,
     data: String,
+    seq: u64,
+}
+
+/// What a terminal printed lately, kept for a window that reloads, and how many pieces of
+/// output it has sent so far. A reload reads both at once: output numbered past `seq` is not
+/// in `text` yet, output up to it is, so nothing shows twice or goes missing.
+#[derive(Default, Clone, Serialize)]
+pub struct Kept {
+    pub text: String,
+    pub seq: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -150,7 +161,7 @@ impl Terms {
             *n
         };
         let info = TermInfo { id, session, cwd: cwd.to_owned(), label: label.to_owned(), exited: None };
-        let buffer = Arc::new(Mutex::new(String::new()));
+        let buffer = Arc::new(Mutex::new(Kept::default()));
 
         // Output: bytes into text, an incomplete UTF-8 sequence carried to the next read.
         let (out, buf2) = (Arc::clone(&sink), Arc::clone(&buffer));
@@ -173,16 +184,19 @@ impl Terms {
                 if text.is_empty() {
                     continue;
                 }
-                {
-                    let mut b = buf2.lock().unwrap();
+                let seq = {
+                    let mut k = buf2.lock().unwrap();
+                    let b = &mut k.text;
                     b.push_str(&text);
                     if b.len() > KEEP_BYTES {
                         let cut = b.len() - KEEP_BYTES;
                         let at = (cut..b.len()).find(|i| b.is_char_boundary(*i)).unwrap_or(b.len());
                         b.drain(..at);
                     }
-                }
-                out(Out::Data(id, text));
+                    k.seq += 1;
+                    k.seq
+                };
+                out(Out::Data(id, text, seq));
             }
         });
 
@@ -233,7 +247,7 @@ impl Terms {
         v
     }
 
-    pub fn buffer(&self, id: u32) -> Result<String> {
+    pub fn buffer(&self, id: u32) -> Result<Kept> {
         let all = self.all.lock().unwrap();
         let t = all.get(&id).context("that terminal is gone")?;
         Ok(t.buffer.lock().unwrap().clone())
@@ -308,7 +322,7 @@ mod tests {
         let exited = Arc::new(Mutex::new(None));
         let (s2, e2) = (Arc::clone(&seen), Arc::clone(&exited));
         let sink: Sink = Arc::new(move |o| match o {
-            Out::Data(_, d) => s2.lock().unwrap().push_str(&d),
+            Out::Data(_, d, _) => s2.lock().unwrap().push_str(&d),
             Out::Exit(_, c) => *e2.lock().unwrap() = Some(c),
         });
         let dir = std::env::temp_dir();
@@ -324,7 +338,7 @@ mod tests {
             f()
         };
         assert!(until(&|| seen.lock().unwrap().contains("pit42lane")), "{}", seen.lock().unwrap());
-        assert!(terms.buffer(t.id).unwrap().contains("pit42lane"), "kept for a reload");
+        assert!(terms.buffer(t.id).unwrap().text.contains("pit42lane"), "kept for a reload");
         if std::env::var("SHELL").is_ok_and(|s| s.ends_with("/zsh")) {
             // Command marks around each command, and the shell ends up with your own ZDOTDIR.
             assert!(until(&|| seen.lock().unwrap().contains("\x1b]133;D;0\x07")), "{:?}", seen.lock().unwrap());
@@ -354,7 +368,7 @@ mod tests {
         let seen = Arc::new(Mutex::new(String::new()));
         let s2 = Arc::clone(&seen);
         let sink: Sink = Arc::new(move |o| {
-            if let Out::Data(_, d) = o {
+            if let Out::Data(_, d, _) = o {
                 s2.lock().unwrap().push_str(&d)
             }
         });
