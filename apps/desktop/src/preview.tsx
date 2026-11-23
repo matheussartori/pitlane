@@ -13,8 +13,27 @@ import { msg } from "./format";
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const KEY = "pitlane.preview.url";
 
-const show = (url: string, r: DOMRect) => invoke<void>("preview_show", { url, x: r.left, y: r.top, w: r.width, h: r.height });
-const hide = () => invoke<void>("preview_hide").catch(() => {});
+// What the page was last told: any DOM change asks to place it again (a sheet may have opened),
+// and only a real change goes to the backend.
+let placed = "";
+const show = async (url: string, r: DOMRect) => {
+  const key = `${url} ${r.left} ${r.top} ${r.width} ${r.height}`;
+  if (key === placed) return;
+  placed = key;
+  try {
+    await invoke<void>("preview_show", { url, x: r.left, y: r.top, w: r.width, h: r.height });
+  } catch (e) {
+    placed = "";
+    throw e;
+  }
+};
+const hide = () => {
+  if (placed === "hidden") return Promise.resolve();
+  placed = "hidden";
+  return invoke<void>("preview_hide").catch(() => {
+    placed = "";
+  });
+};
 const reload = () => invoke<void>("preview_reload").catch(() => {});
 
 /** http://localhost:5173 from "localhost:5173", ":5173" or "5173". */

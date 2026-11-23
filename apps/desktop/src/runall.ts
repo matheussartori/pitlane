@@ -59,6 +59,8 @@ interface Batch {
   /** Bumped by Stop, the end and a new session: every await checks it is still the same one. */
   token: number;
   advancing: boolean;
+  /** Asked to advance while it was: one more pass when this one ends (with the cards the API key was allowed for). */
+  rerun: number[] | null;
   /** It has cards ready and fewer agents than its share: the others leave it the free ones. */
   hungry: boolean;
   tick: number | null;
@@ -153,6 +155,7 @@ export function createRunAll(shell: Shell) {
       again: new Map(),
       token: 0,
       advancing: false,
+      rerun: null,
       hungry: false,
       tick: null,
       cards: [],
@@ -432,7 +435,13 @@ export function createRunAll(shell: Shell) {
 
   /** Starts every Queued card that can start now: no open question, nothing that must land first, nothing it would collide with, and room for it. */
   async function advance(b: Batch, allowApiKeyFor: number[] = []) {
-    if (b.phase() !== "working" || b.advancing || !batches().includes(b)) return;
+    if (b.phase() !== "working" || !batches().includes(b)) return;
+    // A trigger that comes mid-pass (a card landed, agents freed, the API key allowed) is not
+    // dropped until the next tick: the pass runs once more when this one ends.
+    if (b.advancing) {
+      b.rerun = [...(b.rerun ?? []), ...allowApiKeyFor];
+      return;
+    }
     const token = b.token;
     const { into, direct } = b.choice;
     b.advancing = true;
@@ -572,6 +581,9 @@ export function createRunAll(shell: Shell) {
       }
     } finally {
       b.advancing = false;
+      const again = b.rerun;
+      b.rerun = null;
+      if (again && alive(b, token)) void advance(b, again);
     }
   }
 

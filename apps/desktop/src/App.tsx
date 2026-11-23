@@ -28,7 +28,7 @@ import { Toasts, dismissable, installTips, toast } from "./ui";
 import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
 import { msg } from "./format";
-import { cards, dropCardPoll, dropLoads, error, fetchedAt, fetching, jobs, load, loadCards, loadQueue, loadReports, loadRuns, problems, queueAll, dequeue, quota, reports, repo, runs, setCards, setError, setFetchedAt, setFetching, setProblems, setRepo, setRuns, setYard, yard } from "./store/repo";
+import { cards, dropCardPoll, dropLoads, error, fetchedAt, fetching, jobs, load, loadCards, loadQueue, loadReports, loadRuns, problems, queueAll, dequeue, quota, reports, repo, runs, setCards, setError, setFetchedAt, setFetching, setJobs, setProblems, setQuota, setRepo, setReports, setRuns, setYard, yard } from "./store/repo";
 import { createRunAll, batchIds, phaseIn, agentShare } from "./runall";
 import { shortcuts } from "./shortcuts";
 
@@ -176,7 +176,7 @@ export default function App() {
   // VS Code's own folder picker offers the repository and the lanes' worktrees.
   createEffect(() => {
     const r = repo();
-    if (r) setCodePlaces(r, current()?.name ?? "repository", yard()?.lanes ?? [], yard()?.head);
+    if (r) setCodePlaces(r, current()?.name ?? t("repository"), yard()?.lanes ?? [], yard()?.head);
   });
 
   async function terminalIn(lane: Lane | undefined) {
@@ -184,7 +184,7 @@ export default function App() {
     if (!path) return;
     const ok = lane?.worktree
       ? await openTerminal(lane.worktree.path, lane.branch)
-      : await openTerminal(path, current()?.name ?? "repository");
+      : await openTerminal(path, current()?.name ?? t("repository"));
     if (ok) setTab("terminal");
   }
 
@@ -255,12 +255,16 @@ export default function App() {
     setYard(null);
     setCards(null);
     setRuns(null);
+    // Nothing of the last repository stays on screen while this one's loads.
+    setJobs([]);
+    setQuota(null);
+    setReports(null);
     setProblems([]);
     setError(null);
     setFetchedAt(null);
     setSelected(null);
     setFetching(false);
-    void api.selectRepo(path);
+    void api.selectRepo(path).catch(() => {});
     void loadCards();
     void loadRuns();
     void loadQueue();
@@ -751,7 +755,7 @@ export default function App() {
             fallback={
               <SettingsScreen
                 repo={repo()}
-                repoName={current()?.name ?? "repository"}
+                repoName={current()?.name ?? t("repository")}
                 repos={settings().repos}
                 onAddRepo={addRepo}
                 onReposChanged={async () => {
@@ -938,10 +942,10 @@ export default function App() {
                   <PreviewScreen onTerminal={() => void terminalHere()} />
                 </Match>
                 <Match when={tab() === "code"}>
-                  <CodeScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />
+                  <CodeScreen repo={path()} repoName={current()?.name ?? t("repository")} lanes={yard()?.lanes ?? []} />
                 </Match>
                 <Match when={tab() === "terminal"}>
-                  <TerminalScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} onOpenRun={openRun} />
+                  <TerminalScreen repo={path()} repoName={current()?.name ?? t("repository")} lanes={yard()?.lanes ?? []} onOpenRun={openRun} />
                 </Match>
               </Switch>
             )}

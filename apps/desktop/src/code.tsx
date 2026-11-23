@@ -72,10 +72,10 @@ if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) void liste
 /** VS Code's workbench colours from the design tokens, for one scheme. */
 function colours(): Record<string, string> {
   const cs = getComputedStyle(document.documentElement);
-  const t = (n: string) => cssHex(cs.getPropertyValue(n).trim());
-  const paper = t("--color-paper"), paper2 = t("--color-paper-2"), paper3 = t("--color-paper-3"), sunk = t("--color-paper-sunk");
-  const rule = t("--color-rule"), ruleStrong = t("--color-rule-strong"), ink = t("--color-ink"), ink2 = t("--color-ink-2"), muted = t("--color-muted");
-  const accent = t("--color-accent"), accentInk = t("--color-accent-ink"), accentText = t("--color-accent-text"), focus = t("--color-focus");
+  const tok = (n: string) => cssHex(cs.getPropertyValue(n).trim());
+  const paper = tok("--color-paper"), paper2 = tok("--color-paper-2"), paper3 = tok("--color-paper-3"), sunk = tok("--color-paper-sunk");
+  const rule = tok("--color-rule"), ruleStrong = tok("--color-rule-strong"), ink = tok("--color-ink"), ink2 = tok("--color-ink-2"), muted = tok("--color-muted");
+  const accent = tok("--color-accent"), accentInk = tok("--color-accent-ink"), accentText = tok("--color-accent-text"), focus = tok("--color-focus");
   return {
     foreground: ink2,
     descriptionForeground: muted,

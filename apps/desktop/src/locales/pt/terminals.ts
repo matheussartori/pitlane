@@ -1,4 +1,5 @@
 export default {
+  "the shell exited with {code}": "o shell saiu com {code}",
   "line {n}": "linha {n}",
   "lines {from} to {to}": "linhas {from} a {to}",
   "In `{file}`, {lines}, {where}:": "Em `{file}`, {lines}, {where}:",

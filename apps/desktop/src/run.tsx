@@ -103,7 +103,10 @@ export function RunScreen(props: {
           if (gone) return unlisten();
           off = unlisten;
           try {
-            add(await api.runTimeline(id));
+            const tl = await api.runTimeline(id);
+            // Another run opened meanwhile: its map is not this one's.
+            if (gone) return;
+            add(tl);
             if (props.meta && isLive(props.meta.state)) await api.runFollow(id, 0);
           } catch (e) {
             setError(msg(e));

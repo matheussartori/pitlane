@@ -202,7 +202,7 @@ function General() {
           <Toggle id="r-adaptive" label="Fit to this Mac" on={prefs().adaptive_agents} onChange={(v) => save({ adaptive_agents: v })} />
         </Row>
       </Group>
-      <Group title={t("Language")}>
+      <Group title="Language">
         <Row label={t("Pitlane’s language")} help={t("Menus, buttons and messages. System follows this Mac.")} for="l-ui">
           <select id="l-ui" class="select" value={prefs().ui_language} onChange={(e) => save({ ui_language: e.currentTarget.value })}>
             <option value="system">{t("System default")}</option>

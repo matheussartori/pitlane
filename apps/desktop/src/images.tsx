@@ -88,12 +88,13 @@ function src(repo: string, id: number, file: string) {
 }
 
 function Thumb(props: { repo: string; id: number; file: string; busy: boolean; onOpen: (url: string) => void; onRemove: () => void }) {
-  const [url] = createResource(() => src(props.repo, props.id, props.file));
+  // An image that cannot be read shows as its name, never as a render error.
+  const [url] = createResource(() => src(props.repo, props.id, props.file).catch(() => null));
   return (
     <li class="img-thumb">
       <button type="button" class="img-open" title={props.file} onClick={() => url() && props.onOpen(url()!)}>
-        <Show when={url()} fallback={<Spinner />}>
-          <img src={url()} alt={props.file} />
+        <Show when={url()} fallback={url.loading ? <Spinner /> : <span class="img-missing">{props.file}</span>}>
+          <img src={url() ?? undefined} alt={props.file} />
         </Show>
       </button>
       <button type="button" class="btn btn-ghost btn-icon img-remove" aria-label={t("Remove {name}", { name: props.file })} disabled={props.busy} onClick={props.onRemove}>

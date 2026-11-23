@@ -468,8 +468,12 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Done; onSub: (id: string)
         </div>
       );
     case "tool": {
-      const d = props.done;
-      const dot = () => (d ? (d.ok ? "ok" : "fail") : live() ? "work" : "ended");
+      // Read through props each time: the result arrives after the call is drawn.
+      const d = () => props.done;
+      const dot = () => {
+        const r = d();
+        return r ? (r.ok ? "ok" : "fail") : live() ? "work" : "ended";
+      };
       if (e.name === "Task" || e.name === "Agent")
         return (
           <button type="button" class="ag-line ag-spawn cc-call" title={t("Open what this subagent did")} onClick={() => props.onSub(e.id)}>
@@ -492,7 +496,7 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Done; onSub: (id: string)
             </span>
           </div>
           <Show when={e.change}>{(c) => <Diff change={c()} />}</Show>
-          <Show when={d} fallback={<Show when={live()}><div class="cc-result ag-muted">⎿  {t("Running…")}</div></Show>}>
+          <Show when={d()} fallback={<Show when={live()}><div class="cc-result ag-muted">⎿  {t("Running…")}</div></Show>}>
             {(d) => <div class={`cc-result ${d().ok ? "ag-muted" : "ag-fail"}`}>⎿  {resultLine(e.name, d())}</div>}
           </Show>
         </div>

@@ -78,7 +78,8 @@ export async function loadRuns() {
     setRuns(r);
     for (const m of r) if (isLive(m.state)) void api.runFollow(m.id, 0).catch(() => {});
   } catch {
-    if (gen === runsGen && path === repo()) setRuns([]);
+    // Keep what was last read (the daemon may be restarting): an empty list would tell Run all
+    // that nothing runs, and it would act on cards that are still working. The next poll retries.
     return;
   }
   // The quota is its own call: when it fails, the runs just read stay on screen.
@@ -95,14 +96,16 @@ export const [jobs, setJobs] = createSignal<ShipJob[]>([]);
 let jobsGen = 0;
 // Run all's reports, read when the screen opens and when a batch ends.
 export const [reports, setReports] = createSignal<Report[] | null>(null);
+let reportsGen = 0;
 export async function loadReports() {
   const path = repo();
   if (!path) return;
+  const gen = ++reportsGen;
   try {
     const r = await api.reports(path);
-    if (path === repo()) setReports(r);
+    if (gen === reportsGen && path === repo()) setReports(r);
   } catch {
-    if (path === repo()) setReports([]);
+    if (gen === reportsGen && path === repo()) setReports([]);
   }
 }
 
@@ -132,7 +135,7 @@ export async function loadQueue() {
       void loadCards();
     }
   } catch {
-    if (gen === jobsGen) setJobs([]);
+    // Kept, as the runs are: a failed read is not an empty queue.
   }
 }
 export async function queueAll(lanes: Lane[], to: string) {

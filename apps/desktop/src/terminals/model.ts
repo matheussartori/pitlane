@@ -678,7 +678,7 @@ export async function startTerminals() {
         closePane(id);
         return;
       }
-      live.get(id)?.term.write(`\r\n\x1b[2m[the shell exited with ${code}]\x1b[0m\r\n`);
+      live.get(id)?.term.write(`\r\n\x1b[2m[${t("the shell exited with {code}", { code: String(code) })}]\x1b[0m\r\n`);
       setMeta(id, { status: "exited", exit: code });
     },
   );

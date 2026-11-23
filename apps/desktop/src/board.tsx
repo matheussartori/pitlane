@@ -1,5 +1,5 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
-import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { api, isLive, type Card, type Plan, type RunMeta, type Yard } from "./api";
 import { elapsed } from "./run";
 import { columnEmpty, columnIcon, columnTitle, columns, latestRun, movesFor, place, reviewSummary, unblockActions, type Column, type Move, type UnblockAction } from "./cards";
@@ -530,13 +530,17 @@ export function BoardView(props: {
       setDrag({ ...d, px: ev.clientX, py: ev.clientY, live: true, over: columnAt(ev.clientX) });
       if (!scrolling) scrolling = requestAnimationFrame(autoscroll);
     };
-    const up = (ev: PointerEvent) => {
+    const end = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       cancelAnimationFrame(scrolling);
       scrolling = 0;
       drop();
+      endDrag = null;
+    };
+    const up = (ev: PointerEvent) => {
+      end();
       const d = drag();
       setDrag(null);
       if (!d?.live) return;
@@ -552,10 +556,15 @@ export function BoardView(props: {
       if (d.over === d.col) moveTo(d.col, d.id, index);
       else void moveAcross(d.id, d.over, index);
     };
+    endDrag?.();
+    endDrag = end;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
   }
+  // The Board closing mid-drag (another tab, another repository) takes the drag with it.
+  let endDrag: (() => void) | null = null;
+  onCleanup(() => endDrag?.());
 
   /** The line that shows where the dragged card would land: before or after which card. */
   const gapMark = (col: Column, id: number): "before" | "after" | undefined => {
