@@ -764,6 +764,7 @@ export default function App() {
       if ((runs() ?? []).some((r) => isLive(r.state)) || Date.now() - now() >= 30_000) setNow(Date.now());
     }, 1000);
     let offRun = () => {};
+    let unmounted = false;
     void onRun(
       (run, _i, e) => {
         if (e.kind !== "approval" && e.kind !== "decided") return;
@@ -790,7 +791,11 @@ export default function App() {
         if (done.length === 1) void say(t("#{card} {title} is ready for review", { card: m.card, title: m.card_title }), t("The agent finished. Its checks and the review are waiting in Pitlane."));
         else void say(t("All {n} lanes finished", { n: done.length }), done.map((d) => `#${d.card} ${d.card_title}`).join(" · "));
       },
-    ).then((off) => (offRun = off));
+    ).then((off) => {
+      // Unmounted before the listener came back: let it go at once.
+      if (unmounted) off();
+      else offRun = off;
+    });
     const onHash = () => {
       const r = runFromHash();
       setRunView(r);
@@ -860,6 +865,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     onCleanup(() => {
       clearInterval(tick);
+      unmounted = true;
       offRun();
       window.removeEventListener("hashchange", onHash);
       window.removeEventListener("pitlane-show-code", onShowCode);

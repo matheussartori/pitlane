@@ -256,6 +256,12 @@ pub fn project_diff(repo: &Repo, branch: &str, related: &[crate::related::Relate
 /// worktree and commits that, so the drop is in the lane's history. Refuses when the lane moved
 /// since `head`, or the file has uncommitted edits. Returns the new head.
 pub fn drop_hunk(repo: &Repo, branch: &str, base: &str, head: &str, file: &str, hunk_header: &str) -> Result<String> {
+    // Commits only, never options: a value starting with '-' would be read as a flag by git.
+    for (what, rev) in [("base", base), ("head", head)] {
+        if rev.is_empty() || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
+            anyhow::bail!("{what} {rev:?} is not a commit");
+        }
+    }
     let wt = crate::actions::ensure_worktree(repo, branch)?;
     let g = crate::git::Git::new(&wt);
     let now = g.run(&["rev-parse", "HEAD"])?;
@@ -285,7 +291,8 @@ pub fn drop_hunk(repo: &Repo, branch: &str, base: &str, head: &str, file: &str, 
         .with_context(|| format!("that change is no longer in {file}"))?;
     let patch = format!("{header}{hunk}");
     g.run_stdin(&["apply", "-R", "--index", "--whitespace=nowarn", "-"], &patch).context("git could not take that change out cleanly")?;
-    g.run(&["commit", "-q", "-m", &format!("review: drop a change in {file}")])?;
+    // Only this file goes into the commit, whatever else was staged in the worktree.
+    g.run(&["commit", "-q", "-m", &format!("review: drop a change in {file}"), "--", file])?;
     g.run(&["rev-parse", "HEAD"])
 }
 

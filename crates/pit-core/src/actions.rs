@@ -59,6 +59,15 @@ pub struct NewReport {
     pub setup_ok: Option<bool>,
 }
 
+/// Refuses what git would not take as a branch name, a name starting with '-' (an option to
+/// every git command it reaches) among them. Names can come from a card, which agents edit.
+pub fn check_branch(repo: &Repo, branch: &str) -> Result<()> {
+    if branch.starts_with('-') || repo.git.raw(&["check-ref-format", "--branch", branch])?.0 != 0 {
+        bail!("{branch:?} is not a valid branch name");
+    }
+    Ok(())
+}
+
 pub fn new_lane(repo: &Repo, branch: &str, opts: NewOptions) -> Result<NewReport> {
     new_lane_from(repo, branch, opts, None)
 }
@@ -68,9 +77,7 @@ pub fn new_lane(repo: &Repo, branch: &str, opts: NewOptions) -> Result<NewReport
 pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&str>) -> Result<NewReport> {
     let flow = &repo.flow.flow;
     let from = from.filter(|f| !flow.is_trunk(f));
-    if repo.git.raw(&["check-ref-format", "--branch", branch])?.0 != 0 {
-        bail!("{branch:?} is not a valid branch name");
-    }
+    check_branch(repo, branch)?;
     if flow.is_trunk(branch) {
         bail!("{branch} is a trunk branch of this flow, not a lane");
     }
@@ -172,6 +179,8 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
 /// branch's worktree, nothing pushed (the branch ships later like any lane). A conflict is
 /// undone and reported. The worktree must be clean, so nobody's edits are mixed in.
 pub fn land_local(repo: &Repo, branch: &str, into: &str) -> Result<Result<String, Vec<String>>> {
+    check_branch(repo, branch)?;
+    check_branch(repo, into)?;
     let wt = ensure_worktree(repo, into)?;
     let g = crate::git::Git::new(&wt);
     if !g.run(&["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {

@@ -543,17 +543,25 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
     input?.focus();
   };
 
+  // One message at a time (Enter twice sends once), and the box is cleared when it goes, so
+  // what you type while it is on its way stays yours.
+  let sending = false;
   const send = async () => {
     const mm = m();
     const msgText = text().trim();
-    if (!mm || !msgText) return;
+    if (!mm || !msgText || sending) return;
     if (command(msgText)) return;
+    sending = true;
+    setText("");
     try {
       await api.runSay(mm.id, msgText);
-      setText("");
       keep(mm.id, true);
     } catch (e) {
+      // Not sent: the words come back, unless something new was typed meanwhile.
+      if (!text()) setText(msgText);
       toast({ tone: "fail", title: t("The agent did not get it"), body: msg(e) });
+    } finally {
+      sending = false;
     }
   };
   // Continue in Claude Code. A live session is stopped first (and asked once): two Claude Codes

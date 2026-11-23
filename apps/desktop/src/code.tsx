@@ -188,7 +188,9 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     if (!alive || covered) return;
     try {
       const ready = await vscode.show(root(), rect(), ground());
-      if (alive && ready) setState("ready");
+      // Left (or covered) while the view was being shown: its hide may have landed first.
+      if (!alive || covered) return void vscode.hide().catch(() => {});
+      if (ready) setState("ready");
     } catch (e) {
       setWhy(msg(e));
       setState("failed");

@@ -125,6 +125,9 @@ pub struct Supervisor {
     /// How long what a card's agent left running (a push, a server) holds its session after the
     /// handoff, in milliseconds.
     left_running_ms: AtomicU64,
+    /// Held while a run's record is snapshotted and written, so records land in the order they
+    /// were taken: an older snapshot never overwrites a newer one.
+    meta_writes: Mutex<()>,
 }
 
 /// What a side session needs: who it is for, where it runs, and Claude Code's arguments
@@ -171,6 +174,7 @@ impl Supervisor {
             perf: crate::perf::Perf::new(&home),
             leave_ms: AtomicU64::new(30_000),
             left_running_ms: AtomicU64::new(120_000),
+            meta_writes: Mutex::new(()),
         })
     }
 
@@ -217,7 +221,7 @@ impl Supervisor {
                 // An agent the last daemon left behind (it crashed or was killed) must not keep
                 // editing the worktree with nobody watching: end its group, if it is still ours.
                 if let Some(pid) = m.pid
-                    && still_agent(pid)
+                    && still_agent(pid, &m.session_id)
                 {
                     signal(pid, libc::SIGTERM);
                     std::thread::sleep(Duration::from_millis(300));
@@ -275,11 +279,12 @@ impl Supervisor {
             .collect())
     }
 
-    /// Every session, runs and side sessions, newest first.
+    /// Every session, runs and side sessions, newest first. The records are read before the
+    /// live list is locked: every agent's output waits on that lock.
     pub fn sessions(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
+        let disk = self.list_disk()?;
         let live = self.live.lock().unwrap();
-        let mut all: Vec<RunMeta> = self
-            .list_disk()?
+        let mut all: Vec<RunMeta> = disk
             .into_iter()
             .map(|m| live.get(&m.id).map(|l| l.meta.clone()).unwrap_or(m))
             .filter(|m| repo.is_none_or(|r| m.repo == r))
@@ -307,15 +312,18 @@ impl Supervisor {
     }
 
     fn write_meta(&self, m: &RunMeta) -> Result<()> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = self.dir(&m.id);
         fs::create_dir_all(&dir)?;
-        let tmp = dir.join("meta.json.tmp");
+        // A temp name per write: two writers never rename each other's half-written file.
+        let tmp = dir.join(format!("meta.json.tmp{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&tmp, serde_json::to_string_pretty(m)?)?;
         fs::rename(&tmp, dir.join("meta.json"))?;
         Ok(())
     }
 
     fn update(&self, id: &str, f: impl FnOnce(&mut RunMeta)) {
+        let _order = self.meta_writes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let snapshot = {
             let mut live = self.live.lock().unwrap();
             let Some(l) = live.get_mut(id) else { return };
@@ -352,15 +360,17 @@ impl Supervisor {
             .collect()
     }
 
-    /// The replay from `from`, then live events. Taken under one lock, so nothing falls between.
+    /// The replay from `from`, then live events. The receiver and the count of events written
+    /// so far are taken under one lock, the file is read after it: the replay stops at that count
+    /// and the receiver starts there, so nothing falls between or comes twice.
     pub fn subscribe(&self, id: &str, from: usize) -> Result<Subscription> {
         let live = self.live.lock().unwrap();
         if let Some(l) = live.get(id) {
-            let rx = l.tx.subscribe();
-            return Ok(Subscription {
-                replay: self.read_timeline(id, from),
-                rx: Some(rx),
-            });
+            let (rx, written) = (l.tx.subscribe(), l.events);
+            drop(live);
+            let mut replay = self.read_timeline(id, from);
+            replay.retain(|(i, _)| *i < written);
+            return Ok(Subscription { replay, rx: Some(rx) });
         }
         drop(live);
         self.get(id)?;
@@ -656,7 +666,9 @@ impl Supervisor {
                 state: RunState::Failed,
             },
         );
-        if let Some(m) = self.live.lock().unwrap().remove(id).map(|l| l.meta) {
+        // Taken off the list first: the card is written without holding it.
+        let gone = self.live.lock().unwrap().remove(id).map(|l| l.meta);
+        if let Some(m) = gone {
             let _ = set_card_state(&m, CardState::Blocked, &self.cfg.home);
         }
     }
@@ -1022,6 +1034,10 @@ impl Supervisor {
         settled.state = state;
         let home = self.cfg.home.clone();
         let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home, true)).await?;
+        // Said while the run is still live: once it leaves the list, nothing more is recorded.
+        if let Err(e) = &card_result {
+            self.emit(&id, RunEvent::Note { text: format!("The card could not be moved: {e:#}") });
+        }
         self.update(&id, |m| {
             m.state = state;
             m.ended_at = Some(now_secs());
@@ -3560,12 +3576,16 @@ impl Drop for Release<'_> {
 }
 
 /// Is that pid still a Claude Code process (and not a stranger who got the number)?
-fn still_agent(pid: u32) -> bool {
-    std::process::Command::new("ps")
-        .args(["-o", "command=", "-p", &pid.to_string()])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("claude"))
-        .unwrap_or(false)
+/// Whether `pid` is still the agent of session `session`: its command line names that session
+/// (`--session-id` or `--resume`). After a reboot the number may belong to anything, your own
+/// Claude Code included, and its whole group would be ended.
+fn still_agent(pid: u32, session: &str) -> bool {
+    !session.is_empty()
+        && std::process::Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.to_string()])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(session))
+            .unwrap_or(false)
 }
 
 /// SIGTERM to the whole group, SIGKILL a moment later, off the async threads.

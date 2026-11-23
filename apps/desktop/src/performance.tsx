@@ -31,12 +31,23 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
 
-  const load = async () => {
+  // One read at a time, and only the newest lands: a slow snapshot taken before a change
+  // would otherwise put the old setting back on screen.
+  let gen = 0;
+  let reading = false;
+  const load = async (force = false) => {
+    if (reading && !force) return;
+    const mine = ++gen;
+    reading = true;
     try {
-      setSnap(await api.perf());
+      const s = await api.perf();
+      if (mine !== gen) return;
+      setSnap(s);
       setError(null);
     } catch (e) {
-      setError(msg(e));
+      if (mine === gen) setError(msg(e));
+    } finally {
+      if (mine === gen) reading = false;
     }
   };
   onMount(() => {
@@ -48,7 +59,7 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
   const set = async (patch: Parameters<typeof api.perfSet>[0]) => {
     try {
       await api.perfSet(patch);
-      await load();
+      await load(true);
     } catch (e) {
       toast({ tone: "fail", title: t("Performance did not change"), body: msg(e) });
     }
@@ -57,7 +68,7 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
     setBusy(a.id);
     try {
       await api.perfHold(a.id, on);
-      await load();
+      await load(true);
     } catch (e) {
       toast({ tone: "fail", title: on ? t("Could not pause #{n}", { n: a.card }) : t("Could not resume #{n}", { n: a.card }), body: msg(e) });
     } finally {

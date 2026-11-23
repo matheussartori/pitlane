@@ -20,6 +20,8 @@ export function Dictate(props: {
   const [secs, setSecs] = createSignal(0);
   let off: (() => void) | undefined;
   let tick: number | undefined;
+  // Set when the button goes away: a start still in flight then closes what it opened.
+  let gone = false;
   // Where the cursor was when listening began: the words go there, not wherever focus wanders.
   let at: [number, number] | null = null;
 
@@ -35,7 +37,12 @@ export function Dictate(props: {
     at = f ? [f.selectionStart ?? props.value().length, f.selectionEnd ?? props.value().length] : null;
     try {
       off = await dictation.onLevel((l) => setLevel(Math.min(1, l * 6)));
+      if (gone) return release();
       await dictation.start();
+      if (gone) {
+        void dictation.cancel();
+        return release();
+      }
       setSecs(0);
       const t0 = Date.now();
       tick = window.setInterval(() => setSecs(Math.floor((Date.now() - t0) / 1000)), 250);
@@ -83,6 +90,7 @@ export function Dictate(props: {
   }
 
   onCleanup(() => {
+    gone = true;
     if (phase() === "listening") void dictation.cancel();
     release();
   });

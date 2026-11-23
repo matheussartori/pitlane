@@ -113,6 +113,10 @@ impl Git {
     }
 
     pub fn rev_parse(&self, rev: &str) -> Result<Option<String>> {
+        // A name starting with '-' is an option to git, never a revision.
+        if rev.starts_with('-') {
+            return Ok(None);
+        }
         let (code, out, _) = self.raw(&["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])?;
         Ok((code == 0).then(|| out.trim().to_owned()))
     }
