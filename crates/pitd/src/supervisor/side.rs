@@ -628,6 +628,11 @@ impl Supervisor {
             related: Vec::new(),
         };
         self.register(meta)?;
+        // The Board's assistant opens with what the person typed or dictated, at the top of its
+        // terminal, as a message they sent later shows.
+        if side.kind == SessionKind::Assist {
+            self.emit(&id, RunEvent::Said { text: side.prompt.clone() });
+        }
 
         let mut cmd = self.side_command(&id, &side)?;
         let work = async {
