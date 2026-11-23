@@ -279,6 +279,17 @@ impl Supervisor {
             .collect())
     }
 
+    /// A card's latest run: the newest to start, then the higher round when two started in the
+    /// same second. By start first: a card started over after review rounds has a round-0 run
+    /// that is newer than its round-2 one.
+    fn latest_run(&self, root: &Path, card: u32) -> Option<RunMeta> {
+        self.list(Some(root))
+            .ok()?
+            .into_iter()
+            .filter(|m| m.card == card)
+            .max_by_key(|m| (m.started_at, m.round))
+    }
+
     /// Every session, runs and side sessions, newest first. The records are read before the
     /// live list is locked: every agent's output waits on that lock.
     pub fn sessions(&self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
@@ -2636,12 +2647,7 @@ impl Supervisor {
         if c.state != CardState::Review {
             bail!("card #{card} is not in review (it is {})", c.state.as_str());
         }
-        // The card's latest run: the highest review round, then the newest (ids can share a second).
-        let last = self
-            .list(Some(&r.root))?
-            .into_iter()
-            .filter(|m| m.card == card)
-            .max_by_key(|m| (m.round, m.started_at));
+        let last = self.latest_run(&r.root, card);
         match action {
             ReviewAction::Discard => {
                 cards::update(
@@ -3091,11 +3097,7 @@ impl Supervisor {
         let Ok(r) = Repo::open(repo, &home_dir(), &self.cfg.home) else {
             return;
         };
-        let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| {
-            l.into_iter()
-                .filter(|m| m.card == card)
-                .max_by_key(|m| (m.started_at, m.round))
-        }) else {
+        let Some(last) = self.latest_run(&r.root, card) else {
             return;
         };
         if !unfinished(&last) {
@@ -3128,11 +3130,7 @@ impl Supervisor {
         let Ok(r) = Repo::open(&board_repo, &home_dir(), &self.cfg.home) else {
             return;
         };
-        let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| {
-            l.into_iter()
-                .filter(|m| m.card == card && m.kind == SessionKind::Run)
-                .max_by_key(|m| (m.round, m.started_at))
-        }) else {
+        let Some(last) = self.latest_run(&r.root, card) else {
             return;
         };
         if !last.autopilot {
