@@ -45,6 +45,11 @@ let nextTerm = 3;
 // Performance: a 32 GB Mac with two cards working and one paused for the mode.
 const GB = 1024 ** 3;
 const perfCfg = { mode: "light", auto: true, away_minutes: 10, light_agents: 2, light_background: true };
+// Presence: here, so card 3's agent waits on a question mid-run.
+const presenceCfg = { mode: "here", auto: false, wait_minutes: 10, per_run: 3 };
+for (const q of (cards as { id: number; questions?: { run?: string; asked_at?: string }[] }[]).find((c) => c.id === 3)?.questions ?? []) {
+  if (q.run) q.asked_at = new Date(Date.now() - 252_000).toISOString();
+}
 const perfHistory = () =>
   Array.from({ length: 180 }, (_, i) => {
     const w = Math.sin(i / 14) * 0.5 + 0.5;
@@ -91,6 +96,12 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
       return { config: perfCfg } as T;
     case "perf_hold":
       return { changed: true } as T;
+    case "presence":
+      return { config: presenceCfg, mode: presenceCfg.mode, away_minutes: perfCfg.away_minutes } as T;
+    case "presence_set":
+      Object.assign(presenceCfg, (args?.config ?? {}) as object);
+      if (args?.config && "mode" in (args.config as object) && !("auto" in (args.config as object))) presenceCfg.auto = false;
+      return { config: presenceCfg, mode: presenceCfg.mode, away_minutes: perfCfg.away_minutes } as T;
     case "settings":
       return { repos: [repo], last: repo.path } as T;
     case "select_repo":

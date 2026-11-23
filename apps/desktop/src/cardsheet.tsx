@@ -7,7 +7,7 @@ import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { CardImages, imagesIn } from "./images";
 import { Prose, inline } from "./prose";
-import { DecisionItem, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
+import { DecisionItem, LiveMark, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { CARD_SIDE_W, Grip } from "./layout";
 import { locale, plural, t } from "./i18n";
@@ -132,6 +132,7 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
               <p class="ask-card">
                 <span class="card-id">#{q.card.id}</span> {q.card.title}
               </p>
+              <LiveMark q={q} />
               <p class="inbox-q">{inline(q.text)}</p>
               <QuestionAbout q={q} />
               <QuestionBlock q={q} selected busy={busy() || talking(props.repo, q.card.id, q.id)} onAnswer={(a) => void answer(a)} />
@@ -454,6 +455,7 @@ export function CardSheet(props: {
               <For each={open()}>
                 {(q) => (
                   <div class="sheet-question">
+                    <LiveMark q={q} />
                     <p class="inbox-q">{inline(q.text)}</p>
                     <QuestionAbout q={q} card={false} />
                     <QuestionBlock q={q} selected={false} busy={busy() || talking(props.repo, q.card.id, q.id)} onAnswer={(a) => void answer(q.id, a)} />

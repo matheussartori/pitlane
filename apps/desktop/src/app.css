@@ -1162,6 +1162,11 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 .perf-inline { display: inline-flex; align-items: center; gap: var(--space-2xs); cursor: default; }
 .perf-num { width: 8ch; height: 22px; font-family: var(--font-mono); }
 .perf-note { grid-column: 1 / -1; font-size: var(--text-sm); color: var(--color-muted); display: flex; align-items: center; gap: var(--space-2xs); flex-wrap: wrap; }
+.presence { display: grid; gap: var(--space-2xs); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-lg); background: var(--color-paper-2); }
+.presence-head { display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap; }
+.presence-head .perf-auto { margin-left: auto; }
+.presence-title { margin: 0; font: var(--weight-display) var(--text-xl)/1.2 var(--font-display); color: var(--color-ink); }
+.presence-line { margin: 0; font-size: var(--text-md); color: var(--color-ink-2); max-width: 72ch; }
 
 .perf-mac { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); }
 .perf-tile, .perf-chart { display: grid; gap: var(--space-2xs); align-content: start; padding: var(--space-sm); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: none; min-width: 0; margin: 0; } /* filled, never outlined: as the Board's cards */
@@ -1253,6 +1258,7 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 .inbox-card-head { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-md); border-bottom: 1px solid var(--color-rule); }
 .inbox-card-head .card-link { min-width: 0; flex: 1; font-size: var(--text-md); color: var(--color-ink); }
 .inbox-card-head .card-link .card-id { font-size: var(--text-sm); color: var(--color-ink-2); }
+.decision-auto { margin: 0; padding-left: calc(14px + var(--space-xs)); font-size: var(--text-xs); color: var(--color-muted); }
 .card-link-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-count { display: inline-flex; align-items: center; gap: var(--space-2xs); flex-shrink: 0; font-size: var(--text-xs); color: var(--color-muted); }
 .inbox-count .icon { color: var(--color-done); }
@@ -1278,6 +1284,10 @@ a.link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2p
 /* ---------- Run screen ---------- */
 .screen-head .back { color: var(--color-ink); }
 .run-screen .timeline { display: block; }
+.q-live { display: flex; align-items: center; gap: var(--space-2xs); margin: 0 0 var(--space-3xs); font-size: var(--text-xs); color: var(--color-muted); }
+.q-live .icon, .q-live-mark { color: var(--color-accent-text); }
+.q-live-mark { font-weight: var(--weight-strong); }
+.q-live .mono { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-ink-2); }
 .run-screen .timeline > .tl-note, .run-screen .timeline > .tl-finished { margin-block: var(--space-xs); font-family: var(--font-body); }
 .run-side { overflow-x: hidden; padding-right: var(--space-3xs); }
 .run-side > * { min-width: 0; }

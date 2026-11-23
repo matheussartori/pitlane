@@ -160,10 +160,15 @@ export function latestRun(runs: RunMeta[], card: number): RunMeta | undefined {
   return runs.filter((r) => r.card === card).sort((a, b) => (b.round ?? 0) - (a.round ?? 0) || b.started_at - a.started_at)[0];
 }
 
-/** Every open question across the cards, oldest card first. */
+/** Every open question across the cards: the ones an agent waits on now first, then oldest card first. */
 export interface OpenQuestion {
   card: Card;
   id: number;
+  /** Its agent asked it mid-run and waits on the answer now (Presence: Here). */
+  live: boolean;
+  /** The run that asked it, and when, for a live one. */
+  run?: string;
+  askedAt?: string;
   text: string;
   options: string[];
   recommended?: number;
@@ -175,13 +180,16 @@ export interface OpenQuestion {
 }
 
 export function openQuestions(cards: Card[]): OpenQuestion[] {
-  return cards.flatMap((card) => {
+  const all = cards.flatMap((card) => {
     const cached = asked.get(card);
     if (cached) return cached;
     const open = (card.questions ?? []).filter((q) => q.answer == null);
     const qs = open.map((q, i) => ({
       card,
       id: q.id,
+      live: !!q.run && card.state === "running",
+      run: q.run,
+      askedAt: q.asked_at,
       text: q.text,
       options: q.options ?? [],
       recommended: q.recommended,
@@ -193,6 +201,8 @@ export function openQuestions(cards: Card[]): OpenQuestion[] {
     asked.set(card, qs);
     return qs;
   });
+  // A card whose agent waits mid-run goes first; the order stays otherwise.
+  return all.some((q) => q.live) ? [...all.filter((q) => q.live), ...all.filter((q) => !q.live)] : all;
 }
 
 // One list per card object: with keepUnchanged, a re-read that changed nothing hands the lists

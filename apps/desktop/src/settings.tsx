@@ -65,7 +65,7 @@ function Toggle(props: { id: string; on: boolean; onChange: (v: boolean) => void
   return <input id={props.id} type="checkbox" class="switch" role="switch" aria-label={t(props.label)} checked={props.on} onChange={(e) => props.onChange(e.currentTarget.checked)} />;
 }
 
-function Seg<T extends string>(props: { value: T; options: { v: T; label: string }[]; label: string; onChange: (v: T) => void }) {
+export function Seg<T extends string>(props: { value: T; options: { v: T; label: string }[]; label: string; onChange: (v: T) => void }) {
   return (
     <div class="seg" role="group" aria-label={t(props.label)}>
       <For each={props.options}>

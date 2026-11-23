@@ -1,7 +1,8 @@
 // Performance: how much of this Mac the agents take. Full while you are away, Light while you use
 // it; the daemon's governor pauses, resumes and throttles the agents to fit, without losing a thing.
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { api, type PerfEvent, type PerfAgent, type PerfMode, type PerfSample, type PerfSnapshot } from "./api";
+import { api, type PerfEvent, type PerfAgent, type PerfMode, type PerfSample, type PerfSnapshot, type PresenceConfig, type PresenceSnapshot } from "./api";
+import { Seg } from "./settings";
 import { Icon, type IconName } from "./icons";
 import { locale, plural, t, tx } from "./i18n";
 import { Spinner, toast } from "./ui";
@@ -132,6 +133,7 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
           {(s) => (
             <>
               <ModePicker snap={s()} onMode={(mode) => void set({ mode })} onSet={(p) => void set(p)} />
+              <PresencePicker />
               <Show when={s().system}>{(sys) => <MacPanel snap={s()} sys={sys()} />}</Show>
               <AgentsTable agents={agents()} memTotal={s().system?.mem_total ?? 1} busy={busy()} onHold={hold} onOpen={props.onOpen} />
               <div class="perf-foot">
@@ -222,6 +224,77 @@ function ModePicker(props: { snap: PerfSnapshot; onMode: (m: PerfMode) => void; 
         </p>
       </Show>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------- presence
+
+/** Here: a run asks you the calls that are yours. Away: it takes its recommendation. */
+function PresencePicker() {
+  const [p, setP] = createSignal<PresenceSnapshot | null>(null);
+  let gen = 0;
+  const load = async () => {
+    const mine = ++gen;
+    try {
+      const s = await api.presence();
+      if (mine === gen) setP(s);
+    } catch {
+      /* The daemon's own error shows above. */
+    }
+  };
+  onMount(() => {
+    void load();
+    const tick = window.setInterval(() => void load(), 5000);
+    onCleanup(() => clearInterval(tick));
+  });
+  const set = async (patch: Partial<PresenceConfig>) => {
+    try {
+      const s = await api.presenceSet(patch);
+      ++gen;
+      setP(s);
+    } catch (e) {
+      toast({ tone: "fail", title: t("Presence did not change"), body: msg(e) });
+    }
+  };
+  const num = (v: string, fallback: number) => Math.max(1, Math.round(Number(v)) || fallback);
+  return (
+    <Show when={p()}>
+      {(s) => (
+        <section class="presence" aria-label={t("Presence")}>
+          <div class="presence-head">
+            <h2 class="presence-title">{t("Presence")}</h2>
+            <Seg
+              label="Presence"
+              value={s().mode}
+              options={[
+                { v: "here", label: tx("Here", "presence") },
+                { v: "away", label: tx("Away", "presence") },
+              ]}
+              onChange={(mode) => void set({ mode })}
+            />
+            <label class="perf-auto">
+              <input type="checkbox" class="switch" role="switch" checked={s().config.auto} onChange={(e) => void set({ auto: e.currentTarget.checked })} />
+              <span>
+                {t("Switch by itself")}
+                <small>{t("Here while you use the Mac, Away after {n} min away", { n: String(s().away_minutes) })}</small>
+              </span>
+            </label>
+          </div>
+          <p class="presence-line">
+            {s().mode === "here"
+              ? t("You are here: an agent asks you the calls that are yours, and takes its recommendation when no answer comes in time.")
+              : t("You are away: agents take their own recommendation and stop only for what they cannot do or what is costly to undo. What they decide for you is on the card.")}
+          </p>
+          <p class="perf-note">
+            {t("Wait")}{" "}
+            <input class="input perf-num" type="number" min="1" max="120" aria-label={t("Minutes to wait for an answer")} value={s().config.wait_minutes} onChange={(e) => void set({ wait_minutes: num(e.currentTarget.value, 10) })} />{" "}
+            {t("min for an answer, at most")}{" "}
+            <input class="input perf-num" type="number" min="1" max="20" aria-label={t("Questions per run")} value={s().config.per_run} onChange={(e) => void set({ per_run: num(e.currentTarget.value, 3) })} />{" "}
+            {t("questions per run.")}
+          </p>
+        </section>
+      )}
+    </Show>
   );
 }
 

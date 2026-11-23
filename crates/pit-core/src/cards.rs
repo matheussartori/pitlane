@@ -94,6 +94,9 @@ pub struct Question {
     /// The run that asked it while working (Presence: Here), and waits on the answer while it lives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
+    /// When the run asked it (only for a run's question): how long its agent has waited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_at: Option<String>,
     /// Answered with the agent's recommendation because nobody was there to answer (Presence:
     /// Away, or no answer in time). It can be answered again from the card.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -912,9 +915,11 @@ pub fn ask_live(repo: &Repo, id: u32, question: NewQuestion, run: &str) -> Resul
     let mut card = get(repo, id)?;
     push_questions(&mut card, vec![question])?;
     let q = card.questions.last_mut().context("no question added")?;
+    let now = timestamp(now_secs());
     q.run = Some(run.to_owned());
+    q.asked_at = Some(now.clone());
     let qid = q.id;
-    card.updated = timestamp(now_secs());
+    card.updated = now;
     write(&card)?;
     Ok(qid)
 }
@@ -1123,6 +1128,7 @@ fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
             answered_at: None,
             decision: None,
             run: None,
+            asked_at: None,
             auto: false,
             talk: Vec::new(),
         });
@@ -1314,6 +1320,7 @@ mod tests {
                 answered_at: None,
                 decision: None,
                 run: None,
+                asked_at: None,
                 auto: false,
                 talk: Vec::new(),
             }],

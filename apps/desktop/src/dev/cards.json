@@ -79,8 +79,22 @@
     "created": "2026-11-20T18:29:51Z",
     "updated": "2026-11-20T18:29:51Z",
     "body": "## Goal\n\nAvatars never carry script.\n\n## Acceptance\n\n- When an SVG avatar arrives, the validator must remove script elements and event attributes.",
-    "open_questions": 0,
-    "file": "0003-strip-scripts-from-svg-avatars.md"
+    "open_questions": 1,
+    "file": "0003-strip-scripts-from-svg-avatars.md",
+    "questions": [
+      {
+        "id": 1,
+        "text": "Strip `<foreignObject>` too, or only scripts and event handlers?",
+        "options": [
+          "Only scripts and handlers",
+          "Strip foreignObject too"
+        ],
+        "recommended": 1,
+        "context": "Some uploaded avatars embed HTML through foreignObject; stripping it closes the hole but breaks two existing avatars in the seed data.",
+        "run": "3-live",
+        "asked_at": "2026-11-23T12:00:00Z"
+      }
+    ]
   },
   {
     "id": 4,
@@ -121,7 +135,8 @@
         "recommended": 0,
         "answer": "Yes",
         "answered_at": "2026-11-20T18:29:52Z",
-        "decision": "D-02"
+        "decision": "D-02",
+        "auto": true
       }
     ],
     "body": "## Goal\n\nOne click copies the invite link.",

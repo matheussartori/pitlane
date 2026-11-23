@@ -160,6 +160,8 @@ export interface Question {
   decision?: string;
   /** The run that asked it while working (Presence: Here). */
   run?: string;
+  /** When the run asked it. */
+  asked_at?: string;
   /** Answered with the agent's recommendation because nobody was there (Presence: Away, or no answer in time). */
   auto?: boolean;
   /** Talking it over with Claude; Claude's turns carry the options it offers from then on. */

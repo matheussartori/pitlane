@@ -16,6 +16,32 @@ export const MCP_INSTALL = "claude mcp add pitlane -- pit mcp";
 // What is typed into an answer, by card and question, so nothing redraws it away.
 const drafts = new Map<string, string>();
 
+/** Minutes and seconds since `iso`, ticking: how long an agent has waited on you. */
+function Waited(props: { since: string }) {
+  const [now, setNow] = createSignal(Date.now());
+  const tick = window.setInterval(() => setNow(Date.now()), 1000);
+  onCleanup(() => clearInterval(tick));
+  const text = () => {
+    const s = Math.max(0, Math.floor((now() - Date.parse(props.since)) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  return <span class="mono" title={t("How long its agent has waited")}>{text()}</span>;
+}
+
+/** Over a question its agent asked mid-run and waits on now (Presence: Here). */
+export function LiveMark(props: { q: OpenQuestion }) {
+  return (
+    <Show when={props.q.live}>
+      <p class="q-live">
+        <Icon name="needs" small />
+        <span class="q-live-mark">{t("Needs you")}</span>
+        <span>{t("its agent waits mid-run")}</span>
+        <Show when={props.q.askedAt}>{(at) => <Waited since={at()} />}</Show>
+      </p>
+    </Show>
+  );
+}
+
 /** One question with its options; the recommended one is marked. Used by the Inbox and the card. */
 export function QuestionBlock(props: {
   q: OpenQuestion;
@@ -344,6 +370,7 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
     recommended: props.q.recommended,
     context: props.q.context,
     talk: props.q.talk ?? [],
+    live: false,
     index: 0,
     of: 0,
   });
@@ -369,6 +396,9 @@ export function DecisionItem(props: { repo: string; card: Card; q: NonNullable<C
         <Icon name="done" small />
         <span>{props.q.answer}</span>
       </dd>
+      <Show when={props.q.auto}>
+        <dd class="decision-auto">{t("Taken for you while you were away")}</dd>
+      </Show>
       <dd class="decision-foot">
         <Show when={props.q.decision}>
           <span class="tag">{props.q.decision}</span>
@@ -611,6 +641,8 @@ export function InboxView(props: {
         (c.questions ?? []).every((q) => q.answer != null),
     );
   const cardsAsking = () => new Set(questions().map((q) => q.card.id)).size;
+  /** Agents stopped on you now: a tool to allow, or a question asked mid-run. */
+  const agentsWaiting = () => new Set([...props.approvals.map((w) => w.run.id), ...questions().filter((q) => q.live).map((q) => q.run!)]).size;
   /** One head per card, its answered questions as context, then its open ones. */
   const byCard = () => {
     const groups: Group[] = [];
@@ -641,9 +673,9 @@ export function InboxView(props: {
         <h1 class="title">{t("Inbox")}</h1>
         <Show when={questions().length > 0 || props.approvals.length > 0}>
           <p class="summary">
-            <Show when={props.approvals.length > 0}>
+            <Show when={agentsWaiting() > 0}>
               <b>
-                {plural(props.approvals.length, "{n} agent waits for you.", "{n} agents wait for you.")}
+                {plural(agentsWaiting(), "{n} agent waits for you.", "{n} agents wait for you.")}
               </b>{" "}
             </Show>
             <Show when={questions().length > 0}>
@@ -719,6 +751,7 @@ export function InboxView(props: {
                           onFocusIn={() => setPicked(key(q))}
                           onClick={() => setPicked(key(q))}
                         >
+                          <LiveMark q={q} />
                           <p class="inbox-q">{inline(q.text)}</p>
                           <QuestionAbout q={q} />
                           <QuestionBlock
