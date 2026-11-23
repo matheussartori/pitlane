@@ -11,6 +11,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use tauri::{AppHandle, Emitter, Manager};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+use crate::CmdResult;
+
 const MODEL: &str = "ggml-large-v3-turbo-q5_0.bin";
 const RATE: u32 = 16_000;
 /// Ten minutes of speech is a long spec; past it the recording stops growing.
@@ -229,6 +231,25 @@ fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> Result<String> {
         .collect::<Vec<_>>()
         .join(" ");
     Ok(text)
+}
+
+#[tauri::command]
+pub(crate) fn dictate_start(app: tauri::AppHandle, d: tauri::State<'_, Dictation>) -> CmdResult<()> {
+    d.start(&app).map_err(|e| format!("{e:#}"))
+}
+
+/// Blocking work (the transcription), so off the main thread.
+#[tauri::command]
+pub(crate) async fn dictate_stop(app: tauri::AppHandle) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Dictation>().stop(&app))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub(crate) fn dictate_cancel(d: tauri::State<'_, Dictation>) {
+    d.cancel()
 }
 
 #[cfg(test)]
