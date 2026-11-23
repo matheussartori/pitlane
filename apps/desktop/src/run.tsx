@@ -10,7 +10,7 @@ import { Prose } from "./prose";
 import { parsePatch } from "./review";
 import { Icon, type IconName } from "./icons";
 import type { ChipState } from "./lane";
-import { locale, plural, t, tx } from "./i18n";
+import { locale, plural, t } from "./i18n";
 import { ErrorLine, Spinner, toast, tailFollower } from "./ui";
 import { Grip, RUN_SIDE_W } from "./layout";
 import { msg, clock } from "./format";

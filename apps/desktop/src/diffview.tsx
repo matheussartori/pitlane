@@ -172,7 +172,7 @@ export function DiffViewer(props: {
         props.onClose();
       }}
       onKeyDown={(e) => {
-        if (e.target instanceof HTMLInputElement) return;
+        if (ownsKey(e)) return;
         if (e.key === "ArrowDown" || e.key === "j") (e.preventDefault(), go(1));
         else if (e.key === "ArrowUp" || e.key === "k") (e.preventDefault(), go(-1));
       }}

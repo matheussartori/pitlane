@@ -5,7 +5,6 @@ import { Portal } from "solid-js/web";
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
-import { Prose } from "./prose";
 import { ago } from "./lane";
 import { money } from "./run";
 import { Spinner, toast } from "./ui";

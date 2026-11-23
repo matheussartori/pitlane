@@ -1,5 +1,5 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
-import { For, Show, createEffect, createMemo, createSignal, on, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
 import { api, isLive, type Card, type Plan, type RunMeta, type Yard } from "./api";
 import { elapsed } from "./run";
 import { columnEmpty, columnTitle, columns, latestRun, place, reviewSummary } from "./cards";

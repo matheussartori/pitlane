@@ -2,7 +2,7 @@
 import { For, Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { NEEDS_API_KEY, api, isLive, onRun, type Lane, type RepoEntry, type RunEvent, type RunMeta, type Settings, isOpenJob } from "./api";
+import { NEEDS_API_KEY, api, isLive, onRun, type Lane, type RepoEntry, type RunMeta, type Settings, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
 import { PerformanceView } from "./performance";
