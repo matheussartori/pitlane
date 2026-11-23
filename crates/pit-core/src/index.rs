@@ -99,8 +99,8 @@ pub struct IndexStats {
 
 /// Where a repository's index lives.
 pub fn path_for(pitlane_home: &Path, root: &Path) -> PathBuf {
-    let key: String = root.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    pitlane_home.join("index").join(format!("{}.json", key.trim_matches('-')))
+    let key = root.to_string_lossy();
+    pitlane_home.join("index").join(format!("{}-{}.json", crate::fsutil::flat_name(&key), crate::fsutil::short_hash(&key)))
 }
 
 pub fn load(pitlane_home: &Path, root: &Path) -> Option<Index> {

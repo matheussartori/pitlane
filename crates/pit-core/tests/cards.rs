@@ -171,10 +171,31 @@ fn remotes_key_the_same_board() {
         assert_eq!(cards::normalize_remote(url), "github.com/me/amity", "{url}");
     }
     let home = std::path::Path::new("/h/.pitlane");
-    assert_eq!(
-        cards::board_for(home, Some("git@github.com:me/amity.git"), std::path::Path::new("/x")),
-        home.join("boards/github.com-me-amity")
+    let board = cards::board_for(home, Some("git@github.com:me/amity.git"), std::path::Path::new("/x"));
+    assert_eq!(board, cards::board_for(home, Some("https://github.com/me/amity"), std::path::Path::new("/y")));
+    assert!(board.file_name().unwrap().to_str().unwrap().starts_with("github.com-me-amity-"));
+    // Flattened alike, kept apart.
+    assert_ne!(
+        cards::board_for(home, Some("https://github.com/me/a-b"), std::path::Path::new("/x")),
+        cards::board_for(home, Some("https://github.com/me-a/b"), std::path::Path::new("/x"))
     );
+}
+
+#[test]
+fn a_board_under_the_old_key_moves_and_stays_reachable() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+    let url = Some("git@github.com:me/amity.git");
+    let old = home.join("boards/github.com-me-amity");
+    fs::create_dir_all(old.join("cards")).unwrap();
+    fs::write(old.join("cards/0001-x.md"), "card").unwrap();
+    cards::adopt_flat_board(home, url, std::path::Path::new("/x")).unwrap();
+    let new = cards::board_for(home, url, std::path::Path::new("/x"));
+    assert_eq!(fs::read_to_string(new.join("cards/0001-x.md")).unwrap(), "card");
+    assert!(fs::symlink_metadata(&old).unwrap().file_type().is_symlink(), "the old name still leads there");
+    assert_eq!(fs::read_to_string(old.join("cards/0001-x.md")).unwrap(), "card");
+    // Once moved, nothing more happens.
+    cards::adopt_flat_board(home, url, std::path::Path::new("/x")).unwrap();
 }
 
 #[test]

@@ -597,20 +597,34 @@ pub fn set_project_context(repo: &Repo, text: &str) -> Result<()> {
 }
 
 /// A repository's board folder: keyed by its remote's URL, so moving or re-cloning the folder keeps
-/// the board; by the main worktree's path when there is no remote.
+/// the board; by the main worktree's path when there is no remote. The readable part flattens
+/// separators, so a hash of the real key follows it: `me/a-b` and `me-a/b` never share a board.
 pub fn board_for(pitlane_home: &Path, remote_url: Option<&str>, root: &Path) -> PathBuf {
-    let key = match remote_url.map(str::trim).filter(|u| !u.is_empty()) {
+    let key = board_key(remote_url, root);
+    pitlane_home.join("boards").join(format!("{}-{}", crate::fsutil::flat_name(&key), crate::fsutil::short_hash(&key)))
+}
+
+fn board_key(remote_url: Option<&str>, root: &Path) -> String {
+    match remote_url.map(str::trim).filter(|u| !u.is_empty()) {
         Some(url) => normalize_remote(url),
         None => root.to_string_lossy().into_owned(),
-    };
-    let mut slug = String::new();
-    for c in key.chars() {
-        let c = if c.is_ascii_alphanumeric() || c == '.' || c == '_' { c } else { '-' };
-        if !(c == '-' && slug.ends_with('-')) {
-            slug.push(c);
-        }
     }
-    pitlane_home.join("boards").join(slug.trim_matches(|c| c == '-' || c == '.'))
+}
+
+/// Moves a board kept under the old key (no hash) to its new folder, and leaves the old name as a
+/// link to it, so an older `pit` (the MCP Claude Code runs) still finds the same cards. Does
+/// nothing once moved, or when the new folder already exists.
+pub fn adopt_flat_board(pitlane_home: &Path, remote_url: Option<&str>, root: &Path) -> Result<()> {
+    let key = board_key(remote_url, root);
+    let old = pitlane_home.join("boards").join(crate::fsutil::flat_name(&key));
+    let new = board_for(pitlane_home, remote_url, root);
+    let is_dir = fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir());
+    if !is_dir || new.exists() {
+        return Ok(());
+    }
+    fs::rename(&old, &new).with_context(|| format!("could not move {} to {}", old.display(), new.display()))?;
+    std::os::unix::fs::symlink(&new, &old).with_context(|| format!("could not link {}", old.display()))?;
+    Ok(())
 }
 
 /// `git@github.com:me/x.git`, `https://user@github.com/me/x` and `ssh://git@github.com/me/x.git`

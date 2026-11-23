@@ -89,8 +89,18 @@ impl Repo {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "repo".into());
         let git = Git::new(&root);
-        let remote_url = git.run(&["remote", "get-url", &flow.flow.remote]).ok();
+        // No such remote: the board goes by the path. Any other failure is an error, never a
+        // quiet switch to another board.
+        let remote = &flow.flow.remote;
+        let remote_url = if git.lines(&["remote"])?.iter().any(|r| r == remote) {
+            Some(git.run(&["remote", "get-url", remote]).context("could not read the remote that keys the board")?)
+        } else {
+            None
+        };
         let board = cards::board_for(pitlane_home, remote_url.as_deref(), &root);
+        if let Err(e) = cards::adopt_flat_board(pitlane_home, remote_url.as_deref(), &root) {
+            eprintln!("pitlane: board: {e:#}");
+        }
         let repo = Self {
             git,
             root,

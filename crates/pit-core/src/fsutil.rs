@@ -36,6 +36,29 @@ pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> Result<()> {
     written.with_context(|| format!("could not write {}", path.display()))
 }
 
+/// A key as a folder or file name: letters, digits, `.` and `_` kept, every run of anything else
+/// one `-`, none at the ends. Readable, not unique: pair it with `short_hash`.
+pub fn flat_name(key: &str) -> String {
+    let mut slug = String::new();
+    for c in key.chars() {
+        let c = if c.is_ascii_alphanumeric() || c == '.' || c == '_' { c } else { '-' };
+        if !(c == '-' && slug.ends_with('-')) {
+            slug.push(c);
+        }
+    }
+    slug.trim_matches(|c| c == '-' || c == '.').to_owned()
+}
+
+/// Eight hex digits of a stable hash (FNV-1a), the same in every build: names on disk use it.
+pub fn short_hash(key: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:08x}", h >> 32)
+}
+
 /// Reads a whole text file, `None` only when there is none. Any other failure (permissions, bad
 /// UTF-8) is an error: treating it as "no file" would have the next write replace what is there.
 pub fn read_optional(path: &Path) -> Result<Option<String>> {
