@@ -319,7 +319,7 @@ fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
                 state: str_arg("state").map(|s| CardState::parse(&s)).transpose()?,
                 lane: str_arg("lane").map(|l| Some(l).filter(|l| !l.is_empty())),
                 tags: tags(),
-                target: None,
+                ..Default::default()
             };
             card_json(&cards::update(&repo, id()?, patch)?)
         }

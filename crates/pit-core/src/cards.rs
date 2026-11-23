@@ -157,6 +157,11 @@ pub struct Card {
     /// or its spec changes; the board shows it instead of the spec.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// The run that was stopped mid-work (by a person, Stop all or Pitlane closing). The next
+    /// Run of the card resumes its Claude Code session, with everything it did and said, instead
+    /// of starting over; a run that starts clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<String>,
     pub created: String,
     pub updated: String,
     /// Kept last: TOML wants tables after plain values.
@@ -262,6 +267,8 @@ pub struct CardPatch {
     pub lane: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
     pub target: Option<Option<String>>,
+    /// `Some(None)` forgets the stopped run: the next Run starts over.
+    pub paused: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -585,6 +592,7 @@ pub fn add(repo: &Repo, new: NewCard) -> Result<Card> {
         areas: Vec::new(),
         images: Vec::new(),
         summary: None,
+        paused: None,
         created: now.clone(),
         updated: now.clone(),
         questions: Vec::new(),
@@ -625,6 +633,9 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     }
     if let Some(t) = patch.target {
         card.target = t.filter(|b| !b.trim().is_empty()).map(|b| b.trim().to_owned());
+    }
+    if let Some(p) = patch.paused {
+        card.paused = p;
     }
     // A changed spec is a new card to the analyst: read it again before the next Run all.
     if (title_before != card.title || body_before != card.body) && card.analyzed.is_some() {
@@ -1036,6 +1047,7 @@ mod tests {
             areas: Vec::new(),
             images: Vec::new(),
             summary: None,
+            paused: None,
             created: "2026-11-20T10:00:00Z".into(),
             updated: "2026-11-20T10:00:00Z".into(),
             questions: vec![Question {

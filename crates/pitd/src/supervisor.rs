@@ -64,6 +64,8 @@ pub struct StartOpts {
     pub autopilot: bool,
     /// Continuations after running out of turns so far.
     pub extensions: u32,
+    /// Start over: do not resume the session of the card's stopped run.
+    pub fresh: bool,
 }
 
 /// What a person decides about a card in review.
@@ -222,7 +224,19 @@ impl Supervisor {
                     signal(pid, libc::SIGKILL);
                 }
                 if m.kind == SessionKind::Run {
-                    let _ = set_card_state(&m, CardState::Ready, &self.cfg.home);
+                    // The agent had started: the next Run resumes its session.
+                    let paused = m.pid.is_some().then(|| m.id.clone());
+                    let _ = Repo::open(&m.repo, &home_dir(), &self.cfg.home).and_then(|r| {
+                        cards::update(
+                            &r,
+                            m.card,
+                            CardPatch {
+                                state: Some(CardState::Ready),
+                                paused: Some(paused),
+                                ..Default::default()
+                            },
+                        )
+                    });
                 }
                 m.pid = None;
                 m.state = RunState::Interrupted;
@@ -489,8 +503,41 @@ impl Supervisor {
         }
         let claim = (r.root.clone(), card);
         let _claim = Release(&self.starting, claim);
-        let prev = resume.as_deref().map(|p| self.get(p)).transpose()?;
-        let (choice, reason, exhausted) = self.choose(&r, prev.as_ref(), &opts)?;
+        let mut opts = opts;
+        let mut resume = resume;
+        // A card stopped mid-work picks its session up where it was left: the agent keeps all it
+        // did and said. Unless the person starts over, or the session is gone.
+        let paused = c
+            .paused
+            .as_deref()
+            .filter(|_| resume.is_none() && opts.handoff_from.is_none() && !opts.fresh)
+            .and_then(|p| self.get(p).ok())
+            .filter(|p| self.resumable(p, &r.root, card));
+        if let Some(p) = &paused {
+            resume = Some(p.id.clone());
+            if opts.message.is_none() {
+                opts.message = Some(resume_message(&c, p));
+            }
+        }
+        let mut prev = resume.as_deref().map(|p| self.get(p)).transpose()?;
+        let (choice, reason, exhausted) = match self.choose(&r, prev.as_ref(), &opts) {
+            // Its account is gone: a new session, which starts from the card.
+            Err(_) if paused.is_some() => {
+                (prev, resume, opts.message) = (None, None, None);
+                self.choose(&r, None, &opts)?
+            }
+            x => x?,
+        };
+        if c.paused.is_some() {
+            let _ = cards::update(
+                &r,
+                card,
+                CardPatch {
+                    paused: Some(None),
+                    ..Default::default()
+                },
+            );
+        }
         let (session_id, resumed_from) = match &prev {
             Some(p) => (p.session_id.clone(), Some(p.id.clone())),
             None => (uuid::Uuid::new_v4().to_string(), None),
@@ -573,6 +620,21 @@ impl Supervisor {
             }
         });
         Ok(meta)
+    }
+
+    /// A stopped run of this card whose Claude Code session can be picked up: its worktree is
+    /// there and Claude Code saved the session in its account's directory.
+    fn resumable(&self, p: &RunMeta, repo: &Path, card: u32) -> bool {
+        p.kind == SessionKind::Run
+            && p.repo == repo
+            && p.card == card
+            && matches!(p.state, RunState::Stopped | RunState::Interrupted)
+            && !self.live.lock().unwrap().contains_key(&p.id)
+            && p.worktree.is_dir()
+            && session_saved(
+                &accounts::profile_dir(&p.account, &self.cfg.home).unwrap_or_else(claude_dir),
+                &p.session_id,
+            )
     }
 
     fn fail(&self, id: &str, why: &str) {
@@ -687,7 +749,7 @@ impl Supervisor {
             let mut settled = self.get(&id)?;
             settled.state = RunState::Stopped;
             let home = self.cfg.home.clone();
-            let _ = tokio::task::spawn_blocking(move || settle_card(&settled, &home)).await;
+            let _ = tokio::task::spawn_blocking(move || settle_card(&settled, &home, false)).await;
             self.update(&id, |m| {
                 m.state = RunState::Stopped;
                 m.ended_at = Some(now_secs());
@@ -977,7 +1039,7 @@ impl Supervisor {
         let mut settled = self.get(&id)?;
         settled.state = state;
         let home = self.cfg.home.clone();
-        let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home)).await?;
+        let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home, true)).await?;
         self.update(&id, |m| {
             m.state = state;
             m.ended_at = Some(now_secs());
@@ -3765,8 +3827,52 @@ fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Where the card goes when its run ends.
-fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
+/// Claude Code's own directory when no account profile points elsewhere.
+fn claude_dir() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".claude"))
+}
+
+/// Claude Code keeps each session as `projects/<folder>/<session>.jsonl` in its directory.
+fn session_saved(config: &Path, session: &str) -> bool {
+    let file = format!("{session}.jsonl");
+    fs::read_dir(config.join("projects"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|d| d.path().join(&file).is_file())
+}
+
+/// The first message of a run that resumes a stopped one: carry on, plus what the card got
+/// while the agent was away (notes, answers), which its session has not seen.
+fn resume_message(c: &cards::Card, prev: &RunMeta) -> String {
+    let since = cards::timestamp(prev.ended_at.unwrap_or(prev.started_at));
+    let mut news: Vec<String> = c
+        .notes
+        .iter()
+        .filter(|n| n.at >= since)
+        .map(|n| format!("- Note ({}): {}", n.by, n.text.trim()))
+        .collect();
+    news.extend(c.questions.iter().filter(|q| {
+        q.answered_at.as_deref().is_some_and(|a| a >= since.as_str())
+    }).map(|q| {
+        format!(
+            "- Answered: {} → {}",
+            q.text.trim(),
+            q.decision.as_deref().or(q.answer.as_deref()).unwrap_or_default().trim()
+        )
+    }));
+    let mut text = "You were stopped and are resumed in the same session: carry on from where you stopped (check the worktree first, a step may have been cut short). End with the handoff.".to_owned();
+    if !news.is_empty() {
+        text.push_str("\n\nWhile you were stopped, the card got:\n");
+        text.push_str(&news.join("\n"));
+    }
+    text
+}
+
+/// Where the card goes when its run ends. `ran`: the agent got to start (it has a session).
+fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
     let r = Repo::open(&m.repo, &home_dir(), home)?;
     let status = m
         .handoff
@@ -3829,11 +3935,15 @@ fn settle_card(m: &RunMeta, home: &Path) -> Result<()> {
         (RunState::Stopped, _) => CardState::Ready,
         _ => CardState::Blocked,
     };
+    // Stopped once the agent had started: the next Run resumes its session, not a new one.
+    let paused = (m.state == RunState::Stopped && m.kind == SessionKind::Run && ran)
+        .then(|| m.id.clone());
     cards::update(
         &r,
         m.card,
         CardPatch {
             state: Some(next),
+            paused: Some(paused),
             ..Default::default()
         },
     )?;

@@ -304,6 +304,13 @@ export function RunScreen(props: {
               {m().model ?? t("default model")}
               {m().account ? ` ${t("on {account}", { account: m().account! })}` : ""}
             </span>
+            <Show when={m().resumed_from}>
+              {(prev) => (
+                <a href={`#run/${prev()}`} title={t("The same Claude Code session: the agent has all that run did and said")}>
+                  {t("continues {run}", { run: prev() })}
+                </a>
+              )}
+            </Show>
           </p>
           <Show when={m().next}>
             {(next) => (

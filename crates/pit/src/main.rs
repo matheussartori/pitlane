@@ -101,6 +101,9 @@ enum Cmd {
         /// Leave Pitlane's map of where to look out of the first message.
         #[arg(long)]
         no_brief: bool,
+        /// Start over: a card stopped mid-work otherwise resumes its session.
+        #[arg(long)]
+        fresh: bool,
     },
     /// Continue a run that hit its usage limit with the route's next option.
     Continue {
@@ -359,10 +362,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": "deny", "message": message }))?;
             println!("{} denied {}", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
         }
-        Cmd::Run { card, detach, allow_api_key, no_brief } => {
+        Cmd::Run { card, detach, allow_api_key, no_brief, fresh } => {
             let mut c = daemon()?;
             let v = c
-                .call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card, "allow_api_key": allow_api_key, "no_brief": no_brief }))
+                .call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card, "allow_api_key": allow_api_key, "no_brief": no_brief, "fresh": fresh }))
                 .map_err(api_key_hint)?;
             let m: RunMeta = serde_json::from_value(v["run"].clone())?;
             println!("{} run {} for #{} {}", paint(DONE, "✓"), m.id, m.card, m.card_title);

@@ -78,6 +78,8 @@ export function place(card: Card, yard: Yard | null): Placement {
   // Ready or inbox with a lane: sent back to the backlog (from Blocked, say); its next run goes on in that lane.
   if (card.state === "running" || (lane && card.state !== "ready" && card.state !== "inbox"))
     return { column: "progress", chip: "running", icon: "run", label: card.state === "running" ? t("Running") : t("In a lane") };
+  // Stopped mid-work: its next run resumes the session, with all the agent did and said.
+  if (card.paused) return { column: "backlog", chip: "queued", icon: "pause", label: t("Paused"), why: about(card) };
   return { column: "backlog", chip: "queued", icon: card.state === "ready" ? "done" : "queued", label: t(stateLabel[card.state]), why: about(card) };
 }
 

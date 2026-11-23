@@ -62,6 +62,8 @@ export default {
   "The merge queue is paused ({n} waiting)": "A fila de merge está pausada ({n} esperando)",
   "It paused when Pitlane closed. Nothing ships until you resume it.": "Ela pausou quando o Pitlane fechou. Nada é entregue até você retomá-la.",
   "Resume": "Retomar",
+  "continues {run}": "continua {run}",
+  "The same Claude Code session: the agent has all that run did and said": "A mesma sessão do Claude Code: o agente tem tudo o que aquela execução fez e disse",
   "Could not resume the queue": "Não foi possível retomar a fila",
   "#{card} {title} is ready for review": "#{card} {title} está pronto para revisão",
   "All {n} lanes finished": "As {n} lanes terminaram",

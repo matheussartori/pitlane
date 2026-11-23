@@ -903,7 +903,8 @@ export function CardSheet(props: {
   yard: Yard | null;
   now: number;
   runs: RunMeta[];
-  onRun: () => void;
+  /** `fresh`: start over instead of resuming the stopped session. */
+  onRun: (fresh?: boolean) => void;
   onOpenRun: (id: string) => void;
   onChanged: () => void;
   onClose: () => void;
@@ -1060,16 +1061,35 @@ export function CardSheet(props: {
             <Show
               when={live()}
               fallback={
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  disabled={busy() || open().length > 0 || props.card.state === "done"}
-                  title={open().length > 0 ? t("Answer the open questions first") : t("Claude Code works the card in its own worktree")}
-                  onClick={props.onRun}
-                >
-                  <Icon name="run" small />
-                  {t("Run")}
-                </button>
+                <>
+                  <Show when={props.card.paused}>
+                    <button
+                      type="button"
+                      class="btn"
+                      disabled={busy() || open().length > 0 || props.card.state === "done"}
+                      title={t("A new session from the card; the stopped one stays under Runs")}
+                      onClick={() => props.onRun(true)}
+                    >
+                      {t("Start over")}
+                    </button>
+                  </Show>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={busy() || open().length > 0 || props.card.state === "done"}
+                    title={
+                      open().length > 0
+                        ? t("Answer the open questions first")
+                        : props.card.paused
+                          ? t("Picks up the stopped session: Claude keeps all it did and said, and hears what the card got since")
+                          : t("Claude Code works the card in its own worktree")
+                    }
+                    onClick={() => props.onRun()}
+                  >
+                    <Icon name="run" small />
+                    {props.card.paused ? t("Resume") : t("Run")}
+                  </button>
+                </>
               }
             >
               {(r) => (
@@ -1269,10 +1289,15 @@ export function CardSheet(props: {
                 <For each={props.runs}>
                   {(r) => (
                     <li>
-                      <button type="button" class="card-run cs-run" onClick={() => props.onOpenRun(r.id)} title={r.handoff?.summary ?? r.error ?? r.branch}>
+                      <button
+                        type="button"
+                        class="card-run cs-run"
+                        onClick={() => props.onOpenRun(r.id)}
+                        title={r.id === props.card.paused ? t("Stopped mid-work: Resume picks up this session") : (r.handoff?.summary ?? r.error ?? r.branch)}
+                      >
                         <span class="chip" data-state={runStateView[r.state].chip}>
-                          <Icon name={runStateView[r.state].icon} small />
-                          {t(runStateView[r.state].label)}
+                          <Icon name={r.id === props.card.paused ? "pause" : runStateView[r.state].icon} small />
+                          {r.id === props.card.paused ? t("Paused") : t(runStateView[r.state].label)}
                         </span>
                         <span class="figure">{clock(elapsed(r, props.now))}</span>
                         <span class="figure">{money(r.cost_usd)}</span>

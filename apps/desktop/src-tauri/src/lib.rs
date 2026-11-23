@@ -405,7 +405,7 @@ async fn card_update(
             state: state.map(|s| CardState::parse(&s)).transpose()?,
             lane: lane.map(|l| Some(l).filter(|l| !l.trim().is_empty())),
             tags: None,
-            target: None,
+            ..Default::default()
         };
         let repo = open(&path)?;
         let before = cards::get(&repo, id)?.body;
@@ -650,10 +650,10 @@ async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
 }
 
 #[tauri::command]
-async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>, autopilot: Option<bool>) -> CmdResult<RunMeta> {
+async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>, autopilot: Option<bool>, fresh: Option<bool>) -> CmdResult<RunMeta> {
     blocking(move || {
         let root = open(&path)?.root;
-        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false), "into": into, "direct": direct.unwrap_or(false), "instructions": instructions, "autopilot": autopilot.unwrap_or(false) }))?;
+        let v = call(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false), "into": into, "direct": direct.unwrap_or(false), "instructions": instructions, "autopilot": autopilot.unwrap_or(false), "fresh": fresh.unwrap_or(false) }))?;
         Ok(serde_json::from_value(v["run"].clone())?)
     })
     .await

@@ -336,11 +336,12 @@ export default function App() {
     }
   }
 
-  async function startRun(card: number, allowApiKey = false) {
+  /** `fresh`: start over instead of resuming the card's stopped session. */
+  async function startRun(card: number, allowApiKey = false, fresh = false) {
     const path = repo();
     if (!path) return;
     try {
-      const m = await api.runStart(path, card, allowApiKey);
+      const m = await api.runStart(path, card, allowApiKey, null, false, null, false, fresh);
       void api.runFollow(m.id, 0).catch(() => {});
       await loadRuns();
       void loadCards();
@@ -355,7 +356,7 @@ export default function App() {
             tone: "info",
             title: t("Only the API key can take this card now"),
             body: t("{why}. It is paid per token.", { why: text.slice(NEEDS_API_KEY.length) }),
-            action: { label: t("Use the API key"), run: () => void startRun(card, true) },
+            action: { label: t("Use the API key"), run: () => void startRun(card, true, fresh) },
           },
           0,
         );
@@ -1216,7 +1217,7 @@ export default function App() {
                 yard={yard()}
                 now={now()}
                 runs={(runs() ?? []).filter((r) => r.card === card().id)}
-                onRun={() => void startRun(card().id)}
+                onRun={(fresh) => void startRun(card().id, false, fresh)}
                 onOpenRun={(id) => {
                   setSheet(null);
                   openRun(id);

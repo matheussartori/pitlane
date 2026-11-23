@@ -558,6 +558,69 @@ async fn stop_ends_the_turn_and_frees_the_card() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_card_resumes_its_session_with_what_it_got_meanwhile() {
+    let fx = fx();
+    let id = card(&fx, "Slow one");
+    let wrapper = fx.fake.with_file_name("fake-slow-args");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/bash\n[[ \" $* \" == *\" -p \"* ]] && echo \"$*\" > \"$PWD/.args\"\nFAKE_MODE=slow exec {} \"$@\"\n",
+            fx.fake.display()
+        ),
+    )
+    .unwrap();
+    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: None,
+    });
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let run_and_stop = async |opts: pitd::supervisor::StartOpts| {
+        let meta = s.start(fx.repo.clone(), id, None, opts).unwrap();
+        for _ in 0..100 {
+            if s.get(&meta.id).unwrap().pid.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        s.stop(&meta.id).unwrap();
+        let end = wait_end(&s, &meta.id).await;
+        assert_eq!(end.state, RunState::Stopped);
+        end
+    };
+
+    // Stopped mid-work: the card keeps the run, to resume it.
+    let first = run_and_stop(Default::default()).await;
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!((c.state, c.paused.as_deref()), (CardState::Ready, Some(first.id.as_str())));
+
+    // Claude Code saved the session; a note arrives while the agent is away.
+    let claude = fx.home.with_file_name("claude-config");
+    fs::create_dir_all(claude.join("projects/-wt")).unwrap();
+    fs::write(claude.join("projects/-wt/sess-1.jsonl"), "{}\n").unwrap();
+    // SAFETY: only this test reads it, and the stand-in agent ignores it.
+    unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", &claude) };
+    cards::note(&r, id, "you", "Use 1 MB.").unwrap();
+
+    // Run again: the same session goes on, told what it missed; the card lets go of the old run.
+    let second = run_and_stop(Default::default()).await;
+    assert_eq!(second.resumed_from.as_deref(), Some(first.id.as_str()));
+    assert_eq!(second.session_id, "sess-1");
+    assert!(fs::read_to_string(second.worktree.join(".args")).unwrap().contains("--resume sess-1"));
+    let said = fs::read_to_string(second.worktree.join(".briefing-seen")).unwrap();
+    assert!(said.contains("same session") && said.contains("Use 1 MB."), "{said}");
+    assert_eq!(cards::get(&r, id).unwrap().paused.as_deref(), Some(second.id.as_str()));
+
+    // Start over: a new session from the card.
+    let third = run_and_stop(pitd::supervisor::StartOpts { fresh: true, ..Default::default() }).await;
+    assert_eq!(third.resumed_from, None);
+    assert!(!fs::read_to_string(third.worktree.join(".args")).unwrap().contains("--resume"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn over_the_socket_with_follow_and_recovery() {
     let fx = fx();
     let id = card(&fx, "Socket");

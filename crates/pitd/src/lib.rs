@@ -1,7 +1,7 @@
 //! `pit daemon`: owns the agent runs, so closing the app or the terminal never kills one.
 //! Speaks JSON, one message per line, on a Unix socket only this user can open.
 //!
-//! Requests: `ping`, `start {repo, card}`, `resume {run}`, `list {repo?}`, `get {run}`,
+//! Requests: `ping`, `start {repo, card, fresh?}`, `resume {run}`, `list {repo?}`, `get {run}`,
 //! `say {run, text}`, `tune {run, model?, effort?}`, `stop {run}`, `stop_all`, `perf`, `perf_set {config}`, `perf_hold {run, hold}`, `shutdown`, `hold` (the app; its end stops all
 //! and ends the daemon), `quota`, `ask {run, tool, input, tool_use_id}` (waits for a
 //! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
@@ -105,7 +105,9 @@ async fn handle(sup: &Arc<Supervisor>, req: &Value) -> Result<Value> {
             let instructions = req.get("instructions").and_then(Value::as_str).map(str::to_owned);
             // Run all's cards run on autopilot: fix rounds, more turns and landing need nobody.
             let autopilot = req.get("autopilot").and_then(Value::as_bool).unwrap_or(false);
-            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, into, direct, instructions, autopilot, ..Default::default() })? })
+            // A card stopped mid-work resumes its session unless the person starts over.
+            let fresh = req.get("fresh").and_then(Value::as_bool).unwrap_or(false);
+            json!({ "run": sup.start(repo, u32::try_from(card)?, None, supervisor::StartOpts { allow_api_key, no_brief, into, direct, instructions, autopilot, fresh, ..Default::default() })? })
         }
         "analyze" => {
             let repo = PathBuf::from(req.get("repo").and_then(Value::as_str).context("repo is required")?);

@@ -197,6 +197,8 @@ export interface Card {
   images?: string[];
   /** A few lines on what it is about, written by Claude (Sonnet) when it was made or its spec changed. */
   summary?: string;
+  /** The run stopped mid-work: the next Run resumes its Claude Code session instead of starting over. */
+  paused?: string;
   created: string;
   updated: string;
   questions?: Question[];
@@ -730,8 +732,9 @@ export const api = {
   projectContext: (path: string) => invoke<string>("project_context", { path }),
   projectContextSet: (path: string, text: string) => invoke<string>("project_context_set", { path, text }),
   /** `autopilot`: Run all's cards, which fix, continue and land on their own. */
-  runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null, autopilot = false) =>
-    invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions, autopilot }),
+  /** `fresh`: start over instead of resuming the card's stopped session. */
+  runStart: (path: string, card: number, allowApiKey = false, into: string | null = null, direct = false, instructions: string | null = null, autopilot = false, fresh = false) =>
+    invoke<RunMeta>("run_start", { path, card, allowApiKey, into, direct, instructions, autopilot, fresh }),
   runsStopAnalyses: () => invoke<number>("runs_stop_analyses"),
   runAllFinish: (path: string, cards: number[], instructions: string, into: string | null) =>
     invoke<Finish>("run_all_finish", { path, cards, instructions, into }),
