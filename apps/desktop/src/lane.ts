@@ -2,6 +2,7 @@
 import { landedLabel, landedProof, type Lane, type Yard } from "./api";
 import type { IconName } from "./icons";
 import { plural, t, tx } from "./i18n";
+import { ago } from "./format";
 
 /** `data-state` of .chip and .tower-row in design/components.css. */
 export type ChipState = "needs" | "running" | "done" | "failed" | "queued";
@@ -106,16 +107,6 @@ export function worktreeName(lane: Lane): string | null {
   if (!w) return null;
   if (w.is_main) return t("main checkout");
   return w.path.split("/").filter(Boolean).pop() ?? w.path;
-}
-
-export function ago(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 45) return t("just now");
-  const m = Math.round(s / 60);
-  if (m < 60) return t("{n}m ago", { n: m });
-  const h = Math.round(m / 60);
-  if (h < 24) return t("{n}h ago", { n: h });
-  return t("{n}d ago", { n: Math.round(h / 24) });
 }
 
 export const pad2 = (n: number) => String(n).padStart(2, "0");

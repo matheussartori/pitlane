@@ -1,7 +1,6 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { api, isLive, type Card, type Plan, type RunMeta, type Yard } from "./api";
-import { elapsed } from "./run";
 import { columnEmpty, columnIcon, columnTitle, columns, latestRun, movesFor, place, reviewSummary, unblockActions, type Column, type Move, type UnblockAction } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
@@ -11,7 +10,7 @@ import { refreshAgents } from "./agents";
 import { track } from "./lane";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { plural, t } from "./i18n";
-import { clock, msg } from "./format";
+import { clock, elapsed, msg } from "./format";
 
 
 /** The one stop worth naming at card size: your move, a count to settle, or what is wrong. */

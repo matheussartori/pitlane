@@ -24,7 +24,7 @@ import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
 import { CleanSheet, NewLaneSheet, ProjectSheet, RunAllSheet, ShipSheet } from "./sheets";
-import { Toasts, dismissable, installTips, toast } from "./ui";
+import { ScreenBoundary, Toasts, dismissable, installTips, toast } from "./ui";
 import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
 import { msg } from "./format";
@@ -803,6 +803,7 @@ export default function App() {
             }
           >
             {(path) => (
+              <ScreenBoundary resetOn={`${path()}|${tab()}|${runView() ?? ""}|${reviewView() ?? ""}`}>
               <Switch>
                 <Match when={reviewView() != null && reviewView()}>
                   {(card) => (
@@ -963,6 +964,7 @@ export default function App() {
                   <TerminalScreen repo={path()} repoName={current()?.name ?? t("repository")} lanes={yard()?.lanes ?? []} onOpenRun={openRun} />
                 </Match>
               </Switch>
+              </ScreenBoundary>
             )}
           </Show>
           </Show>

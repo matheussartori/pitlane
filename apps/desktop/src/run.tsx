@@ -4,7 +4,7 @@ import { api, isLive, onRun, type Card, type RunEvent, type RunMeta, type RunSta
 import { kindLabel } from "./agents";
 import { AgentConsole } from "./console";
 import { LaneTrack } from "./board";
-import { ago, noteBy } from "./cardsheet";
+import { noteBy } from "./cardsheet";
 import { Counts, DiffViewer, statusLetter, statusWord, type ChangedFile } from "./diffview";
 import { Prose } from "./prose";
 import { parsePatch } from "./review";
@@ -13,8 +13,7 @@ import type { ChipState } from "./lane";
 import { locale, plural, t } from "./i18n";
 import { ErrorLine, toast } from "./ui";
 import { Grip, RUN_SIDE_W } from "./layout";
-import { msg, clock } from "./format";
-
+import { age, clock, elapsed, kTokens, money, msg } from "./format";
 
 export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; label: string }> = {
   starting: { chip: "running", icon: "run", label: "Starting" },
@@ -25,17 +24,6 @@ export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; l
   stopped: { chip: "queued", icon: "queued", label: "Stopped" },
   interrupted: { chip: "needs", icon: "needs", label: "Interrupted" },
 };
-
-
-/** Wall time of a run: ticking while live, fixed once it ends. */
-export function elapsed(m: RunMeta, nowMs: number): number {
-  const end = m.ended_at ?? (isLive(m.state) ? nowMs / 1000 : m.started_at + (m.duration_ms ?? 0) / 1000);
-  return end - m.started_at;
-}
-
-export const money = (n: number | null | undefined) => (n == null ? "" : `$${n.toFixed(2)}`);
-export const kTokens = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 
 export function RunScreen(props: {
   repo: string;
@@ -537,7 +525,7 @@ function RunCard(props: { card?: Card; now: number; onOpen: () => void }) {
                         <Icon name={noteBy[n.by]?.icon ?? "person"} small />
                         <span class="note-by">{noteBy[n.by] ? t(noteBy[n.by]!.name) : n.by}</span>
                         <span class="note-at" title={n.at}>
-                          {ago(n.at, props.now)}
+                          {age(n.at, props.now)}
                         </span>
                       </div>
                       <Prose text={n.text} />

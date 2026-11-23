@@ -1,7 +1,7 @@
 // The one-card view (its notes, its questions, its runs) and Run all's questions, asked one at a time.
 import { For, Show, createEffect, createSignal, on } from "solid-js";
 import { api, isLive, type Card, type RunMeta, type Yard } from "./api";
-import { elapsed, money, runStateView } from "./run";
+import { runStateView } from "./run";
 import { columnIcon, columnTitle, movesFor, openQuestions, place, unblockActions, type Move } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
@@ -10,8 +10,8 @@ import { Prose, inline } from "./prose";
 import { DecisionItem, LiveMark, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
 import { ErrorLine, Sheet, Spinner, dismissable, toast } from "./ui";
 import { CARD_SIDE_W, Grip } from "./layout";
-import { locale, plural, t } from "./i18n";
-import { clock, msg } from "./format";
+import { plural, t } from "./i18n";
+import { age, clock, elapsed, money, msg } from "./format";
 import { ForgetSheet, MiniTrack, deleteCard, hasMemory, unblockCard } from "./board";
 
 /**
@@ -149,18 +149,6 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 }
 
 // ---------------------------------------------------------------- one card
-
-/** A note's age in words: "now", "12 min", "3 h", "2 d", then the date. */
-export function ago(at: string, now: number): string {
-  const ts = Date.parse(at);
-  if (Number.isNaN(ts)) return at;
-  const m = Math.floor((now - ts) / 60000);
-  if (m < 1) return t("now");
-  if (m < 60) return t("{n} min ago", { n: m });
-  if (m < 60 * 24) return t("{n} h ago", { n: Math.floor(m / 60) });
-  if (m < 60 * 24 * 7) return t("{n} d ago", { n: Math.floor(m / 1440) });
-  return new Date(ts).toLocaleDateString(locale(), { day: "numeric", month: "short" });
-}
 
 export const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
   claude: { name: "Claude", icon: "spark" },
@@ -530,7 +518,7 @@ export function CardSheet(props: {
                         <Icon name={noteBy[n.by]?.icon ?? "person"} small />
                         <span class="note-by">{noteBy[n.by] ? t(noteBy[n.by]!.name) : n.by}</span>
                         <span class="note-at" title={n.at}>
-                          {ago(n.at, props.now)}
+                          {age(n.at, props.now)}
                         </span>
                       </div>
                       <Prose text={n.text} />
@@ -668,8 +656,8 @@ export function CardSheet(props: {
           </Show>
 
           <p class="cs-meta">
-            {t("Created {when}", { when: ago(props.card.created, props.now) })}
-            <Show when={props.card.analyzed}>, {t("analysed {when}", { when: ago(props.card.analyzed!, props.now) })}</Show>
+            {t("Created {when}", { when: age(props.card.created, props.now) })}
+            <Show when={props.card.analyzed}>, {t("analysed {when}", { when: age(props.card.analyzed!, props.now) })}</Show>
           </p>
         </aside>
       </div>

@@ -118,4 +118,5 @@ export default {
   "{parts}, of {total} at once.": "{parts}, de {total} ao mesmo tempo.",
   "{repos} starts no new card until it is down to its share; its agents at work finish what they do.": "{repos} não começa card novo até descer à sua parte; os agentes que já trabalham terminam o que fazem.",
   "A repository with nothing ready lends its share to the others.": "Um repositório sem nada pronto empresta sua parte aos outros.",
+  "This screen hit an error: {error}": "Esta tela deu erro: {error}",
 } as Record<string, string>;

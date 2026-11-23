@@ -819,6 +819,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .prose blockquote { padding-inline-start: var(--space-sm); border-inline-start: 2px solid var(--color-rule-strong); color: var(--color-muted); }
 .prose hr { width: 100%; border: 0; border-top: 1px solid var(--color-rule); margin: var(--space-2xs) 0; }
 .prose-table { max-width: 100%; overflow-x: auto; }
+.screen-error { display: grid; gap: var(--space-sm); justify-items: start; padding: var(--space-lg); }
 .prose-table .table { width: auto; min-width: 50%; font-size: 0.9em; overflow-wrap: normal; }
 .prose-table .table td { height: auto; vertical-align: top; }
 .prose-table .table th { color: var(--color-ink); font-weight: var(--weight-strong); font-size: inherit; white-space: normal; }

@@ -5,10 +5,8 @@ import { Portal } from "solid-js/web";
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
-import { ago } from "./lane";
-import { money } from "./run";
 import { Spinner, toast } from "./ui";
-import { clock, msg } from "./format";
+import { ago, clock, money, msg } from "./format";
 
 /** The first sentence of a suggestion's spec, for its tile when Claude's line is not there. */
 const firstLine = (body: string) => {

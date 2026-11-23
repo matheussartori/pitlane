@@ -2,9 +2,8 @@
 import { For, Show } from "solid-js";
 import type { RunMeta } from "./api";
 import { Icon } from "./icons";
-import { ago } from "./lane";
-import { elapsed, kTokens, money, runStateView } from "./run";
-import { clock } from "./format";
+import { runStateView } from "./run";
+import { ago, clock, elapsed, kTokens, money } from "./format";
 import { plural, t } from "./i18n";
 import { Spinner } from "./ui";
 

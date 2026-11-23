@@ -389,6 +389,22 @@ export interface RunMeta {
   kind?: SessionKind;
   /** The run a side session belongs to. */
   parent?: string | null;
+  /** Started by Run all: Pitlane takes the next step itself instead of waiting for a person. */
+  autopilot?: boolean;
+  /** How many times the card's work was continued after running out of turns. */
+  extensions?: number;
+  /** The same branch in the project's related repositories, where the agent works too. */
+  related?: RelatedLane[];
+}
+
+/** One related repository's side of a run. */
+export interface RelatedLane {
+  /** The repository's folder name. */
+  name: string;
+  /** Its main worktree. */
+  root: string;
+  branch: string;
+  worktree: string;
 }
 
 export type SessionKind = "run" | "analysis" | "judge" | "finish";

@@ -433,6 +433,18 @@ export function createRunAll(shell: Shell) {
     return batches().reduce((n, x) => n + x.runs.filter((r) => isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge").length, 0);
   }
 
+  /** Advance passes, every repository's, one at a time: each counts the agents on the Mac
+   *  before it starts more, so two repositories passing together never both take the last room.
+   *  Resolves with the function that lets the next one go. */
+  let passing: Promise<void> = Promise.resolve();
+  function nextPass(): Promise<() => void> {
+    let release!: () => void;
+    const done = new Promise<void>((r) => (release = r));
+    const turn = passing;
+    passing = turn.then(() => done);
+    return turn.then(() => release);
+  }
+
   /** Starts every Queued card that can start now: no open question, nothing that must land first, nothing it would collide with, and room for it. */
   async function advance(b: Batch, allowApiKeyFor: number[] = []) {
     if (b.phase() !== "working" || !batches().includes(b)) return;
@@ -445,7 +457,9 @@ export function createRunAll(shell: Shell) {
     const token = b.token;
     const { into, direct } = b.choice;
     b.advancing = true;
+    let release = () => {};
     try {
+      release = await nextPass();
       await read(b, false);
       if (!alive(b, token)) return;
       const all = b.cards;
@@ -580,6 +594,7 @@ export function createRunAll(shell: Shell) {
         if (waiting.length === 0 && startable.length === 0) void finishIn(b);
       }
     } finally {
+      release();
       b.advancing = false;
       const again = b.rerun;
       b.rerun = null;

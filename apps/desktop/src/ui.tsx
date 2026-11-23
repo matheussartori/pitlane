@@ -1,5 +1,5 @@
 // Small building blocks: modal sheet, toasts, spinner.
-import { For, Show, createSignal, onCleanup, onMount, type JSX, type Resource } from "solid-js";
+import { ErrorBoundary, For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX, type Resource } from "solid-js";
 import { Icon } from "./icons";
 import { t } from "./i18n";
 
@@ -190,6 +190,30 @@ export function ok<T>(r: Resource<T>): T | undefined {
 /** Like `ok`, for `latest`: the last value, kept on screen while a re-read is in flight. */
 export function okLatest<T>(r: Resource<T>): T | undefined {
   return r.error ? undefined : r.latest;
+}
+
+/** A screen that fails to draw shows why, in its own place, instead of taking the whole app
+ *  down with it. It tries again when `resetOn` changes (another tab, another repository) or on
+ *  Try again. */
+export function ScreenBoundary(props: { resetOn: unknown; children: JSX.Element }) {
+  return (
+    <ErrorBoundary
+      fallback={(err, reset) => {
+        createEffect(on(() => props.resetOn, () => reset(), { defer: true }));
+        console.error(err);
+        return (
+          <div class="screen-error">
+            <ErrorLine>{t("This screen hit an error: {error}", { error: err instanceof Error ? err.message : String(err) })}</ErrorLine>
+            <button type="button" class="btn" onClick={reset}>
+              {t("Try again")}
+            </button>
+          </div>
+        );
+      }}
+    >
+      {props.children}
+    </ErrorBoundary>
+  );
 }
 
 export function ErrorLine(props: { children: JSX.Element }) {
