@@ -807,6 +807,42 @@ export async function openTerminal(cwd: string, label: string): Promise<boolean>
   }
 }
 
+/** Dev servers the terminals printed (Vite's "Local: http://localhost:5173/", Next's, Rails'…):
+ *  the newest line first, one per address, with the folder of the terminal that printed it. */
+export function localServers(): { url: string; cwd: string; label: string }[] {
+  const re = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[a-z0-9-]+\.localhost)(?::\d{2,5})?(?:\/[^\s'"<>)\]]*)?/gi;
+  const found: { url: string; cwd: string; label: string; at: number }[] = [];
+  for (const [id, l] of live) {
+    const m = meta[id];
+    if (!m || m.status === "exited" || m.run) continue;
+    const buf = l.term.buffer.active;
+    const end = buf.length;
+    for (let i = Math.max(0, end - 400); i < end; i++) {
+      const text = buf.getLine(i)?.translateToString(true) ?? "";
+      for (const hit of text.matchAll(re)) {
+        const url = hit[0].replace(/[.,;:]+$/, "").replace("0.0.0.0", "localhost");
+        found.push({ url, cwd: m.cwd, label: placeName(id), at: (l.last || 0) * 1e6 + i });
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return found
+    .sort((a, b) => b.at - a.at)
+    .filter((f) => {
+      const origin = (() => {
+        try {
+          return new URL(f.url).origin;
+        } catch {
+          return f.url;
+        }
+      })();
+      if (seen.has(origin)) return false;
+      seen.add(origin);
+      return true;
+    })
+    .map(({ url, cwd, label }) => ({ url, cwd, label }));
+}
+
 /** A terminal in that folder: the open tab already there (its focused pane, still running), else a new one. */
 export async function terminalAt(cwd: string, label: string): Promise<boolean> {
   const there = st.tabs.find((tb) => meta[tb.focus]?.cwd === cwd && meta[tb.focus]?.status !== "exited" && !meta[tb.focus]?.run);

@@ -44,10 +44,10 @@ export function shortcuts(shell: Shell): (e: KeyboardEvent) => void {
       } else if ((e.key === "c" || e.key === "C") && (tab() === "board" || tab() === "inbox")) {
         e.preventDefault();
         setSheet({ kind: "new-card" });
-      } else if (/^Digit[1-8]$/.test(e.code) && e.altKey) {
+      } else if (/^Digit[1-9]$/.test(e.code) && e.altKey) {
         // e.code: on macOS Option+1 types ¡, so e.key is no use here.
         e.preventDefault();
-        setTab((["inbox", "board", "lanes", "terminal", "code", "ledger", "reports", "performance"] as const)[Number(e.code.slice(5)) - 1]!);
+        setTab((["inbox", "board", "lanes", "terminal", "code", "preview", "ledger", "reports", "performance"] as const)[Number(e.code.slice(5)) - 1]!);
       }
     }
     if (e.key === "Escape") setMenu(false);

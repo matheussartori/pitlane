@@ -18,6 +18,7 @@ import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalAt, terminalsWanting } from "./terminals";
 import { AgentDock, agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./agents";
+import { PreviewScreen } from "./preview";
 import { CodeScreen, codeRoot, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
@@ -31,7 +32,7 @@ import { cards, dropCardPoll, dropLoads, error, fetchedAt, fetching, jobs, load,
 import { createRunAll, batchIds } from "./runall";
 import { shortcuts } from "./shortcuts";
 
-export type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "terminal" | "settings";
+export type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "preview" | "terminal" | "settings";
 export type SheetState =
   | { kind: "ship"; lane: Lane; to: string }
   | { kind: "clean" }
@@ -45,7 +46,7 @@ export type SheetState =
   | null;
 
 const TAB_KEY = "pitlane.tab";
-const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "reports" || t === "performance" || t === "code" || t === "terminal" || t === "settings";
+const isTab = (t: string | null): t is Tab => t === "inbox" || t === "board" || t === "lanes" || t === "ledger" || t === "reports" || t === "performance" || t === "code" || t === "preview" || t === "terminal" || t === "settings";
 /** The screen lives in the URL hash (#board), falling back to the last one used. */
 function savedTab(): Tab {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -86,7 +87,7 @@ export default function App() {
       /* private window: the choice simply is not remembered */
     }
   };
-  const towerHere = () => towerOpen() && !["lanes", "terminal", "code", "settings"].includes(tab());
+  const towerHere = () => towerOpen() && !["lanes", "terminal", "code", "preview", "settings"].includes(tab());
   const setTab = (t: Tab) => {
     setTabSignal(t);
     setRunView(null);
@@ -586,9 +587,10 @@ export default function App() {
       ["lanes", "lanes", t("Lanes"), "⌥3"],
       ["terminal", "term", t("Terminal"), "⌥4"],
       ["code", "code", t("Code"), "⌥5"],
-      ["ledger", "ledger", t("Ledger"), "⌥6"],
-      ["reports", "note", t("Reports"), "⌥7"],
-      ["performance", "gauge", t("Performance"), "⌥8"],
+      ["preview", "preview", t("Preview"), "⌥6"],
+      ["ledger", "ledger", t("Ledger"), "⌥7"],
+      ["reports", "note", t("Reports"), "⌥8"],
+      ["performance", "gauge", t("Performance"), "⌥9"],
     ];
     for (const [to, icon, title, keys] of screens) out.push({ id: `s-${to}`, group: t("Go to"), icon, title, keys, run: go(to) });
     return out;
@@ -694,10 +696,11 @@ export default function App() {
             liveLabel={plural(agentsWorking(), "{n} agent working", "{n} agents working")}
           />
           <RailItem icon="code" label="Code" keys="⌥5" current={here("code")} onClick={() => setTab("code")} />
+          <RailItem icon="preview" label="Preview" keys="⌥6" current={here("preview")} onClick={() => setTab("preview")} />
           <div class="navrail-sep" />
-          <RailItem icon="ledger" label="Ledger" keys="⌥6" current={here("ledger")} onClick={() => setTab("ledger")} />
-          <RailItem icon="note" label="Reports" keys="⌥7" current={here("reports")} onClick={() => setTab("reports")} />
-          <RailItem icon="gauge" label="Performance" keys="⌥8" current={here("performance")} onClick={() => setTab("performance")} />
+          <RailItem icon="ledger" label="Ledger" keys="⌥7" current={here("ledger")} onClick={() => setTab("ledger")} />
+          <RailItem icon="note" label="Reports" keys="⌥8" current={here("reports")} onClick={() => setTab("reports")} />
+          <RailItem icon="gauge" label="Performance" keys="⌥9" current={here("performance")} onClick={() => setTab("performance")} />
         </div>
         <div class="navrail-foot">
           <Show when={quota() && quota()!.events.length > 0 ? quota() : null}>
@@ -732,7 +735,7 @@ export default function App() {
       {/* On Lanes the screen is the Tower at full width, so the docked one folds away. */}
       <div class="panel">
       <div class="body" data-tower={towerHere() ? "" : undefined} style={{ "--tower-w": `${TOWER_W.get()}px` }}>
-        <main class="main" data-flush={(tab() === "terminal" || tab() === "code" || tab() === "settings") && !runView() && reviewView() == null ? "" : undefined}>
+        <main class="main" data-flush={(tab() === "terminal" || tab() === "code" || tab() === "preview" || tab() === "settings") && !runView() && reviewView() == null ? "" : undefined}>
           <Show
             when={tab() !== "settings"}
             fallback={
@@ -919,6 +922,9 @@ export default function App() {
                 </Match>
                 <Match when={tab() === "ledger"}>
                   <LedgerView runs={runs()} now={now()} onOpen={openRun} />
+                </Match>
+                <Match when={tab() === "preview"}>
+                  <PreviewScreen onTerminal={() => void terminalHere()} />
                 </Match>
                 <Match when={tab() === "code"}>
                   <CodeScreen repo={path()} repoName={current()?.name ?? "repository"} lanes={yard()?.lanes ?? []} />

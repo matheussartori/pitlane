@@ -18,6 +18,7 @@ export {
   startTerminals,
   openTerminal,
   terminalAt,
+  localServers,
   resumeInTerminal,
   closePane,
   closeTab,

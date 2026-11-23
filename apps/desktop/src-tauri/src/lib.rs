@@ -21,6 +21,7 @@ mod holes;
 mod lanes;
 mod menu;
 mod os;
+mod preview;
 mod runs;
 mod settings;
 mod term;
@@ -163,6 +164,10 @@ pub fn run() {
             code_view::vscode_hide,
             code_view::vscode_holes,
             code_view::vscode_open,
+            preview::preview_show,
+            preview::preview_hide,
+            preview::preview_reload,
+            preview::preview_close,
             os::open_external,
             term_cmds::term_write,
             term_cmds::term_resize,

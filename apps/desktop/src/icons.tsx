@@ -44,6 +44,8 @@ const paths: Record<string, () => JSX.Element> = {
   pause: () => <path d="M9 6.5v11M15 6.5v11" />,
   settings: () => (<><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>),
   folder: () => <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  preview: () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M3.5 9h17M8 14l2 2 4-4" /></>),
+  external: () => <path d="M14 4.5h5.5V10M19.5 4.5l-8 8M17 14v4.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1H10" />,
 };
 
 export type IconName = keyof typeof paths;
