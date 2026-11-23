@@ -7,6 +7,7 @@
 //! person), `decide {run, approval?, decision, message?}`, `approvals`, and `follow {run, from}`, which streams
 //! `{i, event}` lines and ends with `{end: <run>}`.
 
+mod peer;
 pub mod perf;
 pub mod supervisor;
 
@@ -67,6 +68,12 @@ fn single_instance(home: &std::path::Path) -> Result<std::fs::File> {
 }
 
 async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
+    // Asked once per connection: a process does not leave a session while it holds a socket.
+    // A peer whose pid cannot be read is treated as one of the sessions'.
+    let agent = match stream.peer_cred().ok().and_then(|c| c.pid()) {
+        Some(pid) => peer::from_agent(pid, std::process::id() as i32, &sup.session_groups()),
+        None => true,
+    };
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Some(line) = lines.next_line().await? {
@@ -77,6 +84,11 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
                 continue;
             }
         };
+        let op = req.get("op").and_then(Value::as_str).unwrap_or("");
+        if agent && !peer::allowed_from_agent(op) {
+            send(&mut write, &json!({ "error": format!("{op:?} is not open to a session's own processes: it is yours to do, from Pitlane or pit") })).await?;
+            continue;
+        }
         if req.get("op").and_then(Value::as_str) == Some("hold") {
             // The desktop app holds this connection while it is open. When it closes (quit,
             // crash, force quit), everything the daemon started stops and the daemon ends.

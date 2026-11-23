@@ -227,6 +227,13 @@ impl Supervisor {
         self.stop_matching(which)
     }
 
+    /// The process groups of the sessions on now: each agent leads its own group.
+    pub fn session_groups(&self) -> std::collections::HashSet<i32> {
+        let mut groups: std::collections::HashSet<i32> = self.live.lock().unwrap().values().filter_map(|l| l.meta.pid).map(|p| p as i32).collect();
+        groups.extend(self.one_shots.lock().unwrap().iter().map(|p| *p as i32));
+        groups
+    }
+
     /// Stops the live sessions that match; what waits for a slot keeps waiting.
     pub(super) fn stop_matching(self: &Arc<Self>, which: impl Fn(&RunMeta) -> bool) -> usize {
         let pids: Vec<(String, u32)> = {
