@@ -51,6 +51,97 @@ struct AccountOut {
     usage: Option<Usage>,
     /// The account this repository uses.
     here: bool,
+    /// Every usage window its runs reported (5-hour, 7-day, per model…), with when it resets.
+    windows: Vec<Window>,
+    /// Extra usage past the plan, as the last report on this account put it.
+    overage: Option<Overage>,
+}
+
+#[derive(Debug, Serialize)]
+struct Window {
+    window: String,
+    /// Percent used.
+    used: f64,
+    /// Unix seconds; 0 when not reported.
+    resets_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct Overage {
+    /// `allowed`, `allowed_warning` or `rejected`, as Claude Code reports it.
+    status: String,
+    /// Why it is off (`org_level_disabled`…), when it is.
+    reason: Option<String>,
+    /// Whether runs spend extra usage right now.
+    using: bool,
+    /// When this was reported (unix seconds).
+    at: u64,
+}
+
+/// The newest rate-limit report among this account's recent runs, read from the runs' own event
+/// logs (what Claude Code printed; no login is read). Only the tail of each log is read.
+fn overage_of(pitlane_home: &std::path::Path, account: &str) -> Option<Overage> {
+    use std::io::{Read, Seek, SeekFrom};
+    let dir = pitlane_home.join("runs");
+    let mut runs: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let ev = e.path().join("events.jsonl");
+            let t = std::fs::metadata(&ev).and_then(|m| m.modified()).ok()?;
+            Some((t, e.path()))
+        })
+        .collect();
+    runs.sort_by_key(|r| std::cmp::Reverse(r.0));
+    for (t, run) in runs.into_iter().take(40) {
+        let Some(meta) = std::fs::read(run.join("meta.json")).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else { continue };
+        if meta.get("account").and_then(|a| a.as_str()).unwrap_or("default") != account {
+            continue;
+        }
+        let Ok(mut f) = std::fs::File::open(run.join("events.jsonl")) else { continue };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let _ = f.seek(SeekFrom::Start(len.saturating_sub(1 << 20)));
+        let mut tail = String::new();
+        if f.read_to_string(&mut tail).is_err() {
+            let mut bytes = Vec::new();
+            let _ = f.seek(SeekFrom::Start(len.saturating_sub(1 << 20)));
+            let _ = f.read_to_end(&mut bytes);
+            tail = String::from_utf8_lossy(&bytes).into_owned();
+        }
+        for line in tail.lines().rev().filter(|l| l.contains("\"rate_limit_event\"")) {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let info = &v["rate_limit_info"];
+            let Some(status) = info.get("overageStatus").and_then(|x| x.as_str()) else { continue };
+            return Some(Overage {
+                status: status.to_owned(),
+                reason: info.get("overageDisabledReason").and_then(|x| x.as_str()).map(str::to_owned),
+                using: info.get("isUsingOverage").and_then(|x| x.as_bool()).unwrap_or(false),
+                at: t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            });
+        }
+    }
+    None
+}
+
+/// Whether Claude Code has Pitlane's MCP server (`claude mcp get pitlane`, run in the repository so
+/// every scope counts). The CLI answers about its own config; Pitlane reads only the exit status.
+#[tauri::command]
+pub(crate) async fn mcp_connected(path: String) -> CmdResult<bool> {
+    blocking(move || {
+        let root = open(&path)?.root;
+        let ok = std::process::Command::new("claude")
+            .args(["mcp", "get", "pitlane"])
+            .current_dir(&root)
+            .env_remove("CLAUDECODE")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        Ok(ok)
+    })
+    .await
 }
 
 #[derive(Debug, Serialize)]
@@ -93,6 +184,23 @@ pub(crate) async fn accounts_list(path: String) -> CmdResult<AccountsOut> {
                     u
                 }),
                 here: a.id == mine,
+                windows: quota
+                    .get(&a.id)
+                    .map(|evs| {
+                        let mut w: Vec<Window> = evs
+                            .iter()
+                            .filter_map(|e| match e {
+                                RunEvent::Quota { window, used, resets_at } => Some(Window { window: window.clone(), used: used * 100.0, resets_at: *resets_at }),
+                                _ => None,
+                            })
+                            .collect();
+                        // The 5-hour window first, then the weekly ones.
+                        w.sort_by_key(|x| (x.window != "five_hour", x.window.clone()));
+                        w.dedup_by(|a, b| a.window == b.window);
+                        w
+                    })
+                    .unwrap_or_default(),
+                overage: if a.kind.is_api_key() { None } else { overage_of(&pitlane_home, &a.id) },
             })
             .collect();
         Ok(AccountsOut {

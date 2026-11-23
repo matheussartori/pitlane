@@ -647,9 +647,9 @@ export function BoardView(props: {
           </p>
         </Show>
         <span class="spacer" />
-        <button type="button" class="btn btn-primary" onClick={props.onNew}>
+        <button type="button" class="btn btn-primary" data-tip={`${t("New card")} · C`} onClick={props.onNew}>
           <Icon name="plus" small />
-          {t("New card")} <span class="kbd">C</span>
+          {t("New card")}
         </button>
       </header>
 

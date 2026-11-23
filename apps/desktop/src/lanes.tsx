@@ -1,7 +1,7 @@
 // The Lanes screen: every lane grouped by who acts next, each with its place on the track
 // (local, remote, integration, production). The Tower is the same lanes, compact, for the other screens.
 import { For, Show, createEffect, type JSX } from "solid-js";
-import { isLive, isOpenJob, type Lane, type RunMeta, type ShipJob, type Yard } from "./api";
+import { isLive, isOpenJob, isStandingStop, type Lane, type RunMeta, type ShipJob, type Yard } from "./api";
 import { ago, clock, elapsed } from "./format";
 import { Icon } from "./icons";
 import { group, groupOrder, groupTitle, laneView, next, pad2, shipTarget, syncView, track, worktreeName, type Group } from "./lane";
@@ -91,9 +91,9 @@ export function LanesView(props: LanesProps) {
           </Show>
           {props.fetching ? t("Fetching") : props.fetchedAt ? t("Fetched {when}", { when: ago(props.now - props.fetchedAt) }) : tx("Fetch", "git")}
         </button>
-        <button type="button" class="btn btn-primary" onClick={props.onNew}>
+        <button type="button" class="btn btn-primary" data-tip={`${t("New lane")} · N`} onClick={props.onNew}>
           <Icon name="plus" small />
-          {t("New lane")} <span class="kbd">N</span>
+          {t("New lane")}
         </button>
       </header>
 
@@ -199,7 +199,7 @@ export function queuedGroup(l: Lane, jobs: ShipJob[], reviewing: string[] = []):
   const mine = jobs.filter((j) => j.branch === l.branch);
   if (reviewing.includes(l.branch)) return "waiting"; // its card waits on your review
   if (mine.some(isOpenJob)) return "progress";
-  if (mine.some((j) => j.state === "conflict" || j.state === "failed")) return "waiting";
+  if (mine.some((j) => isStandingStop(j, jobs))) return "waiting";
   return group(l);
 }
 
@@ -221,7 +221,7 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
   // The lane's place in the merge queue: in line, shipping, or the conflict that stopped it.
   const job = () => {
     const mine = p.props.jobs.filter((j) => j.branch === l.branch);
-    return mine.find(isOpenJob) ?? mine.find((j) => j.state === "conflict" || j.state === "failed");
+    return mine.find(isOpenJob) ?? mine.find((j) => isStandingStop(j, p.props.jobs));
   };
   const place = () => {
     const j = job();

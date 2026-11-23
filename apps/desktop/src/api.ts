@@ -422,9 +422,22 @@ export type AccountKind = "subscription" | "team" | "api-key";
 export interface AccountView {
   id: string;
   kind: AccountKind;
-  status: { logged_in: boolean; method: string | null; email: string | null; problem: string | null };
+  status: {
+    logged_in: boolean;
+    method: string | null;
+    email: string | null;
+    /** The plan as Claude Code names it (`max_20x`, `pro`). */
+    plan?: string | null;
+    org?: string | null;
+    login_expires_at?: string | null;
+    problem: string | null;
+  };
   usage: { five_hour: number | null; seven_day: number | null } | null;
   here: boolean;
+  /** Every usage window its runs reported, percent used and when it resets (unix seconds, 0 unknown). */
+  windows?: { window: string; used: number; resets_at: number }[];
+  /** Extra usage past the plan, as the last report put it. */
+  overage?: { status: string; reason: string | null; using: boolean; at: number } | null;
 }
 
 export interface Accounts {
@@ -604,6 +617,12 @@ export interface ShipJob {
 }
 
 export const isOpenJob = (j: ShipJob) => j.state === "queued" || j.state === "shipping";
+/** A conflict or failure still standing: the newest try of that branch into that target in that
+ *  repository. A later try that went in (or is in line) supersedes it, so it no longer waits on you. */
+export function isStandingStop(j: ShipJob, all: ShipJob[]): boolean {
+  if (j.state !== "conflict" && j.state !== "failed") return false;
+  return !all.some((x) => x !== j && x.repo === j.repo && x.branch === j.branch && x.target === j.target && x.state !== "removed" && x.queued_at > j.queued_at);
+}
 
 export interface RepoEntry {
   path: string;
@@ -844,6 +863,8 @@ export const api = {
   runTimeline: (run: string) => invoke<[number, RunEvent][]>("run_timeline", { run }),
   runFollow: (run: string, from: number) => invoke<void>("run_follow", { run, from }),
   quota: (path: string) => invoke<Quota>("quota", { path }),
+  /** Whether Claude Code has Pitlane's MCP server (asks `claude mcp get pitlane`). */
+  mcpConnected: (path: string) => invoke<boolean>("mcp_connected", { path }),
   cardAdd: (path: string, title: string, body: string) => invoke<Card>("card_add", { path, title, body }),
   cardUpdate: (
     path: string,

@@ -120,7 +120,8 @@ export default function App() {
     (runs() ?? []).filter((r) => r.card === card).sort((a, b) => (b.round ?? 0) - (a.round ?? 0) || b.started_at - a.started_at)[0];
   const [now, setNow] = createSignal(Date.now());
   const [selected, setSelected] = createSignal<string | null>(null);
-  const [sheet, setSheet] = createSignal<SheetState>(null);
+  // The browser preview opens a sheet from the address (`?sheet=accounts`), to look at it without clicking.
+  const [sheet, setSheet] = createSignal<SheetState>(import.meta.env.DEV && new URLSearchParams(location.search).get("sheet") === "accounts" ? { kind: "accounts" } : null);
   const [menu, setMenu] = createSignal(false);
   const [palette, setPalette] = createSignal(false);
   /** Presence in force, read each time ⌘K opens so its entry offers the other mode. */
@@ -893,6 +894,8 @@ export default function App() {
                     onOpenCard={(id) => setSheet({ kind: "card", id })}
                     approvals={approvals()}
                     onOpenRun={openRun}
+                    runs={runs() ?? []}
+                    now={now()}
                   />
                 </Match>
                 <Match when={tab() === "board"}>

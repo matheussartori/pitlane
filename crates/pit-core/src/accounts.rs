@@ -275,6 +275,15 @@ pub struct AccountStatus {
     pub logged_in: bool,
     pub method: Option<String>,
     pub email: Option<String>,
+    /// The plan as the CLI names it (`max_20x`, `pro`), when it says.
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// The organization the login belongs to.
+    #[serde(default)]
+    pub org: Option<String>,
+    /// When the login has to be renewed (RFC 3339), when the CLI says.
+    #[serde(default)]
+    pub login_expires_at: Option<String>,
     /// Why it could not be told, when it could not.
     pub problem: Option<String>,
 }
@@ -298,6 +307,9 @@ pub fn status(account: &Account, pitlane_home: &Path, claude_bin: &str) -> Accou
                 logged_in: v.get("loggedIn").and_then(|x| x.as_bool()).unwrap_or(false),
                 method: v.get("authMethod").and_then(|x| x.as_str()).filter(|m| *m != "none").map(str::to_owned),
                 email: v.get("email").and_then(|x| x.as_str()).map(str::to_owned),
+                plan: v.get("planTier").or_else(|| v.get("subscriptionType")).and_then(|x| x.as_str()).map(str::to_owned),
+                org: v.get("orgName").and_then(|x| x.as_str()).map(str::to_owned),
+                login_expires_at: v.get("loginExpiresAt").and_then(|x| x.as_str()).map(str::to_owned),
                 problem: None,
             },
             Err(_) => AccountStatus { problem: Some("claude auth status gave no JSON".into()), ..Default::default() },

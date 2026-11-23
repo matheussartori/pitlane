@@ -108,7 +108,7 @@ body { background: var(--color-frame); }
 .c-no { width: 36px; }
 .c-track { width: 280px; }
 .c-wt { width: 128px; }
-.c-next { width: 280px; }
+.c-next { width: 340px; }
 .yard thead th { text-align: left; font: var(--weight-regular) var(--text-xs)/1.2 var(--font-body); color: var(--color-muted); padding: 0 var(--space-xs) var(--space-2xs); border-bottom: 1px solid var(--color-rule-strong); white-space: nowrap; }
 .yard .end { text-align: right; }
 .group-row th { padding: var(--space-md) var(--space-xs) var(--space-2xs); text-align: left; font-weight: var(--weight-regular); border-bottom: 1px solid var(--color-rule); }
@@ -148,14 +148,16 @@ body { background: var(--color-frame); }
 .wt { font-size: var(--text-sm); color: var(--color-muted); white-space: nowrap; }
 .wt[data-dirty] { color: var(--color-ink-2); }
 
-.next { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-xs); min-width: 0; }
+.next { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-sm); min-width: 0; }
 .next-text { display: inline-flex; align-items: center; gap: var(--space-2xs); font-size: var(--text-sm); color: var(--color-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .next-text[data-tone="needs"] { color: var(--color-accent-text); }
 .next-text[data-tone="failed"] { color: var(--color-fail); }
 .next-text[data-tone="muted"] { color: var(--color-muted); }
 /* Every action shows at rest as quiet text, so a column of them never reads as a wall of buttons.
    Rows waiting on you colour it as your move; any row fills it when you reach for it. */
-.yard .next .btn { margin-inline-end: calc(-1 * var(--space-xs)); background: transparent; box-shadow: none; color: var(--color-ink); transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out); }
+/* Row actions sit quiet until the row is yours (hover, focus, selected); only the last one hangs into the gutter, so two never touch. */
+.yard .next > .btn:last-child { margin-inline-end: calc(-1 * var(--space-xs)); }
+.yard .next .btn { background: transparent; box-shadow: none; color: var(--color-muted); transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out); }
 .yard tr[data-needs] .next .btn { color: var(--color-accent-text); }
 .yard tr:is(:hover, :focus-within, [aria-selected="true"]) .next .btn { background: var(--color-paper-3); box-shadow: var(--ring); color: var(--color-ink); }
 .lane-name .subject-warn { color: var(--color-accent-text); }
@@ -239,7 +241,58 @@ body { background: var(--color-frame); }
 .card-where b { color: var(--color-ink); font-weight: var(--weight-strong); }
 
 /* ---------- Inbox ---------- */
-.inbox { width: 100%; max-width: 820px; margin-inline: 0; display: grid; gap: var(--space-lg); align-content: start; }
+.inbox { width: 100%; max-width: 880px; margin-inline: auto; display: grid; gap: var(--space-lg); align-content: start; }
+/* One thing at a time (revised 23 nov 2026): the item fills the column, the question reads large,
+ * the stepper says where you are, and what comes next is one quiet line under it. */
+.ask-stepper { display: inline-flex; align-items: center; gap: var(--space-2xs); }
+.ask-count { min-width: 6ch; text-align: center; font: var(--weight-strong) var(--text-sm)/1 var(--font-mono); color: var(--color-ink-2); font-variant-numeric: tabular-nums; }
+.chev-prev { transform: rotate(90deg); }
+.chev-next { transform: rotate(-90deg); }
+.ask { display: grid; gap: var(--space-md); padding: var(--space-lg) var(--space-xl) var(--space-xl); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: var(--ring); }
+.ask-from { display: flex; align-items: baseline; gap: var(--space-sm); flex-wrap: wrap; min-width: 0; }
+.ask-from .caption { margin: 0; }
+.ask-q { margin: 0; font: var(--weight-display) var(--text-2xl)/1.4 var(--font-display); color: var(--color-ink); text-wrap: pretty; max-width: 62ch; }
+.ask .q-context { font-size: var(--text-lg); line-height: 1.6; color: var(--color-ink-2); max-width: 68ch; }
+.ask .options { gap: var(--space-xs); }
+.ask .option { min-height: 44px; padding-block: var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper); box-shadow: var(--ring); color: var(--color-ink); font-size: var(--text-md); text-align: left; white-space: normal; }
+.ask .option:hover { background: var(--color-paper-3); }
+.ask .option[data-recommended] small, .ask .option[data-recommended] .kbd { color: var(--color-accent-text); }
+.ask .approval { border: 0; padding: 0; background: none; box-shadow: none; }
+.ask-decided { border-top: 1px solid var(--color-rule); padding-top: var(--space-sm); }
+.ask-decided > summary { cursor: pointer; font-size: var(--text-sm); color: var(--color-muted); }
+.ask-decided > summary:hover { color: var(--color-ink); }
+.ask-decided[open] > summary { margin-bottom: var(--space-sm); }
+.ask-foot { display: flex; align-items: center; gap: var(--space-md); min-width: 0; }
+.ask-foot .keys { margin: 0; flex-shrink: 0; }
+.ask-next { display: inline-flex; align-items: center; gap: var(--space-xs); min-width: 0; max-width: 70%; height: var(--control-h); padding-inline: var(--space-xs); border: 0; border-radius: var(--radius-md); background: none; color: var(--color-ink-2); font: var(--weight-regular) var(--text-sm)/1 var(--font-body); cursor: pointer; }
+.ask-next:hover { background: var(--color-paper-2); color: var(--color-ink); }
+.ask-next-label { flex-shrink: 0; color: var(--color-muted); }
+.ask-next-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Nothing waits on you: a calm head, then what works, what you just decided. */
+.inbox-clear { display: grid; gap: var(--space-xl); }
+.clear-head { display: flex; align-items: flex-start; gap: var(--space-md); padding: var(--space-lg); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: var(--ring); }
+.clear-mark { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: color-mix(in oklch, var(--color-done) 14%, transparent); color: var(--color-done); }
+.clear-title { font: var(--weight-display) var(--text-lg)/1.3 var(--font-display); color: var(--color-ink); }
+.clear-body { margin-top: var(--space-3xs); font-size: var(--text-sm); color: var(--color-ink-2); }
+.clear-section { display: grid; gap: var(--space-xs); }
+.clear-section .caption { margin: 0; }
+.clear-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.clear-list > li + li { border-top: 1px solid var(--color-rule); }
+.clear-row { display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-height: 40px; padding: var(--space-xs) var(--space-xs); border: 0; border-radius: var(--radius-md); background: none; color: var(--color-ink); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.clear-row:hover { background: var(--color-paper-2); }
+.clear-row .card-id, .clear-settled .card-id { flex-shrink: 0; font-family: var(--font-mono); color: var(--color-ink-2); }
+.clear-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clear-row-meta { flex-shrink: 0; font-size: var(--text-xs); color: var(--color-muted); }
+.clear-row-clock { flex-shrink: 0; font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-ink-2); font-variant-numeric: tabular-nums; min-width: 6ch; text-align: right; }
+.clear-decision { align-items: flex-start; }
+.clear-decision-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.clear-decision-q { color: var(--color-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clear-decision-a { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--color-ink); }
+.clear-decision-a .icon { color: var(--color-done); flex-shrink: 0; }
+.clear-settled { border-radius: var(--radius-md); background: var(--color-paper-2); box-shadow: var(--ring); }
+.clear-settled > summary { display: flex; align-items: center; gap: var(--space-sm); min-height: 40px; padding-inline: var(--space-sm); cursor: pointer; font-size: var(--text-sm); color: var(--color-ink); }
+.clear-settled[open] > summary { border-bottom: 1px solid var(--color-rule); }
+.clear-settled > .decided { padding: var(--space-sm); }
 .keys { color: var(--color-muted); font-size: var(--text-xs); display: inline-flex; align-items: center; gap: var(--space-2xs); flex-wrap: wrap; }
 .inbox-list { display: grid; gap: var(--space-lg); }
 /* The page never scrolls; only .main does. Native anchoring is off where the Inbox anchors by hand, so the two never add up. */
@@ -359,6 +412,38 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .accounts-rule { font-size: var(--text-sm); color: var(--color-ink-2); }
 .accounts-rule code, .route code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .accounts { list-style: none; margin: 0; padding: 0; display: grid; }
+/* Accounts as /usage shows them: one block per login (who, plan, state), then every window it reported
+ * as a full bar with when it resets, then extra usage and the login's renewal. */
+.accounts:has(.account-card) { gap: var(--space-sm); }
+.account-card { display: grid; gap: var(--space-md); padding: var(--space-md); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: var(--ring); }
+.account-card[data-here] { box-shadow: var(--ring), inset 2px 0 0 var(--color-accent); }
+.account-top { display: flex; align-items: center; gap: var(--space-md); min-width: 0; }
+.account-top .account-pick { flex: 1; }
+.account-title { display: flex; align-items: baseline; gap: var(--space-xs); flex-wrap: wrap; min-width: 0; }
+.account-title b { font: var(--weight-display) var(--text-md)/1.2 var(--font-body); color: var(--color-ink); }
+.account-plan { font: var(--weight-strong) var(--text-xs)/1 var(--font-body); color: var(--color-ink-2); }
+.account-here { font-size: var(--text-xs); color: var(--color-accent-text); }
+.account-who { font-size: var(--text-sm); color: var(--color-ink-2); overflow-wrap: anywhere; }
+.usage { display: grid; gap: var(--space-md); }
+.usage-row { display: grid; gap: var(--space-2xs); }
+.usage-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); }
+.usage-name { font-size: var(--text-sm); color: var(--color-ink); font-weight: var(--weight-strong); }
+.usage-span { color: var(--color-muted); font-weight: var(--weight-regular); }
+.usage-figure { font: var(--weight-strong) var(--text-sm)/1 var(--font-mono); color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.usage-track { height: 6px; border-radius: 3px; background: var(--color-paper-3); overflow: hidden; }
+.usage-fill { height: 100%; width: 100%; background: var(--color-ink-2); transform-origin: left; transform: scaleX(var(--v, 0)); transition: transform var(--dur-long) var(--ease-out); }
+.usage-row[data-level="high"] .usage-fill { background: var(--color-accent); }
+.usage-row[data-level="out"] .usage-fill { background: var(--color-fail); }
+.usage-row[data-level="out"] .usage-figure { color: var(--color-fail); }
+.usage-reset { font-size: var(--text-xs); color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.usage-empty { margin: 0; }
+.usage-note { margin: 0; }
+.account-facts { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-xl); margin: 0; padding-top: var(--space-sm); border-top: 1px solid var(--color-rule); }
+.account-facts > div { display: grid; gap: 2px; }
+.account-facts dt { font-size: var(--text-xs); color: var(--color-muted); }
+.account-facts dd { margin: 0; font-size: var(--text-sm); color: var(--color-ink-2); }
+.account-facts dd[data-tone="done"] { color: var(--color-done); }
+.account-facts dd[data-tone="needs"] { color: var(--color-accent-text); }
 .account { display: grid; grid-template-columns: minmax(0, 1fr) auto 200px; gap: var(--space-md); align-items: center; padding: var(--space-sm) 0; border-top: 1px solid var(--color-rule); }
 .account:last-child { border-bottom: 1px solid var(--color-rule); }
 .account-pick { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; min-width: 0; }
@@ -444,6 +529,39 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .card-run-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .ledger { width: 100%; margin-inline: 0; display: grid; gap: var(--space-lg); align-content: start; }
+/* Ledger (revised 23 nov 2026): four figures on top, the cards the money went to, then the runs by day. */
+.ledger { max-width: 1100px; }
+.ledger-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); }
+.stat { display: grid; gap: var(--space-3xs); padding: var(--space-md); border-radius: var(--radius-lg); background: var(--color-paper-2); box-shadow: var(--ring); min-width: 0; }
+.stat-label { font-size: var(--text-xs); color: var(--color-muted); }
+.stat-value { font: var(--weight-display) 20px/1.2 var(--font-mono); color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.stat-value[data-live] { color: var(--color-run); }
+.stat-sub { font-size: var(--text-xs); color: var(--color-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-top { display: grid; gap: var(--space-xs); }
+.top-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2xs); }
+.top-card { display: grid; grid-template-columns: 4ch minmax(0, 1fr) minmax(80px, 200px) 9ch 9ch; align-items: center; gap: var(--space-sm); min-height: 28px; font-size: var(--text-sm); }
+.top-card .card-id { font-family: var(--font-mono); color: var(--color-muted); }
+.top-card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); }
+.top-card-bar { height: 6px; border-radius: 3px; background: var(--color-paper-3); overflow: hidden; }
+.top-card-bar > span { display: block; height: 100%; background: var(--color-ink-2); transform-origin: left; transform: scaleX(var(--v, 0)); }
+.top-card-runs { font-size: var(--text-xs); color: var(--color-muted); text-align: right; }
+.top-card-cost { font: var(--weight-strong) var(--text-sm)/1 var(--font-mono); color: var(--color-ink); text-align: right; font-variant-numeric: tabular-nums; }
+.ledger-table { table-layout: fixed; }
+.ledger-table .l-result { width: 130px; }
+.ledger-table .l-at { width: 80px; }
+.ledger-table .l-num { width: 96px; }
+.ledger-table td { height: 48px; }
+.ledger-day th, .ledger-day td { padding-top: var(--space-lg); padding-bottom: var(--space-2xs); height: auto; background: none !important; border-bottom: 1px solid var(--color-rule-strong); font: var(--weight-strong) var(--text-sm)/1.2 var(--font-body); color: var(--color-ink); cursor: default; }
+.ledger-day td.num { font-family: var(--font-mono); }
+.ledger-day-count { margin-inline-start: var(--space-xs); font-weight: var(--weight-regular); font-size: var(--text-xs); color: var(--color-muted); }
+.ledger-run { display: grid; gap: 2px; min-width: 0; }
+.ledger-card { display: flex; align-items: baseline; gap: var(--space-xs); min-width: 0; font-size: var(--text-md); color: var(--color-ink); }
+.ledger-card .card-id { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-muted); }
+.ledger-card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-sub { font-size: var(--text-xs); color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-table td.num.cost { color: var(--color-ink); }
+.ledger-table td.num { color: var(--color-ink-2); }
+@media (max-width: 860px) { .ledger-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); } .top-card { grid-template-columns: 4ch minmax(0, 1fr) 9ch; } .top-card-bar, .top-card-runs { display: none; } }
 .ledger-table td.num, .ledger-table th.end { text-align: right; }
 .ledger-table td.num { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .ledger-table td.muted { color: var(--color-muted); font-size: var(--text-sm); white-space: nowrap; }

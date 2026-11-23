@@ -185,6 +185,7 @@ pub fn run() {
             runs::run_timeline,
             runs::run_follow,
             runs::sessions_list,
+            accounts::mcp_connected,
             accounts::quota
         ])
         .build(tauri::generate_context!())

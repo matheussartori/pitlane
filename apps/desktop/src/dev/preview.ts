@@ -147,13 +147,21 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
           { kind: "said", text: "Make sure it also covers resend." },
         ]) as T;
       return (location.hash.includes("3-live") ? liveTimeline() : location.hash.includes("5-failed") ? failedTimeline() : pairs(runTimeline)) as T;
+    case "mcp_connected":
+      return (location.search.includes("mcp=no") ? false : true) as T;
     case "run_follow":
       return undefined as T;
     case "accounts_list":
       return {
         accounts: [
-          { id: "default", kind: "subscription", status: { logged_in: true, method: "claude.ai", email: null, problem: null },
-            usage: { five_hour: 14, seven_day: 27 }, here: true },
+          { id: "default", kind: "subscription", status: { logged_in: true, method: "claude.ai", email: "you@example.com", plan: "max_20x", org: "Your organization", login_expires_at: new Date(Date.now() + 26 * 864e5).toISOString(), problem: null },
+            usage: { five_hour: 14, seven_day: 27 }, here: true,
+            windows: [
+              { window: "five_hour", used: 14, resets_at: now() + 2 * 3600 + 840 },
+              { window: "seven_day", used: 27, resets_at: now() + 3 * 86400 + 5000 },
+              { window: "seven_day_opus", used: 41, resets_at: now() + 3 * 86400 + 5000 },
+            ],
+            overage: { status: "rejected", reason: "org_level_disabled", using: false, at: now() - 300 } },
           { id: "work", kind: "team", status: { logged_in: false, method: null, email: null, problem: null }, usage: null, here: false },
           { id: "anthropic-api", kind: "api-key", status: { logged_in: true, method: "api key helper", email: null, problem: null }, usage: null, here: false },
         ],
