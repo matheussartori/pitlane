@@ -2,7 +2,7 @@
 // card, with the subagents each one opens. Shown in the Terminal screen and in a dock on the
 // Board. You can write to a session while it works and stop it with Ctrl+C. A session closes
 // itself a moment after it ends, unless you talked to it.
-import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import { createStore, reconcile } from "solid-js/store";
 import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
@@ -53,14 +53,15 @@ const live = (m: RunMeta) => isLive(m.state);
 const endedMs = (m: RunMeta) => (m.ended_at ?? m.started_at) * 1000;
 
 /** What the Terminal screen and the dock show: live sessions, ones you talked to, the one you
- *  are looking at, and ones that ended a moment ago. Oldest first, so rows do not jump. */
-export const agentSessions = createMemo(() => {
+ *  are looking at, and ones that ended a moment ago. Oldest first, so rows do not jump.
+ *  Kept for the app's whole life, in a root of its own (a memo outside one is never owned). */
+export const agentSessions = createRoot(() => createMemo(() => {
   const sel = selected()?.id;
   const k = kept();
   return sessions()
     .filter((m) => live(m) || (!closed().includes(m.id) && (k.includes(m.id) || m.id === sel || now() - endedMs(m) < LINGER_MS)))
     .sort((a, b) => a.started_at - b.started_at || a.id.localeCompare(b.id));
-});
+}));
 
 export interface AgentGroup {
   card: number;
@@ -68,7 +69,7 @@ export interface AgentGroup {
   sessions: RunMeta[];
 }
 
-export const agentGroups = createMemo<AgentGroup[]>(() => {
+export const agentGroups = createRoot(() => createMemo<AgentGroup[]>(() => {
   const out: AgentGroup[] = [];
   for (const m of agentSessions()) {
     let g = out.find((x) => x.card === m.card);
@@ -76,7 +77,7 @@ export const agentGroups = createMemo<AgentGroup[]>(() => {
     g.sessions.push(m);
   }
   return out;
-});
+}));
 
 export const agentsWorking = () => agentSessions().filter(live).length;
 export const agentsWanting = () => agentSessions().filter((m) => live(m) && m.waiting.length > 0).length;
