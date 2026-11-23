@@ -11,11 +11,15 @@ use tauri::{Emitter, Manager};
 
 use crate::{CmdResult, blocking, holes, vscode};
 
+/// A place on the window in logical pixels: x, y, width, height.
+type Rect = (f64, f64, f64, f64);
+
 /// VS Code views, one per folder, most recent first. Up to three stay loaded, so coming back to
 /// the tab, or to a recent lane, is instant. A view is never seen before VS Code has drawn itself:
 /// it loads (login, workbench) out of sight, and moves onto the tab once it is ready.
-/// A place on the window in logical pixels: x, y, width, height.
-type Rect = (f64, f64, f64, f64);
+///
+/// No lock here is held while a webview is called: a call from another thread waits for the
+/// main thread, which may itself be waiting for that lock. Read the views with `views()`.
 
 #[derive(Default)]
 pub(crate) struct CodeView {
@@ -29,6 +33,7 @@ pub(crate) struct CodeView {
     next: std::sync::atomic::AtomicU32,
 }
 
+#[derive(Clone)]
 struct View {
     folder: String,
     label: String,
@@ -58,8 +63,7 @@ pub(crate) async fn vscode_theme(app: tauri::AppHandle, dark: serde_json::Map<St
     // A loaded VS Code keeps the scheme it started with: reload it to follow Pitlane's (open
     // editors come back, unsaved text with them, from VS Code's own backup).
     if changed {
-        let state = app.state::<CodeView>();
-        for v in state.views.lock().unwrap().iter() {
+        for v in views(&app.state::<CodeView>()) {
             if let Some(wv) = app.get_webview(&v.label) {
                 let _ = wv.eval("location.reload()");
             }
@@ -117,8 +121,7 @@ fn place_views(app: &tauri::AppHandle) {
     use tauri::{LogicalPosition, LogicalSize};
     let state = app.state::<CodeView>();
     let shown = state.shown.lock().unwrap().clone();
-    let views = state.views.lock().unwrap();
-    for v in views.iter() {
+    for v in views(&state) {
         let Some(wv) = app.get_webview(&v.label) else { continue };
         match &shown {
             Some((folder, (x, y, w, h))) if *folder == v.folder && v.ready.load(std::sync::atomic::Ordering::SeqCst) => {
@@ -287,7 +290,7 @@ fn hex_colour(s: &str) -> Option<(u8, u8, u8)> {
 pub(crate) fn vscode_places(app: tauri::AppHandle, places: serde_json::Value) {
     let state = app.state::<CodeView>();
     *state.places.lock().unwrap() = places.clone();
-    for v in state.views.lock().unwrap().iter() {
+    for v in views(&state) {
         if let Some(wv) = app.get_webview(&v.label) {
             let _ = wv.eval(vscode::places_script(&places));
         }
@@ -332,11 +335,16 @@ pub(crate) fn vscode_holes(app: tauri::AppHandle, holes: Vec<[f64; 5]>) {
     *state.holes.lock().unwrap() = holes;
     let shown = state.shown.lock().unwrap().clone();
     let Some((folder, (x, y, w, h))) = shown else { return };
-    for v in state.views.lock().unwrap().iter().filter(|v| v.folder == folder) {
+    for v in views(&state).into_iter().filter(|v| v.folder == folder) {
         if let Some(wv) = app.get_webview(&v.label) {
             holes::cut(&wv, (w, h), local_holes(&state, x, y));
         }
     }
+}
+
+/// The views as they are now, read under the lock and used after it.
+fn views(state: &CodeView) -> Vec<View> {
+    state.views.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 /// The holes, in the coordinates of a view placed at (x, y).

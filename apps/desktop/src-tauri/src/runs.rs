@@ -33,10 +33,10 @@ pub(crate) async fn runs_list(path: String) -> CmdResult<Vec<RunMeta>> {
     blocking(move || {
         let root = open(&path)?.root;
         // No daemon yet means no runs yet: read the records on disk instead of starting one.
-        if running().is_none() {
-            return Ok(runs_on_disk(|m| m.repo == root && m.kind == runs::SessionKind::Run));
+        match running() {
+            Some(mut c) => c.list(Some(&root)),
+            None => Ok(runs_on_disk(|m| m.repo == root && m.kind == runs::SessionKind::Run)),
         }
-        daemon()?.list(Some(&root))
     })
     .await
 }
@@ -46,10 +46,10 @@ pub(crate) async fn runs_list(path: String) -> CmdResult<Vec<RunMeta>> {
 pub(crate) async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
     blocking(move || {
         let root = open(&path)?.root;
-        if running().is_none() {
-            return Ok(runs_on_disk(|m| m.repo == root));
+        match running() {
+            Some(mut c) => c.sessions(Some(&root)),
+            None => Ok(runs_on_disk(|m| m.repo == root)),
         }
-        daemon()?.sessions(Some(&root))
     })
     .await
 }
@@ -252,10 +252,10 @@ pub(crate) async fn queue_list(path: String) -> CmdResult<Vec<pit_core::queue::S
     blocking(move || {
         let root = open(&path)?.root;
         // No daemon: nothing is shipping; the saved queue still says what waits.
-        if running().is_none() {
-            return Ok(pit_core::queue::load(&default_homes().1)?.into_iter().filter(|j| j.repo == root).collect());
+        match running() {
+            Some(mut c) => c.queue(Some(&root)),
+            None => Ok(pit_core::queue::load(&default_homes().1)?.into_iter().filter(|j| j.repo == root).collect()),
         }
-        daemon()?.queue(Some(&root))
     })
     .await
 }
