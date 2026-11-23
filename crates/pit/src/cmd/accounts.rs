@@ -85,8 +85,7 @@ pub fn use_for_repo(repo: &Repo, id: String) -> Result<ExitCode> {
 /// Usage per account from the daemon, if it is running.
 fn daemon_quota() -> std::collections::HashMap<String, pit_core::accounts::Usage> {
     let Ok(mut c) = Client::connect(&pitlane_home(), None) else { return Default::default() };
-    let Ok(v) = c.call(serde_json::json!({ "op": "quota" })) else { return Default::default() };
-    let all: std::collections::HashMap<String, Vec<RunEvent>> = serde_json::from_value(v["quota"].clone()).unwrap_or_default();
+    let all = c.quota().unwrap_or_default();
     all.into_iter()
         .map(|(acct, evs)| {
             let mut u = pit_core::accounts::Usage::default();

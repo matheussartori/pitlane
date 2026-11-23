@@ -190,7 +190,7 @@ pub fn run() {
                 // The daemon needs at most ~9 s to end its sessions; a daemon that hangs past
                 // that must not keep the app from quitting.
                 if let Some(mut c) = daemon::running().and_then(|c| c.with_timeout(Some(QUIT_WAIT)).ok()) {
-                    let _ = c.call(serde_json::json!({ "op": "shutdown" }));
+                    let _ = c.shutdown();
                 }
                 app.state::<term::Terms>().close_all();
                 app.state::<vscode::Vscode>().stop();

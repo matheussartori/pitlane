@@ -4,75 +4,69 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use pit_core::Repo;
-use pit_core::runs::{Client, RunEvent, RunMeta, RunState};
+use pit_core::protocol::StartArgs;
+use pit_core::runs::{Client, Decision, RunEvent, RunMeta, RunState};
 
 use super::{daemon, pitlane_home, print_json};
 use crate::term::{ACCENT, DONE, FAIL, MUTED, RUN, paint, paint_err, plain};
 
 pub fn approvals() -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "approvals" }))?;
-    let list = v["approvals"].as_array().cloned().unwrap_or_default();
+    let list = daemon()?.approvals()?;
     if list.is_empty() {
         println!("nothing is waiting on you");
     }
     for a in list {
         println!(
             "{}  #{} {}\n  {} {}  {}",
-            paint(ACCENT, a["run"].as_str().unwrap_or_default()),
-            a["card"],
-            plain(a["card_title"].as_str().unwrap_or_default()),
-            plain(a["approval"]["tool"].as_str().unwrap_or_default()),
-            plain(a["approval"]["detail"].as_str().unwrap_or_default()),
-            paint(MUTED, &format!("pit allow {} | pit deny {}", a["run"].as_str().unwrap_or_default(), a["run"].as_str().unwrap_or_default()))
+            paint(ACCENT, &a.run),
+            a.card,
+            plain(&a.card_title),
+            plain(&a.approval.tool),
+            plain(&a.approval.detail),
+            paint(MUTED, &format!("pit allow {} | pit deny {}", a.run, a.run))
         );
     }
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn allow(run: String, id: Option<String>, run_wide: bool, always: bool) -> Result<ExitCode> {
-    let decision = if always { "always" } else if run_wide { "run" } else { "once" };
-    let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": decision }))?;
-    println!("{} allowed {} ({decision})", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
+    let (decision, word) = if always { (Decision::Always, "always") } else if run_wide { (Decision::Run, "run") } else { (Decision::Once, "once") };
+    let approval = daemon()?.decide(&run, id, decision, None)?;
+    println!("{} allowed {approval} ({word})", paint(DONE, "✓"));
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn deny(run: String, id: Option<String>, message: Option<String>) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "decide", "run": run, "approval": id, "decision": "deny", "message": message }))?;
-    println!("{} denied {}", paint(DONE, "✓"), v["approval"].as_str().unwrap_or_default());
+    let approval = daemon()?.decide(&run, id, Decision::Deny, message)?;
+    println!("{} denied {approval}", paint(DONE, "✓"));
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn start(repo: &Repo, card: u32, detach: bool, allow_api_key: bool, no_brief: bool, fresh: bool) -> Result<ExitCode> {
     let mut c = daemon()?;
-    let v = c
-        .call(serde_json::json!({ "op": "start", "repo": repo.root, "card": card, "allow_api_key": allow_api_key, "no_brief": no_brief, "fresh": fresh }))
+    let m = c
+        .start(StartArgs { repo: repo.root.clone(), card, allow_api_key, no_brief, fresh, ..Default::default() })
         .map_err(api_key_hint)?;
-    let m: RunMeta = serde_json::from_value(v["run"].clone())?;
     println!("{} run {} for #{} {}", paint(DONE, "✓"), m.id, m.card, m.card_title);
     println!("  {}", paint(MUTED, m.reason.as_deref().unwrap_or_default()));
     follow_or_detach(&m.id, detach)
 }
 
 pub fn continue_run(run: String, allow_api_key: bool, detach: bool) -> Result<ExitCode> {
-    let v = daemon()?
-        .call(serde_json::json!({ "op": "continue", "run": run, "allow_api_key": allow_api_key }))
-        .map_err(api_key_hint)?;
-    let m: RunMeta = serde_json::from_value(v["run"].clone())?;
+    let m = daemon()?.continue_run(&run, allow_api_key).map_err(api_key_hint)?;
     println!("{} run {} continues {run}", paint(DONE, "✓"), m.id);
     println!("  {}", paint(MUTED, m.reason.as_deref().unwrap_or_default()));
     follow_or_detach(&m.id, detach)
 }
 
 pub fn resume(run: String, detach: bool) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "resume", "run": run }))?;
-    let m: RunMeta = serde_json::from_value(v["run"].clone())?;
+    let m = daemon()?.resume(&run)?;
     println!("{} run {} resumes {}", paint(DONE, "✓"), m.id, run);
     follow_or_detach(&m.id, detach)
 }
 
 pub fn runs(repo: &Repo, json: bool) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "list", "repo": repo.root }))?;
-    let runs: Vec<RunMeta> = serde_json::from_value(v["runs"].clone())?;
+    let runs = daemon()?.list(Some(&repo.root))?;
     if json {
         return print_json(&runs);
     }
@@ -109,13 +103,13 @@ pub fn log(run: String, follow: bool) -> Result<ExitCode> {
 }
 
 pub fn say(run: String, text: String) -> Result<ExitCode> {
-    daemon()?.call(serde_json::json!({ "op": "say", "run": run, "text": text }))?;
+    daemon()?.say(&run, text)?;
     println!("{} sent; the agent reads it after its current step", paint(DONE, "✓"));
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn stop(run: String) -> Result<ExitCode> {
-    daemon()?.call(serde_json::json!({ "op": "stop", "run": run }))?;
+    daemon()?.stop(&run)?;
     println!("{} stopping {run}; the agent ends its current step", paint(DONE, "✓"));
     Ok(ExitCode::SUCCESS)
 }

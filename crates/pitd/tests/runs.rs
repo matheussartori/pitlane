@@ -641,23 +641,24 @@ async fn over_the_socket_with_follow_and_recovery() {
             }
             std::thread::sleep(Duration::from_millis(20));
         };
-        assert_eq!(
-            c.call(serde_json::json!({"op":"ping"})).unwrap()["ok"],
-            true
-        );
-        let run = c
-            .call(serde_json::json!({"op":"start","repo": repo, "card": id}))
-            .unwrap();
-        let run_id = run["run"]["id"].as_str().unwrap().to_owned();
+        assert!(c.ping().unwrap().ok);
+        let run_id = c
+            .start(pit_core::protocol::StartArgs { repo, card: id, ..Default::default() })
+            .unwrap()
+            .id;
         let mut f = Client::connect(&home, None).unwrap();
         let mut seen = Vec::new();
         let end = f.follow(&run_id, 0, |i, e| {
             seen.push((i, e));
             true
         });
-        let listed = c.call(serde_json::json!({"op":"list"})).unwrap();
-        assert_eq!(listed["runs"].as_array().unwrap().len(), 1);
-        assert!(c.call(serde_json::json!({"op":"nope"})).is_err());
+        assert_eq!(c.list(None).unwrap().len(), 1);
+        // As an older client wrote it, by hand: optional keys left out, one nobody knows.
+        let got = c.call(serde_json::json!({"op":"get","run": run_id, "extra": 1})).unwrap();
+        assert_eq!(got["run"]["id"], run_id.as_str());
+        let e = c.call(serde_json::json!({"op":"nope"})).unwrap_err();
+        assert_eq!(e.to_string(), "unknown op \"nope\"");
+        assert!(c.call(serde_json::json!({"op":"say","run": run_id})).is_err(), "text is required");
         (seen, end.unwrap().unwrap())
     })
     .await

@@ -4,7 +4,7 @@ use pit_core::cards::{self, CardOut, CardPatch, CardState, NewCard};
 use pit_core::default_homes;
 use serde::Serialize;
 
-use crate::daemon::{call, stopped};
+use crate::daemon::daemon;
 use crate::{CmdResult, blocking, open};
 
 #[derive(Debug, Serialize)]
@@ -39,7 +39,7 @@ pub(crate) async fn card_add(path: String, title: String, body: String) -> CmdRe
 fn describe_later(root: &std::path::Path, id: u32, title: bool) {
     let root = root.to_owned();
     std::thread::spawn(move || {
-        if let Err(e) = call(serde_json::json!({ "op": "describe", "repo": root, "card": id, "title": title })) {
+        if let Err(e) = daemon().and_then(|mut c| c.describe(&root, id, title)) {
             eprintln!("pitlane: no summary for card #{id}: {e:#}");
         }
     });
@@ -110,7 +110,7 @@ pub(crate) async fn card_note(path: String, id: u32, text: String) -> CmdResult<
 pub(crate) async fn cards_analyze(path: String, ids: Vec<u32>) -> CmdResult<serde_json::Value> {
     blocking(move || {
         let root = open(&path)?.root;
-        call(serde_json::json!({ "op": "analyze", "repo": root, "cards": ids }))
+        daemon()?.analyze(&root, ids)
     })
     .await
 }
@@ -145,7 +145,7 @@ pub(crate) async fn card_reanswer(path: String, id: u32, question: u32, answer: 
 pub(crate) async fn card_talk(path: String, id: u32, question: u32, message: Option<String>) -> CmdResult<serde_json::Value> {
     blocking(move || {
         let root = open(&path)?.root;
-        call(serde_json::json!({ "op": "talk", "repo": root, "card": id, "question": question, "message": message }))
+        daemon()?.talk(&root, id, question, message)
     })
     .await
 }
@@ -155,7 +155,7 @@ pub(crate) async fn card_talk(path: String, id: u32, question: u32, message: Opt
 pub(crate) async fn card_talk_stop(path: String, id: u32) -> CmdResult<usize> {
     blocking(move || {
         let root = open(&path)?.root;
-        Ok(stopped(&call(serde_json::json!({ "op": "stop_talk", "repo": root, "card": id }))?))
+        daemon()?.stop_talk(&root, id)
     })
     .await
 }

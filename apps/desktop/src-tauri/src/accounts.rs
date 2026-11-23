@@ -7,7 +7,7 @@ use pit_core::default_homes;
 use pit_core::runs::RunEvent;
 use serde::Serialize;
 
-use crate::daemon::{call_as, running};
+use crate::daemon::running;
 use crate::{CmdResult, blocking, open};
 
 #[derive(Debug, Serialize)]
@@ -33,8 +33,8 @@ pub(crate) async fn quota(path: String) -> CmdResult<QuotaOut> {
             five_hour_at: routing.route.run.switch_at.five_hour,
             seven_day_at: routing.route.run.switch_at.seven_day,
         };
-        if running().is_some() {
-            let mut all: HashMap<String, Vec<RunEvent>> = call_as(serde_json::json!({ "op": "quota" }), "quota")?;
+        if let Some(mut c) = running() {
+            let mut all = c.quota()?;
             out.events = all.remove(&account).unwrap_or_default();
         }
         Ok(out)
@@ -71,10 +71,7 @@ pub(crate) async fn accounts_list(path: String) -> CmdResult<AccountsOut> {
         let root = open(&path)?.root;
         let routing = Routing::load(&pitlane_home)?;
         let mine = routing.repo_account(&root, &home);
-        let quota: HashMap<String, Vec<RunEvent>> = running()
-            .and_then(|mut c| c.call(serde_json::json!({ "op": "quota" })).ok())
-            .and_then(|v| serde_json::from_value(v["quota"].clone()).ok())
-            .unwrap_or_default();
+        let quota: HashMap<String, Vec<RunEvent>> = running().and_then(|mut c| c.quota().ok()).unwrap_or_default();
         let accounts = routing
             .accounts
             .iter()

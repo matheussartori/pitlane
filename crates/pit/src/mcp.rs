@@ -135,14 +135,10 @@ fn ask_daemon(run: &str, args: &Value) -> Result<Value> {
     let (_, home) = pit_core::default_homes();
     // Never start a daemon from here: it would inherit the agent's environment and outlive the app.
     let mut c = pit_core::runs::Client::connect(&home, None)?;
-    let v = c.call(json!({
-        "op": "ask",
-        "run": run,
-        "tool": args.get("tool_name").and_then(Value::as_str).unwrap_or_default(),
-        "input": args.get("input").cloned().unwrap_or(Value::Null),
-        "tool_use_id": args.get("tool_use_id"),
-    }))?;
-    v.get("answer").cloned().context("the daemon gave no answer")
+    let tool = args.get("tool_name").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let input = args.get("input").cloned().unwrap_or(Value::Null);
+    let use_id = args.get("tool_use_id").and_then(Value::as_str).map(str::to_owned);
+    c.ask(run, tool, input, use_id)
 }
 
 pub fn serve(dir: PathBuf) -> Result<()> {

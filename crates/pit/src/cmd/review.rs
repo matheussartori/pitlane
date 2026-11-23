@@ -4,15 +4,14 @@ use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use pit_core::Repo;
-use pit_core::runs::RunMeta;
+use pit_core::protocol::ReviewAction;
 
 use super::runs::{follow_or_detach, state_word};
 use super::{daemon, pitlane_home};
 use crate::term::{ACCENT, DONE, FAIL, MUTED, RUN, paint};
 
 pub fn review(repo: &Repo, card: u32) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "list", "repo": repo.root }))?;
-    let runs: Vec<RunMeta> = serde_json::from_value(v["runs"].clone())?;
+    let runs = daemon()?.list(Some(&repo.root))?;
     let Some(m) = runs.iter().filter(|m| m.card == card).max_by_key(|m| (m.round, m.started_at)) else {
         bail!("card #{card} has no runs");
     };
@@ -60,27 +59,26 @@ pub fn review(repo: &Repo, card: u32) -> Result<ExitCode> {
 }
 
 pub fn approve(repo: &Repo, card: u32) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "approve" }))?;
+    let v = daemon()?.review(&repo.root, card, ReviewAction::Approve, None)?;
     println!("{} #{card} is in the merge queue for {} (pit queue)", paint(DONE, "✓"), v["shipped_to"].as_str().unwrap_or("its next stage"));
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn changes(repo: &Repo, card: u32, message: String) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "changes", "message": message }))?;
+    let v = daemon()?.review(&repo.root, card, ReviewAction::Changes, Some(message))?;
     let run = v["run"]["id"].as_str().unwrap_or_default().to_owned();
     println!("{} #{card} goes back to its agent as run {run}", paint(DONE, "✓"));
     follow_or_detach(&run, false)
 }
 
 pub fn discard(repo: &Repo, card: u32) -> Result<ExitCode> {
-    daemon()?.call(serde_json::json!({ "op": "review", "repo": repo.root, "card": card, "action": "discard" }))?;
+    daemon()?.review(&repo.root, card, ReviewAction::Discard, None)?;
     println!("{} #{card} is ready again; its lane stays", paint(DONE, "✓"));
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn queue(repo: &Repo) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "queue", "repo": repo.root }))?;
-    let jobs: Vec<pit_core::queue::ShipJob> = serde_json::from_value(v["jobs"].clone())?;
+    let jobs = daemon()?.queue(Some(&repo.root))?;
     if jobs.is_empty() {
         println!("the queue is empty. Add a lane: pit enqueue <branch>");
     }
@@ -104,13 +102,13 @@ pub fn queue(repo: &Repo) -> Result<ExitCode> {
 }
 
 pub fn enqueue(repo: &Repo, branch: String, to: Option<String>) -> Result<ExitCode> {
-    let v = daemon()?.call(serde_json::json!({ "op": "enqueue", "repo": repo.root, "branch": branch, "to": to }))?;
-    println!("{} {branch} is in line for {} ({})", paint(DONE, "✓"), v["job"]["target"].as_str().unwrap_or_default(), v["job"]["id"].as_str().unwrap_or_default());
+    let job = daemon()?.enqueue(&repo.root, branch.clone(), to)?;
+    println!("{} {branch} is in line for {} ({})", paint(DONE, "✓"), job.target, job.id);
     Ok(ExitCode::SUCCESS)
 }
 
 pub fn dequeue(id: String) -> Result<ExitCode> {
-    daemon()?.call(serde_json::json!({ "op": "dequeue", "id": id }))?;
+    daemon()?.dequeue(&id)?;
     println!("{} {id} left the queue", paint(DONE, "✓"));
     Ok(ExitCode::SUCCESS)
 }

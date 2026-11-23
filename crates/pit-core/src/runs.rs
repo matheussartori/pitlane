@@ -2,17 +2,24 @@
 //! owns the processes; this module holds what every side shares: the run record, the events as
 //! the UI shows them, the briefing, and a small blocking client for the daemon's socket.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::Repo;
 use crate::cards::{self, Card};
+use crate::protocol::{
+    AnswerReply, ApprovalsReply, Changed, Decided, Done, JobReply, JobsReply, Pong, QuotaReply, Request, ReviewAction, RunReply, RunsReply,
+    SessionsReply, StartArgs, Stopped, Waiting,
+};
+use crate::queue::ShipJob;
 
 pub fn socket_path(pitlane_home: &Path) -> PathBuf {
     pitlane_home.join("pitd.sock")
@@ -765,9 +772,9 @@ impl Client {
         Ok(self)
     }
 
-    fn send(&mut self, req: &Value) -> Result<()> {
+    fn send(&mut self, req: &impl Serialize) -> Result<()> {
         let s = self.stream.get_mut();
-        writeln!(s, "{req}")?;
+        writeln!(s, "{}", serde_json::to_string(req)?)?;
         s.flush()?;
         Ok(())
     }
@@ -781,8 +788,18 @@ impl Client {
     }
 
     /// One request, one answer. A daemon-side error becomes an `Err`.
+    pub fn request(&mut self, req: &Request) -> Result<Value> {
+        self.exchange(req)
+    }
+
+    /// A request as raw JSON, for what no `Request` can say: an op this build does not know, or
+    /// a message as an older client wrote it. Everything else goes through `request`.
     pub fn call(&mut self, req: Value) -> Result<Value> {
-        self.send(&req)?;
+        self.exchange(&req)
+    }
+
+    fn exchange(&mut self, req: &impl Serialize) -> Result<Value> {
+        self.send(req)?;
         let v = self.read()?.context("the daemon closed the connection")?;
         if let Some(e) = v.get("error").and_then(Value::as_str) {
             bail!("{e}");
@@ -790,10 +807,171 @@ impl Client {
         Ok(v)
     }
 
+    /// `request`, with the answer read as a `T`.
+    fn request_as<T: DeserializeOwned>(&mut self, req: &Request) -> Result<T> {
+        let v = self.request(req)?;
+        serde_json::from_value(v).with_context(|| format!("the daemon's answer to {} is not what it should be", req.op()))
+    }
+
+    pub fn ping(&mut self) -> Result<Pong> {
+        self.request_as(&Request::Ping)
+    }
+
+    /// Starts a run on a card.
+    pub fn start(&mut self, args: StartArgs) -> Result<RunMeta> {
+        Ok(self.request_as::<RunReply>(&Request::Start(args))?.run)
+    }
+
+    /// Starts the run again where `run` stopped.
+    pub fn resume(&mut self, run: &str) -> Result<RunMeta> {
+        Ok(self.request_as::<RunReply>(&Request::Resume { run: run.into() })?.run)
+    }
+
+    /// A new run that carries on from `run`.
+    pub fn continue_run(&mut self, run: &str, allow_api_key: bool) -> Result<RunMeta> {
+        Ok(self.request_as::<RunReply>(&Request::Continue { run: run.into(), allow_api_key })?.run)
+    }
+
+    pub fn get(&mut self, run: &str) -> Result<RunMeta> {
+        Ok(self.request_as::<RunReply>(&Request::Get { run: run.into() })?.run)
+    }
+
+    /// The runs of `repo`, or of every repository.
+    pub fn list(&mut self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
+        Ok(self.request_as::<RunsReply>(&Request::List { repo: repo.map(Path::to_owned) })?.runs)
+    }
+
+    /// Every agent session of `repo`, or of every repository.
+    pub fn sessions(&mut self, repo: Option<&Path>) -> Result<Vec<RunMeta>> {
+        Ok(self.request_as::<SessionsReply>(&Request::Sessions { repo: repo.map(Path::to_owned) })?.sessions)
+    }
+
+    /// Run all's analysis of `cards`. The answer is the analysis step's own.
+    pub fn analyze(&mut self, repo: &Path, cards: Vec<u32>) -> Result<Value> {
+        self.request(&Request::Analyze { repo: repo.to_owned(), cards })
+    }
+
+    /// Claude's short reading of a report, written on it; the report as it is now.
+    pub fn report_digest(&mut self, repo: &Path, id: &str) -> Result<crate::report::Report> {
+        self.request_as(&Request::ReportDigest { repo: repo.to_owned(), id: id.into() })
+    }
+
+    /// Claude's summary of a card, and its title when `title`.
+    pub fn describe(&mut self, repo: &Path, card: u32, title: bool) -> Result<Value> {
+        self.request(&Request::Describe { repo: repo.to_owned(), card, title })
+    }
+
+    /// Talks a card's question over with Claude.
+    pub fn talk(&mut self, repo: &Path, card: u32, question: u32, message: Option<String>) -> Result<Value> {
+        self.request(&Request::Talk { repo: repo.to_owned(), card, question, message })
+    }
+
+    /// Stops the conversation on a card's questions; how many sessions stopped.
+    pub fn stop_talk(&mut self, repo: &Path, card: u32) -> Result<usize> {
+        Ok(self.request_as::<Stopped>(&Request::StopTalk { repo: repo.to_owned(), card })?.stopped)
+    }
+
+    /// Run all's closing step. The answer is that step's own (`run`, `ok`, `summary`, `cost_usd`).
+    pub fn finish(&mut self, repo: &Path, cards: Vec<u32>, instructions: String, into: Option<String>) -> Result<Value> {
+        self.request(&Request::Finish { repo: repo.to_owned(), cards, instructions, into })
+    }
+
+    /// The Board's assistant: turns `text` into cards, in the background.
+    pub fn assist(&mut self, repo: &Path, text: String) -> Result<()> {
+        self.request_as::<Done>(&Request::Assist { repo: repo.to_owned(), text }).map(drop)
+    }
+
+    pub fn say(&mut self, run: &str, text: String) -> Result<()> {
+        self.request_as::<Done>(&Request::Say { run: run.into(), text }).map(drop)
+    }
+
+    /// `/model` and `/effort` for a live session.
+    pub fn tune(&mut self, run: &str, model: Option<String>, effort: Option<String>) -> Result<()> {
+        self.request_as::<Done>(&Request::Tune { run: run.into(), model, effort }).map(drop)
+    }
+
+    pub fn stop(&mut self, run: &str) -> Result<()> {
+        self.request_as::<Done>(&Request::Stop { run: run.into() }).map(drop)
+    }
+
+    /// Stops every session the daemon runs; how many.
+    pub fn stop_all(&mut self) -> Result<usize> {
+        Ok(self.request_as::<Stopped>(&Request::StopAll)?.stopped)
+    }
+
+    /// Stops Run all's analyses; how many.
+    pub fn stop_analyses(&mut self) -> Result<usize> {
+        Ok(self.request_as::<Stopped>(&Request::StopAnalyses)?.stopped)
+    }
+
+    /// Performance as the daemon's governor sees it.
+    pub fn perf(&mut self) -> Result<Value> {
+        self.request(&Request::Perf)
+    }
+
+    /// Changes Performance's settings; the answer holds them as they are now (`config`).
+    pub fn perf_set(&mut self, config: Value) -> Result<Value> {
+        self.request(&Request::PerfSet { config })
+    }
+
+    /// Pauses (`hold`) or resumes one session by hand.
+    pub fn perf_hold(&mut self, run: &str, hold: bool) -> Result<Changed> {
+        self.request_as(&Request::PerfHold { run: run.into(), hold })
+    }
+
+    /// Asks the daemon to stop every session and end.
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.request_as::<Done>(&Request::Shutdown).map(drop)
+    }
+
+    /// The last usage events seen, per account.
+    pub fn quota(&mut self) -> Result<HashMap<String, Vec<RunEvent>>> {
+        Ok(self.request_as::<QuotaReply>(&Request::Quota)?.quota)
+    }
+
+    /// Your decision on a card in review. The answer is the review's own.
+    pub fn review(&mut self, repo: &Path, card: u32, action: ReviewAction, message: Option<String>) -> Result<Value> {
+        self.request(&Request::Review { repo: repo.to_owned(), card, action, message })
+    }
+
+    /// Puts a branch in the merge queue.
+    pub fn enqueue(&mut self, repo: &Path, branch: String, to: Option<String>) -> Result<ShipJob> {
+        Ok(self.request_as::<JobReply>(&Request::Enqueue { repo: repo.to_owned(), branch, to })?.job)
+    }
+
+    /// The merge queue of `repo`, or of every repository.
+    pub fn queue(&mut self, repo: Option<&Path>) -> Result<Vec<ShipJob>> {
+        Ok(self.request_as::<JobsReply>(&Request::Queue { repo: repo.map(Path::to_owned) })?.jobs)
+    }
+
+    pub fn queue_resume(&mut self) -> Result<()> {
+        self.request_as::<Done>(&Request::QueueResume).map(drop)
+    }
+
+    pub fn dequeue(&mut self, id: &str) -> Result<()> {
+        self.request_as::<Done>(&Request::Dequeue { id: id.into() }).map(drop)
+    }
+
+    /// Asks for a tool a run wants to use; waits for a person when no rule allows it. The answer
+    /// is the one Claude Code's permission prompt reads.
+    pub fn ask(&mut self, run: &str, tool: String, input: Value, tool_use_id: Option<String>) -> Result<Value> {
+        Ok(self.request_as::<AnswerReply>(&Request::Ask { run: run.into(), tool, input, tool_use_id })?.answer)
+    }
+
+    /// Answers what a run waits on (`approval`, or the oldest); the approval that was answered.
+    pub fn decide(&mut self, run: &str, approval: Option<String>, decision: Decision, message: Option<String>) -> Result<String> {
+        Ok(self.request_as::<Decided>(&Request::Decide { run: run.into(), approval, decision, message })?.approval)
+    }
+
+    /// Everything waiting on a person.
+    pub fn approvals(&mut self) -> Result<Vec<Waiting>> {
+        Ok(self.request_as::<ApprovalsReply>(&Request::Approvals)?.approvals)
+    }
+
     /// Holds the daemon to this process: blocks while both live. When this connection closes,
     /// the daemon stops every session it started and ends. Returns when the daemon goes away.
     pub fn hold(mut self) -> Result<()> {
-        self.call(json!({ "op": "hold" }))?;
+        self.request(&Request::Hold)?;
         while self.read().ok().flatten().is_some() {}
         Ok(())
     }
@@ -801,7 +979,7 @@ impl Client {
     /// Replays a run's events from `from` and then follows it live, until it ends or `each`
     /// returns false. Returns the run as it stands at the end.
     pub fn follow(&mut self, run: &str, from: usize, mut each: impl FnMut(usize, RunEvent) -> bool) -> Result<Option<RunMeta>> {
-        self.send(&json!({ "op": "follow", "run": run, "from": from }))?;
+        self.send(&Request::Follow { run: run.into(), from })?;
         while let Some(v) = self.read()? {
             if let Some(e) = v.get("error").and_then(Value::as_str) {
                 bail!("{e}");

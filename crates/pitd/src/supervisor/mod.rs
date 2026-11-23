@@ -72,12 +72,7 @@ pub struct StartOpts {
 }
 
 /// What a person decides about a card in review.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReviewAction {
-    Approve,
-    Changes,
-    Discard,
-}
+pub use pit_core::protocol::ReviewAction;
 
 /// What the daemon holds for a run while its process lives.
 struct Live {

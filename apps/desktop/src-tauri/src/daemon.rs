@@ -7,7 +7,6 @@ use std::time::Duration;
 use anyhow::Result;
 use pit_core::default_homes;
 use pit_core::runs::Client;
-use serde::de::DeserializeOwned;
 
 /// How long the hold waits before it looks for a daemon again.
 const HOLD_RETRY: Duration = Duration::from_millis(500);
@@ -30,21 +29,6 @@ pub(crate) fn daemon() -> Result<Client> {
 /// The daemon if it is up, without starting one.
 pub(crate) fn running() -> Option<Client> {
     Client::connect(&default_homes().1, None).ok()
-}
-
-pub(crate) fn call(req: serde_json::Value) -> Result<serde_json::Value> {
-    daemon()?.call(req)
-}
-
-/// `call`, with the answer's `key` read as a `T` (null when the answer has no `key`).
-pub(crate) fn call_as<T: DeserializeOwned>(req: serde_json::Value, key: &str) -> Result<T> {
-    let mut v = call(req)?;
-    Ok(serde_json::from_value(v.get_mut(key).map(serde_json::Value::take).unwrap_or_default())?)
-}
-
-/// How many sessions an answer says were stopped (its `stopped`).
-pub(crate) fn stopped(v: &serde_json::Value) -> usize {
-    v["stopped"].as_u64().unwrap_or(0) as usize
 }
 
 /// Set when the app is quitting, so the hold below does not wait for a new daemon.

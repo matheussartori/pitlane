@@ -6,11 +6,12 @@ use std::sync::{Mutex, PoisonError};
 
 use pit_core::cards::CardOut;
 use pit_core::default_homes;
+use pit_core::protocol::{Changed, ReviewAction, StartArgs};
 use pit_core::runs::{self, RunEvent, RunMeta};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use crate::daemon::{call, call_as, daemon, running, stopped};
+use crate::daemon::{daemon, running};
 use crate::{CmdResult, blocking, open};
 
 /// The sessions recorded on disk that `keep` keeps, newest first: what there is with no daemon up.
@@ -35,7 +36,7 @@ pub(crate) async fn runs_list(path: String) -> CmdResult<Vec<RunMeta>> {
         if running().is_none() {
             return Ok(runs_on_disk(|m| m.repo == root && m.kind == runs::SessionKind::Run));
         }
-        call_as(serde_json::json!({ "op": "list", "repo": root }), "runs")
+        daemon()?.list(Some(&root))
     })
     .await
 }
@@ -48,7 +49,7 @@ pub(crate) async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
         if running().is_none() {
             return Ok(runs_on_disk(|m| m.repo == root));
         }
-        call_as(serde_json::json!({ "op": "sessions", "repo": root }), "sessions")
+        daemon()?.sessions(Some(&root))
     })
     .await
 }
@@ -59,60 +60,65 @@ pub(crate) async fn sessions_list(path: String) -> CmdResult<Vec<RunMeta>> {
 pub(crate) async fn run_start(path: String, card: u32, allow_api_key: Option<bool>, into: Option<String>, direct: Option<bool>, instructions: Option<String>, autopilot: Option<bool>, fresh: Option<bool>) -> CmdResult<RunMeta> {
     blocking(move || {
         let root = open(&path)?.root;
-        call_as(serde_json::json!({ "op": "start", "repo": root, "card": card, "allow_api_key": allow_api_key.unwrap_or(false), "into": into, "direct": direct.unwrap_or(false), "instructions": instructions, "autopilot": autopilot.unwrap_or(false), "fresh": fresh.unwrap_or(false) }), "run")
+        let args = StartArgs {
+            repo: root,
+            card,
+            allow_api_key: allow_api_key.unwrap_or(false),
+            no_brief: false,
+            into,
+            direct: direct.unwrap_or(false),
+            instructions,
+            autopilot: autopilot.unwrap_or(false),
+            fresh: fresh.unwrap_or(false),
+        };
+        daemon()?.start(args)
     })
     .await
 }
 
 #[tauri::command]
 pub(crate) async fn run_resume(run: String) -> CmdResult<RunMeta> {
-    blocking(move || {
-        call_as(serde_json::json!({ "op": "resume", "run": run }), "run")
-    })
-    .await
+    blocking(move || daemon()?.resume(&run)).await
 }
 
 #[tauri::command]
 pub(crate) async fn run_say(run: String, text: String) -> CmdResult<()> {
-    blocking(move || call(serde_json::json!({ "op": "say", "run": run, "text": text })).map(drop)).await
+    blocking(move || daemon()?.say(&run, text)).await
 }
 
 /// `/model` and `/effort` for a live session.
 #[tauri::command]
 pub(crate) async fn run_tune(run: String, model: Option<String>, effort: Option<String>) -> CmdResult<()> {
-    blocking(move || call(serde_json::json!({ "op": "tune", "run": run, "model": model, "effort": effort })).map(drop)).await
+    blocking(move || daemon()?.tune(&run, model, effort)).await
 }
 
 /// Answers what a run is waiting on: once, run, always or deny (with a reason the agent reads).
 #[tauri::command]
 pub(crate) async fn run_decide(run: String, approval: Option<String>, decision: String, message: Option<String>) -> CmdResult<()> {
-    blocking(move || {
-        call(serde_json::json!({ "op": "decide", "run": run, "approval": approval, "decision": decision, "message": message })).map(drop)
-    })
-    .await
+    blocking(move || daemon()?.decide(&run, approval, runs::Decision::parse(&decision)?, message).map(drop)).await
 }
 
 #[tauri::command]
 pub(crate) async fn run_stop(run: String) -> CmdResult<()> {
-    blocking(move || call(serde_json::json!({ "op": "stop", "run": run })).map(drop)).await
+    blocking(move || daemon()?.stop(&run)).await
 }
 
 /// Performance: the Mac, the agents' share of it, the mode and what the governor did.
 #[tauri::command]
 pub(crate) async fn perf() -> CmdResult<serde_json::Value> {
-    blocking(|| call(serde_json::json!({ "op": "perf" }))).await
+    blocking(|| daemon()?.perf()).await
 }
 
 /// Changes Performance's settings (mode, auto, away_minutes, light_agents, light_background).
 #[tauri::command]
 pub(crate) async fn perf_set(config: serde_json::Value) -> CmdResult<serde_json::Value> {
-    blocking(move || call(serde_json::json!({ "op": "perf_set", "config": config }))).await
+    blocking(move || daemon()?.perf_set(config)).await
 }
 
 /// Pauses or resumes one session by hand.
 #[tauri::command]
-pub(crate) async fn perf_hold(run: String, hold: bool) -> CmdResult<serde_json::Value> {
-    blocking(move || call(serde_json::json!({ "op": "perf_hold", "run": run, "hold": hold }))).await
+pub(crate) async fn perf_hold(run: String, hold: bool) -> CmdResult<Changed> {
+    blocking(move || daemon()?.perf_hold(&run, hold)).await
 }
 
 /// Stop all: every agent session the daemon runs, and the analyses waiting for a slot.
@@ -121,7 +127,7 @@ pub(crate) async fn runs_stop_all() -> CmdResult<usize> {
     blocking(move || {
         // No daemon, nothing running.
         let Some(mut c) = running() else { return Ok(0) };
-        Ok(stopped(&c.call(serde_json::json!({ "op": "stop_all" }))?))
+        c.stop_all()
     })
     .await
 }
@@ -131,7 +137,7 @@ pub(crate) async fn runs_stop_all() -> CmdResult<usize> {
 pub(crate) async fn runs_stop_analyses() -> CmdResult<usize> {
     blocking(move || {
         let Some(mut c) = running() else { return Ok(0) };
-        Ok(stopped(&c.call(serde_json::json!({ "op": "stop_analyses" }))?))
+        c.stop_analyses()
     })
     .await
 }
@@ -141,7 +147,7 @@ pub(crate) async fn runs_stop_analyses() -> CmdResult<usize> {
 pub(crate) async fn run_all_finish(path: String, cards: Vec<u32>, instructions: String, into: Option<String>) -> CmdResult<pit_core::report::Finish> {
     blocking(move || {
         let root = open(&path)?.root;
-        let v = call(serde_json::json!({ "op": "finish", "repo": root, "cards": cards, "instructions": instructions, "into": into }))?;
+        let v = daemon()?.finish(&root, cards, instructions, into)?;
         Ok(pit_core::report::Finish {
             run: v["run"].as_str().map(str::to_owned),
             ok: v["ok"].as_bool().unwrap_or(false),
@@ -176,8 +182,7 @@ pub(crate) async fn reports_list(path: String) -> CmdResult<Vec<pit_core::report
 pub(crate) async fn report_digest(path: String, id: String) -> CmdResult<pit_core::report::Report> {
     blocking(move || {
         let root = open(&path)?.root;
-        let v = call(serde_json::json!({ "op": "report_digest", "repo": root, "id": id }))?;
-        Ok(serde_json::from_value(v)?)
+        daemon()?.report_digest(&root, &id)
     })
     .await
 }
@@ -203,7 +208,7 @@ pub(crate) async fn report_restore(id: String) -> CmdResult<()> {
 pub(crate) async fn board_assist(path: String, text: String) -> CmdResult<()> {
     blocking(move || {
         let root = open(&path)?.root;
-        call(serde_json::json!({ "op": "assist", "repo": root, "text": text })).map(drop)
+        daemon()?.assist(&root, text)
     })
     .await
 }
@@ -224,7 +229,7 @@ pub(crate) async fn run_verification(run: String) -> CmdResult<Option<pit_core::
 pub(crate) async fn card_review(path: String, card: u32, action: String, message: Option<String>) -> CmdResult<serde_json::Value> {
     blocking(move || {
         let root = open(&path)?.root;
-        call(serde_json::json!({ "op": "review", "repo": root, "card": card, "action": action, "message": message }))
+        daemon()?.review(&root, card, ReviewAction::parse(&action)?, message)
     })
     .await
 }
@@ -238,7 +243,7 @@ pub(crate) async fn queue_list(path: String) -> CmdResult<Vec<pit_core::queue::S
         if running().is_none() {
             return Ok(pit_core::queue::load(&default_homes().1).into_iter().filter(|j| j.repo == root).collect());
         }
-        call_as(serde_json::json!({ "op": "queue", "repo": root }), "jobs")
+        daemon()?.queue(Some(&root))
     })
     .await
 }
@@ -258,29 +263,26 @@ pub(crate) async fn queue_paused() -> CmdResult<usize> {
 
 #[tauri::command]
 pub(crate) async fn queue_resume() -> CmdResult<()> {
-    blocking(move || call(serde_json::json!({ "op": "queue_resume" })).map(drop)).await
+    blocking(move || daemon()?.queue_resume()).await
 }
 
 #[tauri::command]
 pub(crate) async fn queue_add(path: String, branch: String, to: Option<String>) -> CmdResult<pit_core::queue::ShipJob> {
     blocking(move || {
         let root = open(&path)?.root;
-        call_as(serde_json::json!({ "op": "enqueue", "repo": root, "branch": branch, "to": to }), "job")
+        daemon()?.enqueue(&root, branch, to)
     })
     .await
 }
 
 #[tauri::command]
 pub(crate) async fn queue_remove(id: String) -> CmdResult<()> {
-    blocking(move || call(serde_json::json!({ "op": "dequeue", "id": id })).map(drop)).await
+    blocking(move || daemon()?.dequeue(&id)).await
 }
 
 #[tauri::command]
 pub(crate) async fn run_continue(run: String, allow_api_key: bool) -> CmdResult<RunMeta> {
-    blocking(move || {
-        call_as(serde_json::json!({ "op": "continue", "run": run, "allow_api_key": allow_api_key }), "run")
-    })
-    .await
+    blocking(move || daemon()?.continue_run(&run, allow_api_key)).await
 }
 
 /// A run's events so far, read from its timeline on disk (no daemon needed for history).
