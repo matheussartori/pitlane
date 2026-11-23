@@ -270,3 +270,42 @@ pub enum CardCmd {
         unlink: bool,
     },
 }
+
+impl Cmd {
+    /// What an agent working a card may run (the daemon marks its processes with PITLANE_RUN):
+    /// reading, and adding cards and questions, as its board tools allow. Answers, moves, links,
+    /// ships, cleans, approvals and accounts stay the person's, from the CLI as from MCP.
+    pub fn open_to_a_run(&self) -> bool {
+        match self {
+            Cmd::Lanes { .. }
+            | Cmd::Approvals
+            | Cmd::Review { .. }
+            | Cmd::Index
+            | Cmd::Plan { .. }
+            | Cmd::Brief { .. }
+            | Cmd::Queue
+            | Cmd::Accounts
+            | Cmd::Runs { .. }
+            | Cmd::Log { .. }
+            | Cmd::Mcp { .. } => true,
+            Cmd::Card(c) => matches!(c, CardCmd::Add { .. } | CardCmd::List { .. } | CardCmd::Show { .. } | CardCmd::Ask { .. }),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_reads_and_adds_but_never_decides() {
+        let open = |args: &[&str]| Cli::try_parse_from([&["pit"], args].concat()).unwrap().cmd.open_to_a_run();
+        for ok in [&["card", "add", "x"][..], &["card", "list"], &["card", "ask", "1", "Why?"], &["lanes"], &["mcp", "--approve", "r"]] {
+            assert!(open(ok), "{ok:?}");
+        }
+        for no in [&["card", "answer", "1", "1", "yes"][..], &["card", "move", "1", "queue"], &["card", "link", "1", "b"], &["ship"], &["approve", "1"], &["allow", "r"], &["daemon"], &["account", "use", "x"]] {
+            assert!(!open(no), "{no:?}");
+        }
+    }
+}

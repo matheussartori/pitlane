@@ -36,6 +36,9 @@ fn open(dir: Option<PathBuf>) -> Result<Repo> {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    if std::env::var_os(mcp::RUN_ENV).is_some() && !cli.cmd.open_to_a_run() {
+        anyhow::bail!("not available to an agent working a card: answers, moves, ships and approvals come from the person, and Pitlane moves the card when the run ends");
+    }
     if let Cmd::Daemon = cli.cmd {
         let home = cmd::pitlane_home();
         let claude_bin = claude_bin();
