@@ -813,9 +813,13 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .img-drop:hover:not(:disabled) { border-color: var(--color-muted); color: var(--color-ink-2); background: var(--color-paper-2); }
 .img-zone[data-over] .img-drop { border-color: var(--color-accent); color: var(--color-ink); }
 
-.prose { display: grid; gap: var(--space-xs); font: var(--weight-regular) var(--text-lg)/var(--leading-prose) var(--font-body); color: var(--color-ink); max-width: var(--measure); overflow-wrap: anywhere; }
-.prose p, .prose ul, .prose ol, .prose pre, .prose blockquote { margin: 0; }
-.prose ul, .prose ol { padding-inline-start: 1.2em; display: grid; gap: 2px; }
+/* Text in normal flow, not a grid: WebKit keeps a grid's row heights when its width changes,
+   and lines that wrap anew (long links) then spill over what follows. */
+.prose { display: flow-root; font: var(--weight-regular) var(--text-lg)/var(--leading-prose) var(--font-body); color: var(--color-ink); max-width: var(--measure); overflow-wrap: anywhere; }
+.prose > * { margin: 0; }
+.prose > * + * { margin-top: var(--space-xs); }
+.prose ul, .prose ol { padding-inline-start: 1.2em; }
+.prose li + li { margin-top: 2px; }
 .prose blockquote { padding-inline-start: var(--space-sm); border-inline-start: 2px solid var(--color-rule-strong); color: var(--color-muted); }
 .prose hr { width: 100%; border: 0; border-top: 1px solid var(--color-rule); margin: var(--space-2xs) 0; }
 .prose-table { max-width: 100%; overflow-x: auto; }
