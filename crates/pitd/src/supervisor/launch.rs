@@ -50,14 +50,23 @@ impl Supervisor {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0)
             .kill_on_drop(true);
         if let Some(dir) = choice.and_then(|c| c.config_dir.as_ref()) {
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }
-        tokio::time::timeout(ONE_SHOT_LIMIT, cmd.output())
-            .await
-            .with_context(|| format!("{what} took over two minutes"))?
-            .with_context(|| format!("could not start {}", self.cfg.claude_bin))
+        let child = cmd.spawn().with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
+        let pid = child.id();
+        if let Some(p) = pid {
+            self.one_shots.lock().unwrap().insert(p);
+        }
+        // Past the limit the future is dropped, and the child with it (kill_on_drop).
+        let out = tokio::time::timeout(ONE_SHOT_LIMIT, child.wait_with_output()).await;
+        if let Some(p) = pid {
+            self.one_shots.lock().unwrap().remove(&p);
+        }
+        out.with_context(|| format!("{what} took over two minutes"))?
+            .with_context(|| format!("{what} failed to run"))
     }
 
     /// A card's run: Claude Code in its worktree, resumed or new, with the repository's tools,

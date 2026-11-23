@@ -131,6 +131,9 @@ pub struct Supervisor {
     /// Held while a run's record is snapshotted and written, so records land in the order they
     /// were taken: an older snapshot never overwrites a newer one.
     meta_writes: Mutex<()>,
+    /// Process groups of the one-shot calls in flight (a card's description, a report's digest):
+    /// they are not sessions, but shutting down ends them too.
+    one_shots: Mutex<std::collections::HashSet<u32>>,
 }
 
 pub struct Subscription {
@@ -165,6 +168,7 @@ impl Supervisor {
             leave_ms: AtomicU64::new(LEAVE_MS),
             left_running_ms: AtomicU64::new(LEFT_RUNNING_MS),
             meta_writes: Mutex::new(()),
+            one_shots: Mutex::default(),
         })
     }
 

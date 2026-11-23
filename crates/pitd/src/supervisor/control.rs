@@ -282,6 +282,10 @@ impl Supervisor {
                 signal(pid, libc::SIGKILL);
             }
         }
+        // Exiting skips the drops that would end the one-shot calls still in flight.
+        for pid in self.one_shots.lock().unwrap().drain() {
+            signal(pid, libc::SIGKILL);
+        }
         self.perf.release_all();
         let _ = fs::remove_file(runs::socket_path(&self.cfg.home));
         std::process::exit(0)
