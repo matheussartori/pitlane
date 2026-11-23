@@ -127,9 +127,5 @@ pub fn load(pitlane_home: &Path) -> Vec<ShipJob> {
 }
 
 pub fn save(pitlane_home: &Path, jobs: &[ShipJob]) -> Result<()> {
-    std::fs::create_dir_all(pitlane_home)?;
-    let path = pitlane_home.join("queue.json");
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(jobs)?)?;
-    std::fs::rename(&tmp, &path).context("could not save the queue")
+    crate::fsutil::write_atomic(&pitlane_home.join("queue.json"), serde_json::to_string_pretty(jobs)?).context("could not save the queue")
 }

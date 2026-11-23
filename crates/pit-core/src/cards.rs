@@ -405,8 +405,7 @@ pub fn set_project_context(repo: &Repo, text: &str) -> Result<()> {
             _ => return Ok(()),
         }
     }
-    fs::create_dir_all(&repo.board)?;
-    fs::write(&path, format!("{text}\n")).with_context(|| format!("could not write {}", path.display()))
+    crate::fsutil::write_atomic(&path, format!("{text}\n"))
 }
 
 /// A repository's board folder: keyed by its remote's URL, so moving or re-cloning the folder keeps
@@ -974,12 +973,7 @@ fn write(card: &Card) -> Result<()> {
 }
 
 fn atomic_write(path: &Path, text: &str) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
-    }
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-    fs::write(&tmp, text).with_context(|| format!("could not write {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("could not write {}", path.display()))
+    crate::fsutil::write_atomic(path, text)
 }
 
 /// Cross-process lock on the board: an OS lock (`flock`) on the board's lock file, held while

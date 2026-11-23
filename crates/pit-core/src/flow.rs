@@ -30,42 +30,35 @@ pub struct ProjectCfg {
 /// Takes a related repository off `[project] repos`.
 pub fn remove_project_repo(root: &Path, rel: &str) -> Result<()> {
     let path = root.join(FLOW_PATH);
-    let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
-    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
-    if let Some(repos) = doc.get_mut("project").and_then(|p| p.get_mut("repos")).and_then(|r| r.as_array_mut()) {
-        repos.retain(|v| v.as_str() != Some(rel));
+    if !path.exists() {
+        return Ok(());
     }
-    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
-    FlowFile::load(root).map(|_| ())
+    edit_flow(root, |doc| {
+        if let Some(repos) = doc.get_mut("project").and_then(|p| p.get_mut("repos")).and_then(|r| r.as_array_mut()) {
+            repos.retain(|v| v.as_str() != Some(rel));
+        }
+        Ok(())
+    })
 }
 
 /// Adds a related repository to `[project] repos`, keeping the file's comments.
 pub fn add_project_repo(root: &Path, rel: &str) -> Result<()> {
-    let path = root.join(FLOW_PATH);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => TEMPLATE.to_owned(),
-        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
-    };
-    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
-    let project = doc
-        .entry("project")
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
-        .as_table_mut()
-        .context("[project] in flow.toml is not a table")?;
-    let repos = project
-        .entry("repos")
-        .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
-        .as_array_mut()
-        .context("[project] repos in flow.toml is not an array")?;
-    if !repos.iter().any(|v| v.as_str() == Some(rel)) {
-        repos.push(rel);
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
-    FlowFile::load(root).map(|_| ())
+    edit_flow(root, |doc| {
+        let project = doc
+            .entry("project")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_mut()
+            .context("[project] in flow.toml is not a table")?;
+        let repos = project
+            .entry("repos")
+            .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+            .as_array_mut()
+            .context("[project] repos in flow.toml is not an array")?;
+        if !repos.iter().any(|v| v.as_str() == Some(rel)) {
+            repos.push(rel);
+        }
+        Ok(())
+    })
 }
 
 /// Checks after a run, before a person reviews.
@@ -224,70 +217,55 @@ impl Default for RunCfg {
 /// Adds `rule` to `[run] allow` in the repository's `.pitlane/flow.toml`, keeping its comments
 /// and layout. Creates the file from the template when there is none. Idempotent.
 pub fn add_run_allow(root: &Path, rule: &str) -> Result<()> {
-    let path = root.join(FLOW_PATH);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => TEMPLATE.to_owned(),
-        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
-    };
-    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
-    let run = doc
-        .entry("run")
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
-        .as_table_mut()
-        .context("[run] in flow.toml is not a table")?;
-    let allow = run
-        .entry("allow")
-        .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
-        .as_array_mut()
-        .context("[run] allow in flow.toml is not an array")?;
-    if !allow.iter().any(|v| v.as_str() == Some(rule)) {
-        allow.push(rule);
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
-    // The edited file must still be a valid flow.
-    FlowFile::load(root).map(drop)
+    edit_flow(root, |doc| {
+        let run = doc
+            .entry("run")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_mut()
+            .context("[run] in flow.toml is not a table")?;
+        let allow = run
+            .entry("allow")
+            .or_insert_with(|| toml_edit::value(toml_edit::Array::new()))
+            .as_array_mut()
+            .context("[run] allow in flow.toml is not an array")?;
+        if !allow.iter().any(|v| v.as_str() == Some(rule)) {
+            allow.push(rule);
+        }
+        Ok(())
+    })
 }
 
 /// Sets `[table] key = value` in the repository's `.pitlane/flow.toml`, keeping its comments and
 /// layout (the file is made from the template when there is none). The flow must still read after
 /// the change, or nothing is written.
 pub fn set_value(root: &Path, table: &str, key: &str, value: toml_edit::Value) -> Result<()> {
-    let path = root.join(FLOW_PATH);
-    let before = std::fs::read_to_string(&path).ok();
-    let text = before.clone().unwrap_or_else(|| TEMPLATE.to_owned());
-    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
-    let t = doc
-        .entry(table)
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
-        .as_table_mut()
-        .with_context(|| format!("[{table}] in flow.toml is not a table"))?;
-    match t.get_mut(key).and_then(|i| i.as_value_mut()) {
-        // Keep the comment after the value.
-        Some(old) => {
-            let decor = old.decor().clone();
-            *old = value;
-            *old.decor_mut() = decor;
+    edit_flow(root, |doc| {
+        let t = doc
+            .entry(table)
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_mut()
+            .with_context(|| format!("[{table}] in flow.toml is not a table"))?;
+        match t.get_mut(key).and_then(|i| i.as_value_mut()) {
+            // Keep the comment after the value.
+            Some(old) => {
+                let decor = old.decor().clone();
+                *old = value;
+                *old.decor_mut() = decor;
+            }
+            None => {
+                t.insert(key, toml_edit::Item::Value(value));
+            }
         }
-        None => {
-            t.insert(key, toml_edit::Item::Value(value));
-        }
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, doc.to_string()).with_context(|| format!("could not write {}", path.display()))?;
-    if let Err(e) = FlowFile::load(root) {
-        match before {
-            Some(b) => std::fs::write(&path, b)?,
-            None => std::fs::remove_file(&path)?,
-        }
-        return Err(e);
-    }
-    Ok(())
+        Ok(())
+    })
+}
+
+/// Edits the repository's flow.toml (made from the template when there is none), keeping its
+/// comments; the result must still read as a flow, or nothing is written.
+fn edit_flow(root: &Path, change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result<()> {
+    crate::fsutil::edit_toml(&root.join(FLOW_PATH), TEMPLATE, change, |text| {
+        toml::from_str::<FlowFile>(text).map(drop).map_err(Into::into)
+    })
 }
 
 /// `set_value` from JSON (true, 12, "sonnet", ["npm test"]): what the app's Settings sends.

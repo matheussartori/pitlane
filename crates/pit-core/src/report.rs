@@ -207,9 +207,13 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
             shots: Some(shots_of(pitlane_home, &runs)),
         });
     }
+    // The id is the second the report was made; a second report in the same second takes the
+    // next free one instead of overwriting the first.
     let now = now_secs();
+    let d = dir(pitlane_home);
+    let id = (now..).find(|n| !d.join(format!("{n}.json")).exists()).unwrap_or(now);
     let r = Report {
-        id: format!("{now}"),
+        id: format!("{id}"),
         repo: repo.root.clone(),
         repo_name: repo.name.clone(),
         started_at: since,
@@ -224,9 +228,7 @@ pub fn create(repo: &Repo, pitlane_home: &Path, ids: &[u32], since: u64, into: O
         suggestions,
         digest: None,
     };
-    let d = dir(pitlane_home);
-    std::fs::create_dir_all(&d)?;
-    std::fs::write(d.join(format!("{}.json", r.id)), serde_json::to_string_pretty(&r)?)?;
+    save(pitlane_home, &r)?;
     Ok(r)
 }
 
@@ -249,7 +251,7 @@ pub fn suggest_card(repo: &Repo, pitlane_home: &Path, id: &str, index: usize) ->
     let body = format!("{}\n\n_Suggested by the run on #{} (Run all of {})._", s.body, s.card, r.into.as_deref().unwrap_or(&r.repo_name));
     let card = cards::add(repo, cards::NewCard { title: s.title.clone(), body, ..Default::default() })?;
     r.suggestions[index].made = Some(card.id);
-    std::fs::write(&path, serde_json::to_string_pretty(&r)?)?;
+    crate::fsutil::write_atomic(&path, serde_json::to_string_pretty(&r)?)?;
     Ok(card)
 }
 
@@ -296,8 +298,7 @@ pub fn list(pitlane_home: &Path, repo: &Path) -> Vec<Report> {
 }
 
 fn save(pitlane_home: &Path, r: &Report) -> Result<()> {
-    std::fs::write(dir(pitlane_home).join(file_of(&r.id)?), serde_json::to_string_pretty(r)?)?;
-    Ok(())
+    crate::fsutil::write_atomic(&dir(pitlane_home).join(file_of(&r.id)?), serde_json::to_string_pretty(r)?)
 }
 
 /// Reads report `id`.

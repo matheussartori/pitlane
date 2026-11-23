@@ -926,7 +926,7 @@ mod tests {
         assert!(v["system"]["mem_total"].as_u64().unwrap() > 0);
         assert_eq!(v["agents"].as_array().unwrap().len(), 0);
         assert_eq!(v["history"].as_array().unwrap().len(), 1);
-        assert!(v["others"].as_array().unwrap().len() > 0);
+        assert!(!v["others"].as_array().unwrap().is_empty());
         assert_eq!(v["mode"], "full");
     }
 

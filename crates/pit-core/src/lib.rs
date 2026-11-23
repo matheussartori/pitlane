@@ -8,6 +8,7 @@ pub mod brief;
 pub mod cards;
 pub mod describe;
 pub mod flow;
+pub mod fsutil;
 pub mod index;
 pub mod language;
 pub mod git;

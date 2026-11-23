@@ -121,9 +121,5 @@ pub fn prune(repo: &Repo) -> Result<()> {
             keep.push('\n');
         }
     }
-    let path = log_path(&repo.pitlane_home);
-    let tmp = path.with_extension("jsonl.tmp");
-    fs::write(&tmp, keep)?;
-    fs::rename(&tmp, &path)?;
-    Ok(())
+    crate::fsutil::write_atomic(&log_path(&repo.pitlane_home), keep)
 }

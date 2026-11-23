@@ -395,8 +395,7 @@ pub fn set_repo_account(pitlane_home: &Path, repo: &Path, account: &str) -> Resu
         t["account"] = toml_edit::value(account);
         repos.push(t);
     }
-    std::fs::create_dir_all(pitlane_home)?;
-    std::fs::write(&path, doc.to_string())?;
+    crate::fsutil::write_atomic(&path, doc.to_string())?;
     Routing::load(pitlane_home).map(drop)
 }
 
@@ -433,8 +432,7 @@ pub fn add_account(pitlane_home: &Path, id: &str, kind: Kind, api_key_helper: Op
         check.accounts.insert(0, Account { id: DEFAULT_ACCOUNT.into(), provider: Provider::Anthropic, kind: Kind::Subscription, max_parallel: None, repos: Vec::new(), api_key_helper: None });
     }
     check.validate()?;
-    std::fs::create_dir_all(pitlane_home)?;
-    std::fs::write(&path, doc.to_string())?;
+    crate::fsutil::write_atomic(&path, doc.to_string())?;
     let dir = profile_dir(id, pitlane_home);
     if let Some(d) = &dir {
         std::fs::create_dir_all(d)?;

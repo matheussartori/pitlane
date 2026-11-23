@@ -169,10 +169,7 @@ pub fn update(repo: &Repo, pitlane_home: &Path) -> Result<(Index, IndexStats)> {
     stats.symbols = files.iter().map(|f| f.symbols.len()).sum();
     let index = Index { version: VERSION, root: repo.root.clone(), head, files };
     let path = path_for(pitlane_home, &repo.root);
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(&index)?)?;
-    std::fs::rename(&tmp, &path).context("could not save the index")?;
+    crate::fsutil::write_atomic(&path, serde_json::to_vec(&index)?).context("could not save the index")?;
     stats.ms = t.elapsed().as_millis() as u64;
     Ok((index, stats))
 }
