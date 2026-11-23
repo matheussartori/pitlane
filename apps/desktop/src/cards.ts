@@ -3,7 +3,7 @@
 import type { BlockReason, Card, CardState, Lane, RunMeta, Turn, Yard } from "./api";
 import type { IconName } from "./icons";
 import { group, next, type ChipState } from "./lane";
-import { plural, t } from "./i18n";
+import { locale, plural, t } from "./i18n";
 
 export type Column = "needs" | "backlog" | "progress" | "landed";
 export const columns: Column[] = ["needs", "backlog", "progress", "landed"];
@@ -37,10 +37,37 @@ export const blockLabel: Record<BlockReason, string> = {
   stuck: "Agent stuck",
   failed: "Run failed",
   "no-route": "No account free",
+  "api-key": "Waits for the API key",
   conflict: "Conflict",
   checks: "Checks fail",
   other: "Blocked",
 };
+
+export type UnblockAction = "retry" | "review" | "backlog";
+
+/** What you can do about a blocked card, the first being what usually frees it. None while it
+ *  is being read again, or while a question is open (answering is the way out then). */
+export function unblockActions(card: Card): { action: UnblockAction; label: string; title: string; icon: IconName }[] {
+  const b = card.blocked;
+  if (card.state !== "blocked" || b?.checking || (card.questions ?? []).some((q) => q.answer == null)) return [];
+  const retry: Record<BlockReason, [string, string]> = {
+    questions: ["Read again", "Read the card again with your answers; it goes back to the Backlog when nothing else is open"],
+    stuck: ["Try again", "Run it again; the card's notes say where the last run stopped"],
+    failed: ["Try again", "Run it again; a paused session picks up where it was"],
+    "no-route": ["Try now", "Run it now, if an account is free"],
+    "api-key": ["Use the API key", "Run it on the API key, paid per token"],
+    conflict: ["Resolve the conflict", "A run brings the branch it lands in into the lane and resolves the conflict"],
+    checks: ["Another round", "Another fix round on what the checks and the judge said"],
+    other: ["Run again", "Run it again"],
+  };
+  const reason = b?.reason ?? "other";
+  const [label, title] = retry[reason];
+  const out: { action: UnblockAction; label: string; title: string; icon: IconName }[] = [{ action: "retry", label, title, icon: "refresh" }];
+  if (card.lane && (reason === "checks" || reason === "conflict" || reason === "stuck"))
+    out.push({ action: "review", label: "Review as it is", title: "Leave it for your review, as the lane holds it now", icon: "review" });
+  out.push({ action: "backlog", label: "Back to Backlog", title: "Back to Backlog: its next run picks up from your notes and its lane", icon: "queued" });
+  return out;
+}
 
 export interface Placement {
   column: Column;
@@ -67,8 +94,14 @@ export function place(card: Card, yard: Yard | null): Placement {
   if (card.state === "blocked") {
     const b = card.blocked;
     // Answered: Pitlane reads it again, and it goes back to the Backlog on its own when nothing else is open.
-    if (b?.checking) return { column: "needs", chip: "running", icon: "verify", label: t("Rereading with your answers"), why: b.detail || about(card) };
-    return { column: "needs", chip: "needs", icon: "blocked", label: t(blockLabel[b?.reason ?? "other"]), why: b?.detail || about(card) };
+    if (b?.checking) return { column: "needs", chip: "running", icon: "verify", label: t(b.reason === "stuck" ? "Working out what it needs" : "Rereading with your answers"), why: b.detail || about(card) };
+    const why = b?.detail || about(card);
+    // Pitlane tries it again by itself: say when.
+    if (b?.retry_at) {
+      const at = new Date(b.retry_at * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+      return { column: "needs", chip: "queued", icon: "refresh", label: t("Tries again at {time}", { time: at }), why };
+    }
+    return { column: "needs", chip: "needs", icon: "blocked", label: t(blockLabel[b?.reason ?? "other"]), why };
   }
   // Landed in the branch it was asked for (Run all's Into): done, whatever its own lane waits on.
   if (card.target && (card.state === "done" || card.state === "in-dev"))

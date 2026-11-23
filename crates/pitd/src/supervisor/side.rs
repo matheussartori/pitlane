@@ -272,7 +272,7 @@ impl Supervisor {
     /// A card whose agent stopped blocked without asking: a read-only session turns what stopped
     /// it into questions for you, and the card then waits on them like any other. When nothing you
     /// could answer would help, the card is run again once by itself, with what the reading noted.
-    pub(super) fn triage(self: &Arc<Self>, repo: &Path, id: u32) -> Result<bool> {
+    pub fn triage(self: &Arc<Self>, repo: &Path, id: u32) -> Result<bool> {
         let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
         let c = cards::get(&r, id)?;
         if !c.blocked.as_ref().is_some_and(|b| b.reason == cards::BlockReason::Stuck && b.checking.is_none()) {

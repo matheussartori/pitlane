@@ -2,7 +2,7 @@
 import { For, Show, createEffect, createSignal, on } from "solid-js";
 import { api, cardStates, isLive, type Card, type CardState, type RunMeta, type Yard } from "./api";
 import { elapsed, money, runStateView } from "./run";
-import { columnTitle, openQuestions, place, stateLabel } from "./cards";
+import { columnTitle, openQuestions, place, stateLabel, unblockActions } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { CardImages, imagesIn } from "./images";
@@ -12,7 +12,7 @@ import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { CARD_SIDE_W, Grip } from "./layout";
 import { locale, plural, t } from "./i18n";
 import { clock, msg } from "./format";
-import { ForgetSheet, MiniTrack, deleteCard, hasMemory } from "./board";
+import { ForgetSheet, MiniTrack, deleteCard, hasMemory, unblockCard } from "./board";
 
 /**
  * Run all's questions, one at a time, each with its card as context and Claude to talk it over
@@ -303,6 +303,21 @@ export function CardSheet(props: {
             <Icon name="trash" small /> {t("Delete")}
           </button>
           <span class="sheet-note">{props.card.file}</span>
+          <Show when={!live()}>
+            <For each={unblockActions(props.card).filter((a) => a.action !== "backlog")}>
+              {(a) => (
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  disabled={busy() || dirty()}
+                  title={dirty() ? t("Save your changes first") : t(a.title)}
+                  onClick={() => void unblockCard(props.repo, props.card, a.action, props.onChanged).then(props.onClose)}
+                >
+                  <Icon name={a.icon} small /> {t(a.label)}
+                </button>
+              )}
+            </For>
+          </Show>
           <Show when={props.card.state === "blocked" && !live()}>
             <button
               type="button"

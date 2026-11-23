@@ -179,14 +179,16 @@ export interface CardNote {
 }
 
 /** Why a card is blocked: what would free it. */
-export type BlockReason = "questions" | "stuck" | "failed" | "no-route" | "conflict" | "checks" | "other";
+export type BlockReason = "questions" | "stuck" | "failed" | "no-route" | "api-key" | "conflict" | "checks" | "other";
 export interface Block {
   reason: BlockReason;
   detail?: string;
   since: string;
   run?: string;
-  /** Pitlane is reading the card again with your answers. */
+  /** Pitlane is reading the card again (your answers, or what stopped the agent). */
   checking?: string;
+  /** When Pitlane tries it again by itself (Unix seconds). */
+  retry_at?: number;
 }
 
 export interface Card {
@@ -796,6 +798,8 @@ export const api = {
     id: number,
     patch: { title?: string; body?: string; state?: CardState; lane?: string },
   ) => invoke<Card>("card_update", { path, id, ...patch }),
+  /** What you chose for a blocked card; the run it started, if any. */
+  unblockCard: (path: string, id: number, action: "retry" | "review" | "backlog") => invoke<RunMeta | null>("card_unblock", { path, id, action }),
   cardReorder: (path: string, ids: number[]) => invoke<void>("card_reorder", { path, ids }),
   cardNote: (path: string, id: number, text: string) => invoke<Card>("card_note", { path, id, text }),
   cardsAnalyze: (path: string, ids: number[]) =>

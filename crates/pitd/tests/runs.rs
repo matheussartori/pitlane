@@ -1680,3 +1680,27 @@ async fn a_failed_run_is_tried_again_a_couple_of_times_then_waits_for_you() {
     assert_eq!((c.state, c.retries, c.blocked.is_none()), (CardState::Ready, 0, true));
     assert!(s.unblock(fx.repo.clone(), id, cards::Unblock::Retry, false).is_err(), "not blocked any more");
 }
+
+/// With the real Claude Code (signed in): an agent that got stuck without asking has what stopped
+/// it turned into questions. `cargo test -p pitd --test runs -- --ignored stuck`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "runs the real claude"]
+async fn a_stuck_agent_gets_questions_with_the_real_claude() {
+    let fx = fx();
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::add(&r, NewCard { title: "Run the migration on staging".into(), body: "Apply the pending database migration to the staging database.".into(), ..Default::default() }).unwrap();
+    let why = "Blocked: there is no staging database URL anywhere in the repository or its environment, and I have no credentials for it.";
+    cards::update(&r, c.id, CardPatch { state: Some(CardState::Blocked), blocked: Some(cards::Block::new(cards::BlockReason::Stuck, why, None)), ..Default::default() }).unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: "claude".into(), pit_bin: None });
+    assert!(s.triage(&fx.repo, c.id).unwrap(), "a reading starts");
+    for _ in 0..360 {
+        let now = cards::get(&r, c.id).unwrap();
+        if now.blocked.as_ref().is_some_and(|b| b.checking.is_none()) {
+            eprintln!("reason {:?}, questions {:?}", now.blocked.as_ref().map(|b| b.reason), now.questions.iter().map(|q| (&q.text, &q.options)).collect::<Vec<_>>());
+            assert_eq!(now.blocked.unwrap().reason, cards::BlockReason::Questions, "what it needs, asked");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    panic!("the reading never ended");
+}

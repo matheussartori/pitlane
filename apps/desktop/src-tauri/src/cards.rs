@@ -105,6 +105,17 @@ pub(crate) async fn card_note(path: String, id: u32, text: String) -> CmdResult<
     blocking(move || Ok(cards::note(&open(&path)?, id, "you", &text)?.into())).await
 }
 
+/// What you chose for a blocked card (retry, review or backlog); the run it started, if any.
+#[tauri::command]
+pub(crate) async fn card_unblock(path: String, id: u32, action: String) -> CmdResult<Option<pit_core::runs::RunMeta>> {
+    blocking(move || {
+        let action = cards::Unblock::parse(&action)?;
+        let root = open(&path)?.root;
+        daemon()?.unblock(&root, id, action)
+    })
+    .await
+}
+
 /// Run all's analysis: questions and notes on each card not analysed yet.
 #[tauri::command]
 pub(crate) async fn cards_analyze(path: String, ids: Vec<u32>) -> CmdResult<serde_json::Value> {

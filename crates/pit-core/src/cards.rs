@@ -767,8 +767,8 @@ pub fn update(repo: &Repo, id: u32, patch: CardPatch) -> Result<Card> {
     if let Some(n) = patch.retries {
         card.retries = n;
     }
-    // Got through: a later block starts with its retries again.
-    if matches!(card.state, CardState::Review | CardState::InDev | CardState::Done) {
+    // Got through, or sent on by you: a later block starts with its retries again.
+    if matches!(card.state, CardState::Ready | CardState::Review | CardState::InDev | CardState::Done) {
         card.retries = 0;
     }
     // A reason only while blocked, and always one then.

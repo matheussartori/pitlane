@@ -108,6 +108,7 @@ pub fn run() {
             cards::card_update,
             cards::card_answer,
             cards::card_reanswer,
+            cards::card_unblock,
             cards::card_talk,
             cards::card_talk_stop,
             cards::project_repos,

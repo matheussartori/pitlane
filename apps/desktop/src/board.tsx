@@ -2,7 +2,7 @@
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
 import { api, isLive, type Card, type Plan, type RunMeta, type Yard } from "./api";
 import { elapsed } from "./run";
-import { columnEmpty, columnTitle, columns, latestRun, place, reviewSummary } from "./cards";
+import { columnEmpty, columnTitle, columns, latestRun, place, reviewSummary, unblockActions, type UnblockAction } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { attachImages, imagesIn } from "./images";
@@ -202,6 +202,22 @@ export function ForgetSheet(props: { repo: string; cards: Card[]; onDone: () => 
 }
 
 /** Deletes a card, with an undo in the toast (the file waits in the board's deleted folder). */
+/** Carries out what you chose for a blocked card, and says what happened. */
+export async function unblockCard(repo: string, card: Card, action: UnblockAction, onChanged: () => void): Promise<void> {
+  try {
+    const run = await api.unblockCard(repo, card.id, action);
+    const title =
+      action === "backlog" ? t("#{id} back in Backlog", { id: card.id })
+      : action === "review" ? t("#{id} is ready for your review", { id: card.id })
+      : run ? t("#{id} runs again", { id: card.id })
+      : t("Reading #{id} again", { id: card.id });
+    toast({ tone: "done", title });
+    onChanged();
+  } catch (e) {
+    toast({ tone: "fail", title: t("Could not move #{id}", { id: card.id }), body: msg(e) });
+  }
+}
+
 export async function deleteCard(repo: string, card: Card, onChanged: () => void): Promise<boolean> {
   try {
     await api.cardDelete(repo, card.id);
@@ -694,24 +710,25 @@ export function BoardView(props: {
                                 {card.notes!.length}
                               </span>
                             </Show>
-                            <Show when={card.state === "blocked" && (card.questions ?? []).every((q) => q.answer != null) && !liveRun(card.id) && props.repo}>
-                              <button
-                                type="button"
-                                class="btn btn-ghost btn-icon card-back"
-                                aria-label={t("Back to Backlog")}
-                                title={t("Back to Backlog: its next run picks up from your notes and its lane")}
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onKeyDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void api
-                                    .cardUpdate(props.repo!, card.id, { state: "ready" })
-                                    .then(() => (toast({ tone: "done", title: t("#{id} back in Backlog", { id: card.id }) }), props.onChanged()))
-                                    .catch((err) => toast({ tone: "fail", title: t("Could not move #{id}", { id: card.id }), body: msg(err) }));
-                                }}
-                              >
-                                <Icon name="queued" small />
-                              </button>
+                            <Show when={!liveRun(card.id) && props.repo}>
+                              <For each={unblockActions(card).filter((a) => a.action !== "review")}>
+                                {(a) => (
+                                  <button
+                                    type="button"
+                                    class="btn btn-ghost btn-icon card-back"
+                                    aria-label={t(a.label)}
+                                    title={t(a.title)}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void unblockCard(props.repo!, card, a.action, props.onChanged);
+                                    }}
+                                  >
+                                    <Icon name={a.icon} small />
+                                  </button>
+                                )}
+                              </For>
                             </Show>
                           </div>
                           <div class="card-title"><Linked text={card.title} /></div>
