@@ -30,6 +30,8 @@ impl Git {
         let mut cmd = Command::new("git");
         cmd.arg("-C")
             .arg(&self.dir)
+            // Paths as they are (café.rs), not quoted and octal-escaped: the output is parsed.
+            .args(["-c", "core.quotePath=false"])
             .args(args)
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null());
