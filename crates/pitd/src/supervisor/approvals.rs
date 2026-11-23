@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use pit_core::Repo;
 use pit_core::flow;
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta};
 use serde_json::Value;
 use tokio::sync::oneshot;

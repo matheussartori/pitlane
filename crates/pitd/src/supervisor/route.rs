@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::{RunEvent, RunMeta, RunState};
 
 use super::card::{block_card, checkpoint};

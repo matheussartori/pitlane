@@ -1,7 +1,7 @@
 //! What `pit clean` deleted, kept 30 days so it can be undone. The log lives in
 //! `~/.pitlane/trash.jsonl`; a ref under `refs/pitlane/trash/` keeps each commit safe from gc.
 
-use std::fs::{self, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::Repo;
-use crate::lanes::now_secs;
+use crate::time::now_secs;
 
 pub const KEEP_DAYS: u64 = 30;
 const KEEP_SECS: u64 = KEEP_DAYS * 86_400;
@@ -46,13 +46,14 @@ fn log_path(pitlane_home: &Path) -> PathBuf {
     pitlane_home.join("trash.jsonl")
 }
 
+/// Held while the log is appended to or rewritten, across processes: a prune that read the log
+/// before an append would otherwise write it back without that entry.
+fn lock(pitlane_home: &Path) -> Result<crate::fsutil::FileLock> {
+    crate::fsutil::FileLock::take(&pitlane_home.join(".trash.lock"), std::time::Duration::from_secs(10))
+}
+
 pub fn load(pitlane_home: &Path) -> Result<Vec<Entry>> {
-    let path = log_path(pitlane_home);
-    let text = match fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
-    };
+    let text = crate::fsutil::read_optional(&log_path(pitlane_home))?.unwrap_or_default();
     // A damaged line is skipped rather than blocking every clean.
     Ok(text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
 }
@@ -71,8 +72,7 @@ pub fn record(repo: &Repo, mut entry: Entry) -> Result<Entry> {
     }
     entry.keep_refs = refs;
 
-    fs::create_dir_all(&repo.pitlane_home)
-        .with_context(|| format!("could not create {}", repo.pitlane_home.display()))?;
+    let _lock = lock(&repo.pitlane_home)?;
     let path = log_path(&repo.pitlane_home);
     let mut f = OpenOptions::new()
         .create(true)
@@ -103,23 +103,30 @@ pub fn list(repo: &Repo) -> Result<Vec<Entry>> {
     Ok(v)
 }
 
-/// Drops expired entries of this repo and their pinning refs.
+/// Drops expired entries of this repo and their pinning refs. Lines it cannot read (damaged, or
+/// written by a newer pit) are kept as they are.
 pub fn prune(repo: &Repo) -> Result<()> {
     let now = now_secs();
-    let all = load(&repo.pitlane_home)?;
-    if !all.iter().any(|e| e.repo == repo.root && e.expired(now)) {
+    let expired = |e: &Entry| e.repo == repo.root && e.expired(now);
+    if !load(&repo.pitlane_home)?.iter().any(expired) {
         return Ok(());
     }
+    let _lock = lock(&repo.pitlane_home)?;
+    let path = log_path(&repo.pitlane_home);
+    let text = crate::fsutil::read_optional(&path)?.unwrap_or_default();
     let mut keep = String::new();
-    for e in all {
-        if e.repo == repo.root && e.expired(now) {
-            for r in &e.keep_refs {
-                let _ = repo.git.run(&["update-ref", "-d", r]);
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<Entry>(line) {
+            Ok(e) if expired(&e) => {
+                for r in &e.keep_refs {
+                    let _ = repo.git.run(&["update-ref", "-d", r]);
+                }
             }
-        } else {
-            keep.push_str(&serde_json::to_string(&e)?);
-            keep.push('\n');
+            _ => {
+                keep.push_str(line);
+                keep.push('\n');
+            }
         }
     }
-    crate::fsutil::write_atomic(&log_path(&repo.pitlane_home), keep)
+    crate::fsutil::write_atomic(&path, keep)
 }

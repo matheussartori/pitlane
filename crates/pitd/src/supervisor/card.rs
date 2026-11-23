@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use pit_core::Repo;
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::actions::{self, NewOptions};
 use pit_core::cards::{self, CardPatch, CardState, NewQuestion};
 use pit_core::flow::RUN_BASE_TOOLS;
@@ -316,7 +316,7 @@ pub(super) fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Resu
 /// The first message of a run that resumes a stopped one: carry on, plus what the card got
 /// while the agent was away (notes, answers), which its session has not seen.
 pub(super) fn resume_message(c: &cards::Card, prev: &RunMeta) -> String {
-    let since = cards::timestamp(prev.ended_at.unwrap_or(prev.started_at));
+    let since = pit_core::time::timestamp(prev.ended_at.unwrap_or(prev.started_at));
     let mut news: Vec<String> = c
         .notes
         .iter()

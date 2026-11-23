@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -292,8 +291,7 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
         } else {
             match &remote_sha {
                 Some(rs) => {
-                    let ahead = count(git, &[&format!("{rs}..{sha}")])?;
-                    let behind = count(git, &[&format!("{sha}..{rs}")])?;
+                    let (ahead, behind) = if *rs == sha { (0, 0) } else { ahead_behind(git, &sha, rs)? };
                     match (ahead, behind) {
                         (0, 0) => Sync::Synced,
                         (a, 0) => Sync::Ahead { ahead: a },
@@ -542,6 +540,16 @@ fn last_push(git: &Git, remote_branch: &str) -> Result<Option<u64>> {
     }))
 }
 
+/// Commits `ours` has that `theirs` lacks, and the other way round, in one walk.
+fn ahead_behind(git: &Git, ours: &str, theirs: &str) -> Result<(usize, usize)> {
+    let out = git.run(&["rev-list", "--left-right", "--count", &format!("{ours}...{theirs}")])?;
+    let mut n = out.split_whitespace().map(str::parse::<usize>);
+    match (n.next(), n.next()) {
+        (Some(Ok(a)), Some(Ok(b))) => Ok((a, b)),
+        _ => anyhow::bail!("rev-list --left-right --count printed {out:?}"),
+    }
+}
+
 fn count(git: &Git, revs: &[&str]) -> Result<usize> {
     let mut args = vec!["rev-list", "--count"];
     args.extend_from_slice(revs);
@@ -567,6 +575,4 @@ fn merged_prs(repo: &Repo) -> Option<Vec<MergedPr>> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
-pub fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
-}
+use crate::time::now_secs;

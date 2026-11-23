@@ -14,7 +14,7 @@ use pit_core::accounts::{self, Choice, Routing};
 use pit_core::actions;
 use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::flow::RUN_BASE_TOOLS;
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

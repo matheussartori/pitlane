@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Repo;
 use crate::cards;
-use crate::lanes::now_secs;
+use crate::time::now_secs;
 use crate::runs::{self, RunMeta, SessionKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

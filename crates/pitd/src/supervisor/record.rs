@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::Result;
 use pit_core::Repo;
 use pit_core::cards::{self, CardPatch, CardState};
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 use tokio::sync::broadcast;

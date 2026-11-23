@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice};
 use pit_core::cards::{self, CardPatch, CardState};
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

@@ -134,7 +134,7 @@ pub fn load_or_set_aside(pitlane_home: &Path) -> (Vec<ShipJob>, Option<String>) 
         Ok(jobs) => (jobs, None),
         Err(e) => {
             let path = pitlane_home.join("queue.json");
-            let aside = pitlane_home.join(format!("queue.json.unreadable-{}", crate::lanes::now_secs()));
+            let aside = pitlane_home.join(format!("queue.json.unreadable-{}", crate::time::now_secs()));
             let moved = std::fs::rename(&path, &aside);
             let note = match moved {
                 Ok(()) => format!("{e:#}; kept it as {} and started an empty queue", aside.display()),

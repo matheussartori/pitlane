@@ -20,6 +20,7 @@ pub mod queue;
 pub mod related;
 pub mod report;
 pub mod runs;
+pub mod time;
 pub mod trash;
 pub mod verify;
 

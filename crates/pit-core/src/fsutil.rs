@@ -5,8 +5,9 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// Writes `bytes` to `path` whole or not at all: a temp file beside it (its own name for each
 /// write, so two writers never rename each other's half-written file), then renamed over the old
@@ -89,6 +90,37 @@ pub fn edit_toml<T>(
     Ok(out)
 }
 
+/// Cross-process lock: an OS lock (`flock`) on a lock file, held while the value lives. The OS
+/// drops it when the holder ends, crash included, so there is no stale lock to guess about and
+/// nobody can take a lock that is still held. `flock` locks are per open file, so two holders in
+/// one process exclude each other too.
+pub struct FileLock(#[allow(dead_code)] std::fs::File);
+
+impl FileLock {
+    /// Takes the lock at `path` (creating the file and its folder), waiting up to `wait` for
+    /// whoever holds it.
+    pub fn take(path: &Path, wait: Duration) -> Result<Self> {
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+            .with_context(|| format!("could not open {}", path.display()))?;
+        let until = Instant::now() + wait;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self(file)),
+                Err(std::fs::TryLockError::WouldBlock) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+                Err(std::fs::TryLockError::WouldBlock) => bail!("{} is held by another pit process; try again", path.display()),
+                Err(std::fs::TryLockError::Error(e)) => return Err(e).with_context(|| format!("could not lock {}", path.display())),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +151,17 @@ mod tests {
             Ok(())
         }, |_| Ok(())).unwrap();
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "# mine\na = 2\n");
+    }
+
+    #[test]
+    fn a_held_lock_keeps_others_out_until_dropped() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x/.lock");
+        // A wait on the takes that must succeed: a process another test forks holds a copy of
+        // the descriptor until it execs, and with it the lock.
+        let held = FileLock::take(&p, Duration::from_secs(2)).unwrap();
+        assert!(FileLock::take(&p, Duration::from_millis(50)).is_err());
+        drop(held);
+        FileLock::take(&p, Duration::from_secs(2)).unwrap();
     }
 }

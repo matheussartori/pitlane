@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::actions;
 use pit_core::cards::{self, CardPatch, CardState};
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 
 use super::{ReviewAction, StartOpts, Supervisor, home_dir};
 

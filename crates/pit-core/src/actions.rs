@@ -11,7 +11,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::flow::{FLOW_PATH, TEMPLATE};
-use crate::lanes::{self, Landed, Status, Target, Yard, dirty_count, landed, now_secs};
+use crate::lanes::{self, Landed, Status, Target, Yard, dirty_count, landed};
+use crate::time::now_secs;
 use crate::trash::{self, Entry};
 use crate::{Repo, Worktree};
 
@@ -92,10 +93,7 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
     if existing.is_none() && !flow.name_allowed(branch) {
         bail!("{branch} does not match the naming rule {:?} in {FLOW_PATH}", flow.naming);
     }
-    let path = repo.flow.worktree.path_for(&repo.home, &repo.name, branch);
-    if path.exists() {
-        bail!("{} already exists", path.display());
-    }
+    let path = free_worktree_path(repo, branch)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -207,15 +205,28 @@ pub fn ensure_worktree(repo: &Repo, branch: &str) -> Result<PathBuf> {
     if repo.git.rev_parse(&format!("refs/heads/{branch}"))?.is_none() {
         bail!("no local branch {branch}");
     }
-    let path = repo.flow.worktree.path_for(&repo.home, &repo.name, branch);
-    if path.exists() {
-        bail!("{} already exists but is not a worktree of {branch}", path.display());
-    }
+    let path = free_worktree_path(repo, branch)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     repo.git.without_hooks().run(&["worktree", "add", "--quiet", &path.to_string_lossy(), branch])?;
     Ok(path)
+}
+
+/// Where a new worktree for `branch` goes: the flow's path, or, when that is taken (`fix/a` and
+/// `fix-a` fill in the same folder), the same with a short hash of the branch's real name.
+fn free_worktree_path(repo: &Repo, branch: &str) -> Result<PathBuf> {
+    let path = repo.flow.worktree.path_for(&repo.home, &repo.name, branch);
+    if !path.exists() {
+        return Ok(path);
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!("-{}", crate::fsutil::short_hash(branch)));
+    let other = path.with_file_name(name);
+    if other.exists() {
+        bail!("{} and {} already exist; neither is a worktree of {branch}", path.display(), other.display());
+    }
+    Ok(other)
 }
 
 /// Copies a file or directory. `clone` asks for copy-on-write (APFS clonefile, or reflink).

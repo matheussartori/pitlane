@@ -137,7 +137,7 @@ pub fn list_trash(repo: &Repo) -> Result<ExitCode> {
     if entries.is_empty() {
         println!("nothing to undo");
     }
-    let now = lanes::now_secs();
+    let now = pit_core::time::now_secs();
     for e in entries {
         let left = trash::KEEP_DAYS.saturating_sub(now.saturating_sub(e.deleted_at) / 86_400);
         println!("{}  {}  {}d left  pit clean --undo {}", short(&e.sha), e.branch, left, e.branch);

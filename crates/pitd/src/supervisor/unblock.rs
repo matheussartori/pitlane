@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use pit_core::Repo;
 use pit_core::cards::{self, BlockReason, CardPatch, CardState, Unblock};
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::RunMeta;
 
 use super::verify::fix_request;

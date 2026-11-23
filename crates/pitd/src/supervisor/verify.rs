@@ -9,7 +9,7 @@ use anyhow::Result;
 use pit_core::Repo;
 use pit_core::accounts::{self, Routing};
 use pit_core::cards::{self, CardState};
-use pit_core::lanes::now_secs;
+use pit_core::time::now_secs;
 use pit_core::runs::{RunEvent, RunMeta, RunState, SessionKind};
 
 use super::card::set_card_state;

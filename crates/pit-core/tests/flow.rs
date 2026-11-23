@@ -283,6 +283,13 @@ fn new_lane_gets_a_worktree_from_origin_main() {
     let l = lane(&y, "feat/new");
     assert_eq!(l.status, Status::New);
     assert_eq!(l.worktree.as_ref().unwrap().dirty, 0);
+
+    // `feat-new` fills in the same folder as `feat/new`: it gets one of its own.
+    repo.flow.flow.naming.clear();
+    let other = actions::new_lane(&repo, "feat-new", NewOptions { fetch: false, setup: false }).unwrap();
+    assert_ne!(other.path, r.path);
+    assert!(other.path.file_name().unwrap().to_string_lossy().starts_with("feat-new-"));
+    assert_eq!(fx.sh(&["-C", &other.path.to_string_lossy(), "branch", "--show-current"]).trim(), "feat-new");
 }
 
 #[test]
@@ -384,4 +391,36 @@ fn clean_and_undo_a_remote_only_lane() {
     let u = actions::undo_clean(&repo, "feat/done").unwrap();
     assert!(u.remote_restored && !u.local_restored);
     assert!(fx.sh(&["branch", "--list", "feat/done"]).is_empty());
+}
+
+#[test]
+fn prune_drops_expired_entries_and_keeps_lines_it_cannot_read() {
+    use pit_core::trash::{self, Entry};
+    let fx = Fx::new();
+    let repo = fx.repo();
+    let sha = fx.sh(&["rev-parse", "HEAD"]).trim().to_owned();
+    let entry = |branch: &str, deleted_at: u64| Entry {
+        repo: repo.root.clone(),
+        branch: branch.into(),
+        sha: sha.clone(),
+        remote: None,
+        remote_sha: None,
+        worktree: None,
+        had_local: true,
+        deleted_at,
+        keep_refs: Vec::new(),
+    };
+    let old = trash::record(&repo, entry("feat/old", 1)).unwrap();
+    trash::record(&repo, entry("feat/new", pit_core::time::now_secs())).unwrap();
+    let log = repo.pitlane_home.join("trash.jsonl");
+    let mut text = fs::read_to_string(&log).unwrap();
+    text.push_str("{\"written\":\"by a newer pit\"}\n");
+    fs::write(&log, text).unwrap();
+
+    trash::prune(&repo).unwrap();
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("feat/old"));
+    assert!(text.contains("feat/new"));
+    assert!(text.contains("by a newer pit"));
+    assert!(fx.sh(&["for-each-ref", &old.keep_refs[0]]).trim().is_empty());
 }
