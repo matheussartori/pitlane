@@ -121,6 +121,7 @@ impl Supervisor {
 
     /// A message to the agent while it works: it reads it after its current step.
     pub async fn say(&self, id: &str, text: &str) -> Result<()> {
+        let mid_turn;
         let mut stdin = {
             let mut live = self.live.lock().unwrap();
             let l = live
@@ -131,13 +132,15 @@ impl Supervisor {
                 .take()
                 .context("the agent already finished this session; resume it to continue")?;
             // Mid-turn, Claude Code may fold it into the turn or answer it right after.
+            mid_turn = l.turn;
             l.said = l.turn;
             l.turn = true;
             s
         };
+        let line = if mid_turn { mid_turn_message(text) } else { text.to_owned() };
         let res = async {
             stdin
-                .write_all(format!("{}\n", runs::claude_user_line(text)).as_bytes())
+                .write_all(format!("{}\n", runs::claude_user_line(&line)).as_bytes())
                 .await?;
             stdin.flush().await
         }
@@ -382,5 +385,28 @@ pub(super) fn signal(pid: u32, sig: i32) {
     // yields ESRCH.
     unsafe {
         libc::kill(-(pid as i32), sig);
+    }
+}
+
+/// What the agent gets for a message sent while its turn runs. Claude Code folds it into the
+/// turn beside the next tool result, and the agent tended to answer it in its thinking, which
+/// the person never sees, and go on as if nothing was asked. So it is told where to answer.
+fn mid_turn_message(text: &str) -> String {
+    format!(
+        "{text}\n\n(Sent from Pitlane while you work. The person reads only your text replies, \
+         never your thinking: answer this in a short text reply now, before your next tool \
+         call, then go on with the work.)"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mid_turn_message;
+
+    #[test]
+    fn a_mid_turn_message_asks_for_a_visible_answer() {
+        let m = mid_turn_message("e o resumo?");
+        assert!(m.starts_with("e o resumo?\n\n"));
+        assert!(m.contains("text reply now"));
     }
 }
