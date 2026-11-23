@@ -390,7 +390,17 @@ export default function App() {
       if (document.visibilityState === "visible" && (runs() ?? []).some((r) => isLive(r.state))) void loadRuns();
       if (document.visibilityState === "visible" && jobs().some(isOpenJob)) void loadQueue();
     }, 4000);
-    const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn, palette: () => setPalette((p) => !p) });
+    const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn });
+    // ⌘P everywhere (Warp's key), ⌘K too except on the Terminal, where it clears the screen. Taken
+    // while capturing, so no field that keeps its keys (an agent's prompt, a terminal) hides it.
+    const onPaletteKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey || !(k === "p" || (k === "k" && tab() !== "terminal"))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPalette((p) => !p);
+    };
+    window.addEventListener("keydown", onPaletteKey, true);
     window.addEventListener("focus", onFocus);
     window.addEventListener("keydown", onKey);
     onCleanup(() => {
@@ -402,6 +412,7 @@ export default function App() {
       window.removeEventListener("pitlane-open-card", onOpenCard);
       window.removeEventListener("pitlane-theme", onTheme);
       clearInterval(poll);
+      window.removeEventListener("keydown", onPaletteKey, true);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     });
