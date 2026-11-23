@@ -17,7 +17,7 @@
   --color-ink: oklch(94% 0.002 90);
   --color-ink-2: oklch(80% 0.002 255);
   --color-muted: oklch(66% 0.003 255);
-  --color-term-ink: oklch(90% 0.002 90); /* terminal text: softer than UI ink, as in Warp */
+  --color-term-ink: oklch(86% 0.003 90); /* terminal and agent text: softer than UI ink, as in Warp (about #cfd0d1) */
   --color-term-select: oklch(37% 0.006 255);
   /* The terminal's 16 colours, as Warp tunes them: calm, each normal and bright one distinct. */
   --ansi-black: oklch(45% 0.004 255); --ansi-bright-black: oklch(62% 0.004 255);

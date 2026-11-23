@@ -11,6 +11,7 @@ export {
   setTerminalNotify,
   terminalPrefs,
   setTerminalFace,
+  setTerminalRender,
   setTerminalSide,
   setTerminalFont,
   retheme,

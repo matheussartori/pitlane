@@ -4,7 +4,7 @@ import { produce } from "solid-js/store";
 import { duration } from "../blocks";
 import { t } from "../i18n";
 import { Icon } from "../icons";
-import { clock, closePane, findColours, focusPane, gpu, live, meta, type Node, type Pane, save, setSt, setTab, type Split, type Status, type Tab, tabOf } from "./model";
+import { clock, closePane, findColours, focusPane, gpu, live, meta, type Node, type Pane, save, setSt, setTab, st, type Split, type Status, type Tab, tabOf } from "./model";
 import { drag, startDrag } from "./drag";
 import { STATUS } from "./tabs";
 
@@ -31,7 +31,7 @@ export function PaneView(props: { term: number; tab: Tab; alone: boolean }) {
     if (!l.opened) {
       l.term.open(l.el);
       l.opened = true;
-      gpu(l);
+      if (st.render === "gpu") gpu(l);
       const id = props.term;
       l.term.textarea?.addEventListener("focus", () => {
         const t = tabOf(id);

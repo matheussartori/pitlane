@@ -176,7 +176,10 @@ export const TERMINAL_FACES = [
 ] as const;
 type Face = (typeof TERMINAL_FACES)[number]["v"];
 const faceCss = (f: Face) => (TERMINAL_FACES.find((x) => x.v === f) ?? TERMINAL_FACES[0]).css;
-export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face }>({ tabs: [], active: null, side: "left", font: 14, face: "hack" });
+/** How glyphs reach the screen. Smooth: WebKit draws the text as Warp does (grayscale, no stem
+ * thickening), soft to read for hours. Sharp: the GPU atlas, whose canvas glyphs macOS thickens. */
+export type Render = "smooth" | "gpu";
+export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face; render: Render }>({ tabs: [], active: null, side: "left", font: 14, face: "hack", render: "smooth" });
 export const [meta, setMeta] = createStore<Record<number, Meta>>({});
 export const [screenOn, setScreenOn] = createSignal(false);
 let nextTab = 1;
@@ -191,6 +194,7 @@ interface Saved {
   font: number;
   face?: Face;
   face2?: Face; // the face chosen since Hack became the default (an old "menlo" was only the default)
+  render?: Render;
   places: Record<number, { cwd: string; label: string; run?: string }>;
 }
 
@@ -199,7 +203,7 @@ export function save() {
     const tabs = unwrap(st.tabs);
     const places: Saved["places"] = {};
     for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label, run: meta[id]!.run };
-    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, face: st.face, face2: st.face, places } satisfies Saved));
+    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, face: st.face, face2: st.face, render: st.render, places } satisfies Saved));
   } catch {
     /* no storage: the layout lives for this window */
   }
@@ -328,7 +332,20 @@ export function setTerminalNotify(on: boolean) {
 }
 
 /** Settings: the tab list's side and the font size, read and changed. */
-export const terminalPrefs = () => ({ side: st.side, font: st.font, face: st.face });
+export const terminalPrefs = () => ({ side: st.side, font: st.font, face: st.face, render: st.render });
+export function setTerminalRender(render: Render) {
+  setSt("render", render);
+  for (const l of live.values()) {
+    if (!l.opened) continue;
+    if (render === "gpu" && !l.gl) gpu(l);
+    if (render === "smooth" && l.gl) {
+      l.gl.dispose();
+      l.gl = undefined;
+    }
+    l.term.refresh(0, l.term.rows - 1);
+  }
+  save();
+}
 export function setTerminalFace(face: Face) {
   setSt("face", face);
   void document.fonts.load(`${st.font}px ${faceCss(face)}`).finally(() => {
@@ -635,6 +652,7 @@ export async function startTerminals() {
   const saved = loadSaved();
   const face = saved?.face2 ?? (saved?.face === "menlo" ? undefined : saved?.face);
   if (face && TERMINAL_FACES.some((f) => f.v === face)) setSt("face", face);
+  if (saved?.render === "gpu") setSt("render", "gpu");
   // Measure cells with the real face, never a fallback: a late font leaves gaps between letters.
   await Promise.all(["normal", "bold"].map((w) => document.fonts.load(`${w} 14px ${faceCss(st.face)}`))).catch(() => {});
   if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || saved.font <= 13 ? 14 : saved.font)) }); // 12 and 13 were old defaults: they move to 14 with Hack

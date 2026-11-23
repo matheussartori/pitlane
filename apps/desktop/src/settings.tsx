@@ -6,7 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { api, vscode, type FlowFile, type RepoEntry } from "./api";
 import { Icon } from "./icons";
 import { prefs, setPrefs } from "./prefs";
-import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalSide, terminalPrefs } from "./terminals";
+import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalRender, setTerminalSide, terminalPrefs } from "./terminals";
 import { t } from "./i18n";
 import { toast, ok } from "./ui";
 import { resetLayout } from "./layout";
@@ -421,6 +421,17 @@ function Terminal() {
         </Row>
         <Row label="Font" help="Hack is Warp's face; SF Mono reads as Apple's Terminal.">
           <Seg label="Font" value={p().face} options={TERMINAL_FACES.map((f) => ({ v: f.v, label: f.label }))} onChange={(v) => (setTerminalFace(v), setP(terminalPrefs()))} />
+        </Row>
+        <Row label="Text" help="Smooth draws thin, soft strokes, as Warp does. Sharp draws on the GPU, for very heavy output.">
+          <Seg
+            label="Text"
+            value={p().render}
+            options={[
+              { v: "smooth", label: "Smooth" },
+              { v: "gpu", label: "Sharp (GPU)" },
+            ]}
+            onChange={(v) => (setTerminalRender(v), setP(terminalPrefs()))}
+          />
         </Row>
         <Row label="Font size" help="⌘= and ⌘- change it in the terminal too.">
           <div class="stepper">

@@ -91,6 +91,13 @@ pub struct Question {
     /// The decision the answer was recorded as, e.g. `D-07`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
+    /// The run that asked it while working (Presence: Here), and waits on the answer while it lives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// Answered with the agent's recommendation because nobody was there to answer (Presence:
+    /// Away, or no answer in time). It can be answered again from the card.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto: bool,
     /// Talking it over with Claude: what the person asked or proposed, and what Claude answered
     /// (with the options as they stand after it). Last, so the TOML tables come after the values.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -898,9 +905,29 @@ pub fn say(repo: &Repo, id: u32, question: u32, by: &str, text: &str, offer: Opt
     Ok(card)
 }
 
+/// A question a run asks while it works (Presence): one question, tied to the run, never
+/// moving the card. Returns its id on the card.
+pub fn ask_live(repo: &Repo, id: u32, question: NewQuestion, run: &str) -> Result<u32> {
+    let _lock = Lock::take(repo)?;
+    let mut card = get(repo, id)?;
+    push_questions(&mut card, vec![question])?;
+    let q = card.questions.last_mut().context("no question added")?;
+    q.run = Some(run.to_owned());
+    let qid = q.id;
+    card.updated = timestamp(now_secs());
+    write(&card)?;
+    Ok(qid)
+}
+
 /// Records an answer on the card and as a numbered decision. `answer` may be an option's
 /// number (1-based), an option's text or free text.
 pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answered> {
+    answer_as(repo, id, question, answer, false)
+}
+
+/// `answer`, saying whether it is the agent's recommendation taken because nobody answered
+/// (`auto`): the decision then says so, and the card can still be answered again.
+pub fn answer_as(repo: &Repo, id: u32, question: u32, answer: &str, auto: bool) -> Result<Answered> {
     let answer = answer.trim();
     if answer.is_empty() {
         bail!("the answer is empty");
@@ -926,6 +953,8 @@ pub fn answer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answe
     q.answer = Some(text.clone());
     q.answered_at = Some(now.clone());
     q.decision = Some(decision.clone());
+    q.auto = auto;
+    let text = if auto { format!("{text} (the agent's recommendation; nobody was there to answer)") } else { text };
     card.updated = now;
     // Every question answered: the card is ready, unless someone already moved it on.
     if card.state == CardState::Inbox && card.open_questions() == 0 {
@@ -1012,7 +1041,14 @@ pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Ans
     let now_s = now_secs();
     let now = timestamp(now_s);
     if text == old {
-        return Ok(Answered { decision: q.decision.clone().unwrap_or_default(), card });
+        // The same answer on one the agent took for you: now it is yours.
+        if q.auto {
+            q.auto = false;
+            card.updated = now;
+            write(&card)?;
+        }
+        let decision = card.questions.iter().find(|q| q.id == question).and_then(|q| q.decision.clone()).unwrap_or_default();
+        return Ok(Answered { decision, card });
     }
     let decision = match q.decision.clone() {
         Some(d) if rewrite_decision(repo, &d, &q.text, &text, &old, id, &title, &local_day(now_s))? => d,
@@ -1025,6 +1061,7 @@ pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Ans
     q.answer = Some(text);
     q.answered_at = Some(now.clone());
     q.decision = Some(decision.clone());
+    q.auto = false;
     card.updated = now;
     write(&card)?;
     Ok(Answered { card, decision })
@@ -1085,6 +1122,8 @@ fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
             answer: None,
             answered_at: None,
             decision: None,
+            run: None,
+            auto: false,
             talk: Vec::new(),
         });
     }
@@ -1274,6 +1313,8 @@ mod tests {
                 answer: None,
                 answered_at: None,
                 decision: None,
+                run: None,
+                auto: false,
                 talk: Vec::new(),
             }],
             rank: Some(3),
