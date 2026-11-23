@@ -142,6 +142,35 @@ export function Sheet(props: {
   );
 }
 
+/** A log that follows its newest line while you are at its end, and stays where you put it once
+ *  you scroll up to read. Intent counts before position: a wheel or key moving up lets go at
+ *  once, so a scroll to the end already scheduled for the line that just came cannot pull you
+ *  back, and the end is checked when that scroll runs, not when it was asked for. */
+export function tailFollower(slack = 32) {
+  let el: HTMLElement | undefined;
+  let stick = true;
+  const atEnd = (e: HTMLElement) => e.scrollHeight - e.scrollTop - e.clientHeight < slack;
+  return {
+    ref(node: HTMLElement) {
+      el = node;
+      node.addEventListener("scroll", () => (stick = atEnd(node)), { passive: true });
+      node.addEventListener("wheel", (e) => e.deltaY < 0 && (stick = false), { passive: true });
+      node.addEventListener("keydown", (e) => ["ArrowUp", "PageUp", "Home"].includes(e.key) && (stick = false));
+    },
+    /** New lines came: back to the end, if you are still following when the frame is drawn. */
+    follow() {
+      requestAnimationFrame(() => {
+        if (el && stick) el.scrollTop = el.scrollHeight;
+      });
+    },
+    /** Another log in the same box (another session): follow it from its end. */
+    restart() {
+      stick = true;
+      this.follow();
+    },
+  };
+}
+
 /** Whether a key press belongs to what has focus rather than to a screen's shortcuts: any text
  *  field, a select, editable content or a terminal, and Enter or Space on a button or link. */
 export function ownsKey(e: KeyboardEvent): boolean {

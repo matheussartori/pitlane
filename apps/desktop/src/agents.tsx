@@ -8,7 +8,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
 import { Icon, type IconName } from "./icons";
 import { plural, t, tx } from "./i18n";
-import { toast } from "./ui";
+import { toast, tailFollower } from "./ui";
 import { registerSize } from "./layout";
 import { ApprovalBlock } from "./approvals";
 import { Prose } from "./prose";
@@ -457,24 +457,20 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
     return out;
   });
   const [text, setText] = createSignal("");
-  let log: HTMLDivElement | undefined;
   let input: HTMLInputElement | undefined;
   let pane: HTMLDivElement | undefined;
-  let stick = true;
+  const tail = tailFollower(24);
 
-  createEffect(
-    on([() => events().length, () => selected()?.id, () => selected()?.sub], () => {
-      if (log && stick) requestAnimationFrame(() => log && (log.scrollTop = log.scrollHeight));
-    }),
-  );
-  createEffect(on(() => selected()?.id, () => ((stick = true), requestAnimationFrame(() => input?.focus()))));
+  createEffect(on([() => events().length, () => selected()?.sub], () => tail.follow()));
+  createEffect(on(() => selected()?.id, () => (tail.restart(), requestAnimationFrame(() => input?.focus()))));
   // A new question takes the keys, like a terminal prompt: 1-4 answer it, Esc goes back to typing.
   createEffect(
     on(
       () => m()?.waiting.length ?? 0,
       (n, prev) => {
         if (n > (prev ?? 0) && document.activeElement === input) pane?.focus();
-        if (n > 0 && log) requestAnimationFrame(() => log && (log.scrollTop = log.scrollHeight));
+        // A new question shows at the end; you are taken there only if you were following.
+        if (n > (prev ?? 0)) tail.follow();
       },
     ),
   );
@@ -675,7 +671,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
               </button>
             </Show>
           </div>
-          <div class="ag-log" ref={log} onScroll={(e) => (stick = e.currentTarget.scrollTop + e.currentTarget.clientHeight >= e.currentTarget.scrollHeight - 24)}>
+          <div class="ag-log" ref={tail.ref}>
             <For each={events()} fallback={<div class="ag-line ag-muted">{live(mm()) ? t("Starting…") : t("Nothing recorded.")}</div>}>
               {(e) => <Line e={e} m={mm()} done={e.kind === "tool" ? results().get(e.id) : undefined} />}
             </For>

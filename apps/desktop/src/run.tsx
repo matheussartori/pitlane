@@ -10,7 +10,7 @@ import { parsePatch } from "./review";
 import { Icon, type IconName } from "./icons";
 import type { ChipState } from "./lane";
 import { locale, plural, t, tx } from "./i18n";
-import { ErrorLine, Spinner, toast } from "./ui";
+import { ErrorLine, Spinner, toast, tailFollower } from "./ui";
 import { Grip, RUN_SIDE_W } from "./layout";
 import { msg, clock } from "./format";
 
@@ -54,7 +54,6 @@ export function RunScreen(props: {
   const [more, setMore] = createSignal(false);
   const [side, setSide] = createSignal<"run" | "card">("run");
   const [viewing, setViewing] = createSignal<string | null>(null);
-  let list: HTMLDivElement | undefined;
 
   // Escape closes the diff viewer when one is open, else the screen (like Back). Not while a
   // dialog or menu takes it, nor while you type in the reply box.
@@ -71,7 +70,7 @@ export function RunScreen(props: {
   };
   window.addEventListener("keydown", onEscape);
   onCleanup(() => window.removeEventListener("keydown", onEscape));
-  let stick = true;
+  const tail = tailFollower(40);
 
   const add = (pairs: [number, RunEvent][]) =>
     setEvents((prev) => {
@@ -121,7 +120,7 @@ export function RunScreen(props: {
 
   createEffect(() => {
     ordered();
-    if (list && stick) queueMicrotask(() => list && (list.scrollTop = list.scrollHeight));
+    tail.follow();
   });
 
   // Paths inside the worktree read relative to it; anything under a Pitlane worktree root too.
@@ -332,12 +331,8 @@ export function RunScreen(props: {
             <Grip size={RUN_SIDE_W} edge="left" label={t("Resize the side column")} style={{ left: "auto", right: "calc(var(--side-w) + var(--space-lg) / 2 - 5px)" }} />
             <div
               class="timeline ag-log"
-              ref={list}
+              ref={tail.ref}
               aria-live="polite"
-              onScroll={(e) => {
-                const el = e.currentTarget;
-                stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-              }}
             >
               <For each={logEvents()}>
                 {(e) => (
