@@ -17,6 +17,7 @@ export {
   retheme,
   startTerminals,
   openTerminal,
+  terminalAt,
   resumeInTerminal,
   closePane,
   closeTab,

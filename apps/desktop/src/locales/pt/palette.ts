@@ -1,4 +1,6 @@
 export default {
+  "Terminal where you are": "Terminal onde você está",
+  "repository": "repositório",
   "Go away (agents take their recommendation)": "Sair (os agentes seguem a recomendação)",
   "I'm here (agents ask me their calls)": "Estou aqui (os agentes me perguntam)",
   "You're here: agents ask you their calls": "Você está aqui: os agentes perguntam a você",

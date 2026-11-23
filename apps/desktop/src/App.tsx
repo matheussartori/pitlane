@@ -16,9 +16,9 @@ import { Palette, type Command } from "./palette";
 import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
-import { TerminalScreen, openTerminal, startTerminals, terminalsWanting } from "./terminals";
+import { TerminalScreen, openTerminal, startTerminals, terminalAt, terminalsWanting } from "./terminals";
 import { AgentDock, agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./agents";
-import { CodeScreen, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
+import { CodeScreen, codeRoot, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
@@ -395,6 +395,12 @@ export default function App() {
     // while capturing, so no field that keeps its keys (an agent's prompt, a terminal) hides it.
     const onPaletteKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
+      if (e.metaKey && k === "j" && !e.shiftKey && !e.altKey && !e.ctrlKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        void terminalHere();
+        return;
+      }
       if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey || !(k === "p" || (k === "k" && tab() !== "terminal"))) return;
       e.preventDefault();
       e.stopPropagation();
@@ -462,6 +468,40 @@ export default function App() {
     ),
   );
 
+  /** ⌘J: a terminal where you are. A run or a card in review: its worktree; an open card: its lane's;
+   *  Lanes: the selected lane's; Code: the folder it shows; anywhere else, the repository. On the
+   *  Terminal it goes back where you came from. */
+  let beforeTerminal: { tab: Tab; hash: string } | null = null;
+  async function terminalHere() {
+    const path = repo();
+    if (!path) return;
+    if (tab() === "terminal" && !runView() && reviewView() == null) {
+      if (beforeTerminal) location.hash = beforeTerminal.hash || `#${beforeTerminal.tab}`;
+      if (beforeTerminal && !beforeTerminal.hash.startsWith("#run/") && !beforeTerminal.hash.startsWith("#review/")) setTab(beforeTerminal.tab);
+      beforeTerminal = null;
+      return;
+    }
+    const lanes = yard()?.lanes ?? [];
+    const byBranch = (b: string | null | undefined) => (b ? lanes.find((l) => l.branch === b && l.worktree) : undefined);
+    const run = runView() ? (runs() ?? []).find((r) => r.id === runView()) : undefined;
+    const card = reviewView() != null ? (cards() ?? []).find((c) => c.id === reviewView()) : openCard();
+    let place: { path: string; label: string } | undefined;
+    if (run?.worktree) place = { path: run.worktree, label: run.branch || t("Run") };
+    else if (card && byBranch(card.lane)) place = { path: byBranch(card.lane)!.worktree!.path, label: card.lane! };
+    else if (tab() === "lanes" && byBranch(selected())) place = { path: byBranch(selected())!.worktree!.path, label: selected()! };
+    else if (tab() === "code" && codeRoot()) {
+      const lane = lanes.find((l) => l.worktree?.path === codeRoot());
+      place = { path: codeRoot()!, label: lane?.branch ?? current()?.name ?? t("repository") };
+    }
+    place ??= { path, label: current()?.name ?? t("repository") };
+    const from = { tab: tab(), hash: location.hash };
+    if (await terminalAt(place.path, place.label)) {
+      if (sheet()) setSheet(null);
+      beforeTerminal = from;
+      leaveTo("terminal");
+    }
+  }
+
   /** Everything ⌘K reaches, built when it opens. */
   const commands = (): Command[] => {
     const out: Command[] = [];
@@ -471,7 +511,8 @@ export default function App() {
       out.push(
         { id: "a-card", group: t("Actions"), icon: "plus", title: t("New card"), keys: "C", run: () => setSheet({ kind: "new-card" }) },
         { id: "a-lane", group: t("Actions"), icon: "branch", title: t("New lane"), keys: "N", run: () => setSheet({ kind: "new" }) },
-        { id: "a-term", group: t("Actions"), icon: "term", title: t("Terminal in the repository"), keys: "⌘T", run: () => void terminalIn(undefined) },
+        { id: "a-here", group: t("Actions"), icon: "term", title: t("Terminal where you are"), keys: "⌘J", run: () => void terminalHere() },
+        { id: "a-term", group: t("Actions"), icon: "term", title: t("Terminal in the repository"), keys: "⌘T", searchOnly: true, run: () => void terminalIn(undefined) },
         { id: "a-fetch", group: t("Actions"), icon: "refresh", title: t("Fetch the remote"), keys: "⌘R", run: () => void (fetching() || load(true)) },
       );
     }

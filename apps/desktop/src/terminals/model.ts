@@ -807,6 +807,17 @@ export async function openTerminal(cwd: string, label: string): Promise<boolean>
   }
 }
 
+/** A terminal in that folder: the open tab already there (its focused pane, still running), else a new one. */
+export async function terminalAt(cwd: string, label: string): Promise<boolean> {
+  const there = st.tabs.find((tb) => meta[tb.focus]?.cwd === cwd && meta[tb.focus]?.status !== "exited" && !meta[tb.focus]?.run);
+  if (there) {
+    selectAgent(null);
+    selectTab(there.id);
+    return true;
+  }
+  return openTerminal(cwd, label);
+}
+
 /** Continue in Claude Code: the agent run's session, resumed by the official CLI in a new tab. */
 export async function resumeInTerminal(run: string): Promise<boolean> {
   selectAgent(null);

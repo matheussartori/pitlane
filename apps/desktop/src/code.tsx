@@ -9,6 +9,8 @@ import { msg, cssHex } from "./format";
 
 
 const [rootSig, setRootSig] = createSignal<string | null>(null);
+/** The folder Code shows (a lane's worktree or the repository), once it was opened. */
+export const codeRoot = () => rootSig();
 let pending: { root: string; path: string; line?: number; col?: number } | null = null;
 
 /** Opens `path` under `root` in the Code tab, at a line when one is given. The app shows the Code
