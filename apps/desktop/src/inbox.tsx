@@ -1,5 +1,5 @@
 // Inbox: every open question, answered with one key. Each answer becomes a decision.
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { api, type Approval, type Card, type RunMeta, type Turn } from "./api";
 import { ApprovalBlock } from "./approvals";
 import { Dictate } from "./dictate";
@@ -436,19 +436,126 @@ export function InboxView(props: {
   onOpenRun: (id: string) => void;
 }) {
   const questions = () => openQuestions(props.cards ?? []);
-  const [index, setIndex] = createSignal(0);
   const [busy, setBusy] = createSignal(false);
   const items = new Map<string, HTMLElement>();
   const key = (q: OpenQuestion) => `${q.card.id}-${q.id}`;
-  const current = () => questions()[Math.min(index(), Math.max(0, questions().length - 1))];
+  // The selection follows the question, not its position: a question arriving above never moves it onto another one.
+  const [picked, setPicked] = createSignal<string | null>(null);
+  let lastAt = 0;
+  const current = createMemo(() => {
+    const qs = questions();
+    if (qs.length === 0) return undefined;
+    const i = qs.findIndex((q) => key(q) === picked());
+    if (i >= 0) return qs[(lastAt = i)];
+    return qs[Math.min(lastAt, qs.length - 1)];
+  });
+  const at = () => {
+    const c = current();
+    return c ? questions().indexOf(c) : 0;
+  };
+  const pick = (i: number) => {
+    const q = questions()[i];
+    if (q) setPicked(key(q));
+  };
   const isCurrent = (q: OpenQuestion) => {
     const c = current();
     return !!c && key(c) === key(q);
   };
-
   createEffect(() => {
-    const q = current();
-    if (q) items.get(key(q))?.scrollIntoView({ block: "nearest" });
+    const c = current();
+    if (c && picked() !== key(c)) setPicked(key(c));
+  });
+
+  let root!: HTMLDivElement;
+  let scroller: HTMLElement | null = null;
+  /** Scrolls the Inbox's own scroller, never the window, just enough to show the element. */
+  function reveal(el: HTMLElement | undefined) {
+    if (!el || !scroller) return;
+    const box = scroller.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (r.top < box.top) scroller.scrollTop += r.top - box.top - 8;
+    else if (r.bottom > box.bottom) scroller.scrollTop += Math.min(r.bottom - box.bottom + 8, r.top - box.top - 8);
+  }
+  // Moving with J/K, or answering, brings the next question into view; questions arriving never scroll.
+  createEffect(
+    on(
+      () => picked(),
+      (k, prev) => prev && k && reveal(items.get(k)),
+      { defer: true },
+    ),
+  );
+
+  // Scroll anchoring by hand (WebKit has no overflow-anchor): the block at the top of the view stays exactly where it
+  // was when questions arrive or leave above it, so the option under the pointer is the one the person was reading.
+  const ANCHORS = ".screen-head, .inbox-card-head, .inbox-item, .inbox-card > .decided, .inbox-settled-head";
+  let anchor: { el: Element; top: number } | null = null;
+  function remember() {
+    anchor = null;
+    if (!scroller) return;
+    const top = scroller.getBoundingClientRect().top;
+    for (const el of root.querySelectorAll(ANCHORS)) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > top) {
+        anchor = { el, top: r.top };
+        break;
+      }
+    }
+  }
+  function hold() {
+    if (scroller && anchor?.el.isConnected) {
+      const moved = anchor.el.getBoundingClientRect().top - anchor.top;
+      if (Math.abs(moved) >= 1) scroller.scrollTop += moved;
+    }
+    remember();
+    countAbove();
+  }
+
+  // Questions that arrived above the view: a pill says so instead of pulling the person up to them.
+  const [above, setAbove] = createSignal<string[]>([]);
+  let seen: Set<string> | null = null;
+  let fresh: string[] = [];
+  createEffect(() => {
+    const ks = questions().map(key);
+    if (props.cards == null) return;
+    if (seen) fresh = [...fresh.filter((k) => ks.includes(k)), ...ks.filter((k) => !seen!.has(k))];
+    seen = new Set(ks);
+  });
+  function countAbove() {
+    if (!scroller) return;
+    const top = scroller.getBoundingClientRect().top;
+    fresh = fresh.filter((k) => {
+      const el = items.get(k);
+      return !!el?.isConnected && el.getBoundingClientRect().bottom <= top;
+    });
+    setAbove(fresh);
+  }
+  function showAbove() {
+    const first = fresh[0];
+    const i = questions().findIndex((q) => key(q) === first);
+    if (i >= 0) pick(i);
+    const el = first ? items.get(first) : undefined;
+    if (el && scroller) scroller.scrollTo({ top: scroller.scrollTop + el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 8, behavior: "smooth" });
+  }
+
+  onMount(() => {
+    scroller = root.parentElement?.closest<HTMLElement>(".main") ?? null;
+    if (!scroller) return;
+    const s = scroller;
+    const onScroll = () => {
+      remember();
+      countAbove();
+    };
+    s.addEventListener("scroll", onScroll, { passive: true });
+    const mo = new MutationObserver(hold);
+    mo.observe(root, { childList: true, subtree: true, characterData: true });
+    const ro = new ResizeObserver(hold);
+    ro.observe(root);
+    remember();
+    onCleanup(() => {
+      s.removeEventListener("scroll", onScroll);
+      mo.disconnect();
+      ro.disconnect();
+    });
   });
 
   async function answer(q: OpenQuestion, text: string) {
@@ -475,10 +582,10 @@ export function InboxView(props: {
       if (/^[1-9]$|^Enter$/.test(e.key) && talking(props.repo, q.card.id, q.id)) return;
       if (e.key === "ArrowDown" || e.key === "j") {
         e.preventDefault();
-        setIndex(Math.min(index() + 1, questions().length - 1));
+        pick(Math.min(at() + 1, questions().length - 1));
       } else if (e.key === "ArrowUp" || e.key === "k") {
         e.preventDefault();
-        setIndex(Math.max(index() - 1, 0));
+        pick(Math.max(at() - 1, 0));
       } else if (/^[1-9]$/.test(e.key)) {
         const o = q.options[Number(e.key) - 1];
         if (o) {
@@ -521,7 +628,15 @@ export function InboxView(props: {
   };
 
   return (
-    <div class="inbox">
+    <div class="inbox" ref={root}>
+      <div class="inbox-above-slot">
+        <Show when={above().length > 0}>
+          <button type="button" class="inbox-above" onClick={showAbove}>
+            <Icon name="up" />
+            {plural(above().length, "{n} new question above", "{n} new questions above")}
+          </button>
+        </Show>
+      </div>
       <header class="screen-head">
         <h1 class="title">{t("Inbox")}</h1>
         <Show when={questions().length > 0 || props.approvals.length > 0}>
@@ -601,8 +716,8 @@ export function InboxView(props: {
                           ref={(el) => items.set(key(q), el)}
                           class="inbox-item"
                           aria-selected={isCurrent(q)}
-                          onFocusIn={() => setIndex(questions().findIndex((x) => key(x) === key(q)))}
-                          onClick={() => setIndex(questions().findIndex((x) => key(x) === key(q)))}
+                          onFocusIn={() => setPicked(key(q))}
+                          onClick={() => setPicked(key(q))}
                         >
                           <p class="inbox-q">{inline(q.text)}</p>
                           <QuestionAbout q={q} />

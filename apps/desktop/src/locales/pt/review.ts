@@ -83,6 +83,8 @@ export default {
   "{n} agent waits for you.": "{n} agente espera por você.",
   "{n} agents wait for you.": "{n} agentes esperam por você.",
   "{n} question": "{n} pergunta",
+  "{n} new question above": "{n} pergunta nova acima",
+  "{n} new questions above": "{n} perguntas novas acima",
   "{n} questions": "{n} perguntas",
   "{questions} on {cards}.": "{questions} em {cards}.",
   "to": "a",

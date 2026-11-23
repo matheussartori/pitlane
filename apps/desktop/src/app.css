@@ -226,6 +226,13 @@ body { background: var(--color-frame); }
 .inbox { width: 100%; max-width: 820px; margin-inline: 0; display: grid; gap: var(--space-lg); align-content: start; }
 .keys { color: var(--color-muted); font-size: var(--text-xs); display: inline-flex; align-items: center; gap: var(--space-2xs); flex-wrap: wrap; }
 .inbox-list { display: grid; gap: var(--space-lg); }
+/* The page never scrolls; only .main does. Native anchoring is off where the Inbox anchors by hand, so the two never add up. */
+html, body { overflow: hidden; overscroll-behavior: none; }
+.main:has(> .inbox) { overflow-anchor: none; }
+/* Questions arriving above the view: a pill pinned to the top, in a slot that takes no room, so it never shifts the list. */
+.inbox-above-slot { position: sticky; top: 0; z-index: 3; height: 0; margin-bottom: calc(-1 * var(--space-lg)); display: flex; justify-content: center; }
+.inbox-above { display: inline-flex; align-items: center; gap: var(--space-2xs); height: var(--control-h); padding-inline: var(--space-sm); border: 0; border-radius: 999px; background: var(--color-accent); color: var(--color-accent-ink); font: var(--weight-strong) var(--text-sm)/1 var(--font-body); box-shadow: var(--shadow-pop); cursor: pointer; }
+.inbox-above:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .inbox-questions { list-style: none; margin: 0; padding: 0; }
 .card-link { display: inline-flex; align-items: center; min-height: var(--control-h); gap: var(--space-xs); border: 0; padding: 0; background: none; color: var(--color-ink-2); font: var(--weight-strong) var(--text-sm)/1.3 var(--font-body); cursor: pointer; text-align: left; }
 .card-link:hover { color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
