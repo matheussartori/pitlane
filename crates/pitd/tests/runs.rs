@@ -579,12 +579,14 @@ async fn a_stopped_card_resumes_its_session_with_what_it_got_meanwhile() {
     let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
     let run_and_stop = async |opts: pitd::supervisor::StartOpts| {
         let meta = s.start(fx.repo.clone(), id, None, opts).unwrap();
-        for _ in 0..100 {
+        // Up to ten seconds: under a loaded machine the agent can take a while to be on.
+        for _ in 0..500 {
             if s.get(&meta.id).unwrap().pid.is_some() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        assert!(s.get(&meta.id).unwrap().pid.is_some(), "the agent never started");
         tokio::time::sleep(Duration::from_millis(300)).await;
         s.stop(&meta.id).unwrap();
         let end = wait_end(&s, &meta.id).await;

@@ -27,6 +27,8 @@ pub(super) struct Prepared {
     pub(super) images: Vec<(&'static str, Vec<u8>)>,
     /// The same branch in the project's related repositories.
     pub(super) related: Vec<pit_core::related::RelatedLane>,
+    /// The repository keeps its runs' commands in the sandbox (`[run] sandbox`).
+    pub(super) sandbox: bool,
 }
 
 /// The card's lane and worktree, made when missing, and what the agent is launched with.
@@ -251,6 +253,7 @@ pub(super) fn prepare(
         max_turns: r.flow.run.max_turns,
         model: r.flow.run.model.clone(),
         browser: r.flow.run.browser,
+        sandbox: r.flow.run.sandbox,
     })
 }
 

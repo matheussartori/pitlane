@@ -59,6 +59,8 @@ export default {
   "A run that reaches it stops and hands back.": "Uma execução que chega nele para e devolve.",
   "Map of where to look": "Mapa de onde olhar",
   "Browser and screenshots": "Navegador e capturas de tela",
+  Sandbox: "Sandbox",
+  "Agents’ commands write only to the worktree, the repository and package caches, and cannot reach Pitlane or other local services. A command that needs more asks you first. Not under Run all.": "Os comandos dos agentes só gravam na worktree, no repositório e nos caches de pacotes, e não alcançam o Pitlane nem outros serviços locais. Um comando que precise de mais pede a você antes. Não vale no Run all.",
   "Agents get a headless browser: they open what they change and take screenshots, shown in the run. Starts Chrome and fetches Playwright’s server with npx.": "Os agentes ganham um navegador sem janela: abrem o que mudaram e tiram capturas de tela, que aparecem na execução. Abre o Chrome e baixa o servidor do Playwright com npx.",
   "Each run’s first message lists the files and symbols most likely involved, from the repository’s index.": "A primeira mensagem de cada execução lista os arquivos e símbolos mais prováveis, a partir do índice do repositório.",
   "Branch prefix": "Prefixo do branch",

@@ -147,10 +147,17 @@ impl Supervisor {
             fs::create_dir_all(dir)?;
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }
-        // An API key account: Claude Code runs your helper command; the key never passes here.
+        // One --settings for all of it: the sandbox, and for an API key account the helper
+        // Claude Code runs to get the key (the key never passes here).
+        let mut settings = serde_json::Map::new();
+        if prep.sandbox && !autopilot {
+            settings.extend(sandbox_settings(&prep.worktree, prep.related.iter().map(|l| l.worktree.as_path())));
+        }
         if let Some(helper) = &choice.api_key_helper {
-            cmd.arg("--settings")
-                .arg(serde_json::json!({ "apiKeyHelper": helper }).to_string());
+            settings.insert("apiKeyHelper".into(), helper.clone().into());
+        }
+        if !settings.is_empty() {
+            cmd.arg("--settings").arg(Value::Object(settings).to_string());
         }
         self.emit(
             id,
@@ -360,6 +367,45 @@ pub(super) fn read_only_args(mode: &str) -> Vec<String> {
 
 /// Playwright's MCP server, pinned, headless and with a throwaway profile: the agent's browser
 /// when the repository turns it on. Its tools are `mcp__browser__*`.
+/// Where package managers and build tools keep what they download, under your home: a sandboxed
+/// `cargo build` or `npm install` writes there.
+const CACHES: &[&str] = &[".cargo", ".rustup", ".npm", ".pnpm-store", "Library/pnpm", ".yarn", ".bun", ".deno", ".cache", "Library/Caches", "go", ".gradle", ".m2", ".nuget", ".gem", ".pyenv", ".local/share/virtualenvs"];
+
+/// Claude Code's sandbox for a run: its commands write to the worktree (and the lanes beside it,
+/// given with --add-dir), the git repository behind them (a commit writes there) and the package
+/// caches, but not to git's hooks or config, which would run as you outside the sandbox. They
+/// reach any host on the network and no local socket, so nothing the agent runs can answer its
+/// own approvals through Pitlane's daemon. A command that needs more asks you, marked as
+/// unsandboxed; Pitlane's "always" rules never answer that question for you.
+fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>) -> serde_json::Map<String, Value> {
+    let home = home_dir();
+    let mut write: Vec<String> = CACHES.iter().map(|c| home.join(c).to_string_lossy().into_owned()).collect();
+    let mut deny = Vec::new();
+    for wt in std::iter::once(worktree).chain(related) {
+        let git = pit_core::git::Git::new(wt);
+        if let Ok(common) = git.run(&["rev-parse", "--path-format=absolute", "--git-common-dir"]) {
+            let common = PathBuf::from(common);
+            deny.push(common.join("hooks").to_string_lossy().into_owned());
+            deny.push(common.join("config").to_string_lossy().into_owned());
+            write.push(common.to_string_lossy().into_owned());
+        }
+    }
+    let v = serde_json::json!({
+        "sandbox": {
+            "enabled": true,
+            "autoAllowBashIfSandboxed": false,
+            "allowUnsandboxedCommands": true,
+            "network": { "allowedDomains": ["*"] },
+            "filesystem": { "allowWrite": write, "denyWrite": deny },
+        },
+        "permissions": { "ask": ["Bash(dangerouslyDisableSandbox:true)"] },
+    });
+    match v {
+        Value::Object(m) => m,
+        _ => unreachable!(),
+    }
+}
+
 const BROWSER_MCP: &str = "@playwright/mcp@0.0.84";
 const BROWSER_TOOLS: &str = "mcp__browser";
 

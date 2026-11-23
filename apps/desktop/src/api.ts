@@ -690,7 +690,7 @@ export interface Capacity {
 
 export interface FlowFile {
   flow: { base: string; integration: string; production: string; remote: string; naming: string[]; stale_days: number };
-  run: { allow: string[]; max_turns: number; model: string | null; branch_prefix: string; brief: boolean; browser: boolean };
+  run: { allow: string[]; max_turns: number; model: string | null; branch_prefix: string; brief: boolean; browser: boolean; sandbox: boolean };
   verify: { commands: string[]; judge: boolean; judge_model: string | null; max_rounds: number };
   ship?: { check: string | null };
 }

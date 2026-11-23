@@ -217,7 +217,7 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
         path: "/Users/you/Projects/demo/.pitlane/flow.toml",
         flow: {
           flow: { base: "main", integration: "dev", production: "main", remote: "origin", naming: ["feat/*", "fix/*", "chore/*"], stale_days: 14 },
-          run: { allow: [], max_turns: 40, model: null, branch_prefix: "feat/", brief: true },
+          run: { allow: [], max_turns: 40, model: null, branch_prefix: "feat/", brief: true, browser: false, sandbox: true },
           verify: { commands: ["npm test", "npm run lint"], judge: true, judge_model: "sonnet", max_rounds: 3 },
         },
       } as T;

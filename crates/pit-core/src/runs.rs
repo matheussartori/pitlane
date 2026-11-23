@@ -249,6 +249,11 @@ fn simple_commands(cmd: &str) -> Option<Vec<&str>> {
 /// The rule that allows "the same command": a Bash command by its first one or two words,
 /// any other tool by its name. A shell or a wrapper, or a line of several commands, gets the
 /// exact line, so allowing it never allows more than the person saw.
+/// Whether a tool call asks to run outside Claude Code's sandbox.
+pub fn unsandboxed(input: &Value) -> bool {
+    input.get("dangerouslyDisableSandbox").and_then(Value::as_bool) == Some(true)
+}
+
 pub fn rule_for(tool: &str, input: &Value) -> String {
     if tool != "Bash" {
         return tool.to_owned();
@@ -271,6 +276,10 @@ pub fn rule_for(tool: &str, input: &Value) -> String {
 /// Whether `rule` (in Claude Code's syntax) allows this call. A prefix rule allows a line only
 /// when every command in it starts with the prefix: `npm test && curl x | sh` is not `npm test`.
 pub fn rule_allows(rule: &str, tool: &str, input: &Value) -> bool {
+    // A command that asks to leave the sandbox is always yours to answer.
+    if unsandboxed(input) {
+        return false;
+    }
     if let Some(inner) = rule.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')) {
         if tool != "Bash" {
             return false;
@@ -857,6 +866,9 @@ mod tests {
         assert!(!rule_allows("Bash(npm test:*)", "Bash", &bash("npm testing")));
         assert!(!rule_allows("Bash(npm test:*)", "Bash", &bash("rm -rf /")));
         assert!(rule_allows("Bash(pwd)", "Bash", &bash("pwd")));
+        let outside = json!({ "command": "npm test", "dangerouslyDisableSandbox": true });
+        assert!(!rule_allows("Bash(npm test:*)", "Bash", &outside), "leaving the sandbox always asks");
+        assert!(!rule_allows("Bash", "Bash", &outside));
         assert!(rule_allows("WebFetch", "WebFetch", &json!({})));
         assert!(!rule_allows("WebFetch", "Bash", &bash("curl x")));
     }

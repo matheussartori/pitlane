@@ -67,6 +67,10 @@ impl Supervisor {
             input: input.clone(),
             asked_at: now_secs(),
         };
+        // Said first, so it is the first thing you read: this one would run unsandboxed.
+        if runs::unsandboxed(&input) {
+            approval.detail = format!("Outside the sandbox: {}", approval.detail);
+        }
         let (tx, rx) = oneshot::channel();
         {
             let mut live = self.live.lock().unwrap();

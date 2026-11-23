@@ -342,6 +342,9 @@ function Agents(props: { repo: string | null; repoName: string }) {
                 <Row label="Browser and screenshots" help="Agents get a headless browser: they open what they change and take screenshots, shown in the run. Starts Chrome and fetches Playwright’s server with npx." for="f-browser">
                   <Toggle id="f-browser" label="Browser and screenshots" on={fl().run.browser} onChange={(v) => void set("run", "browser", v)} />
                 </Row>
+                <Row label="Sandbox" help="Agents’ commands write only to the worktree, the repository and package caches, and cannot reach Pitlane or other local services. A command that needs more asks you first. Not under Run all." for="f-sandbox">
+                  <Toggle id="f-sandbox" label="Sandbox" on={fl().run.sandbox} onChange={(v) => void set("run", "sandbox", v)} />
+                </Row>
                 <Row label="Branch prefix" help="For the branch a card gets when it has none: feat/ gives feat/41-avatar-limit." for="f-prefix">
                   <input id="f-prefix" class="input input-mono set-input" value={fl().run.branch_prefix} onChange={(e) => void set("run", "branch_prefix", e.currentTarget.value.trim())} />
                 </Row>
