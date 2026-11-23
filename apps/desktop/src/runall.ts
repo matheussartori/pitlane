@@ -25,6 +25,9 @@ interface Shell {
  * hands it to the Board as the same plain value it always did.
  */
 export let sessionIds: number[] = [];
+// The same cards, for the Board to follow while it is open (a batch can start meanwhile).
+const [batchSig, setBatchSig] = createSignal<number[]>([]);
+export const batchIds = batchSig;
 
 /** Called once in the shell: the session's state, its steps, and the effects that keep it going. */
 export function createRunAll(shell: Shell) {
@@ -102,6 +105,7 @@ export function createRunAll(shell: Shell) {
     const ok = ids.filter((id) => all.find((c) => c.id === id)?.analyzed && !queue().includes(id));
     if (ok.length === 0) return;
     sessionIds = [...sessionIds, ...ok.filter((id) => !sessionIds.includes(id))];
+    setBatchSig(sessionIds);
     setQueue([...queue(), ...ok]);
     const asking = openQuestions(all.filter((c) => ok.includes(c.id)));
     toast({
@@ -135,6 +139,7 @@ export function createRunAll(shell: Shell) {
     const token = ++session;
     sessionPath = path;
     sessionIds = ids;
+    setBatchSig(ids);
     sessionStart = Math.floor(Date.now() / 1000) - 5;
     again.clear();
     setChoice(c);

@@ -26,7 +26,7 @@ import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
 import { msg } from "./format";
 import { cards, dropCardPoll, dropLoads, error, fetchedAt, fetching, jobs, load, loadCards, loadQueue, loadReports, loadRuns, problems, queueAll, dequeue, quota, reports, repo, runs, setCards, setError, setFetchedAt, setFetching, setProblems, setRepo, setRuns, setYard, yard } from "./store/repo";
-import { createRunAll, sessionIds } from "./runall";
+import { createRunAll, batchIds } from "./runall";
 import { shortcuts } from "./shortcuts";
 
 export type Tab = "inbox" | "board" | "lanes" | "ledger" | "reports" | "performance" | "code" | "terminal" | "settings";
@@ -700,7 +700,7 @@ export default function App() {
                     onNew={() => setSheet({ kind: "new-card" })}
                     onAnalyse={(ids) => void analyse(ids)}
                     onJoin={(ids) => void analyseInto(ids)}
-                    batch={sessionIds}
+                    batch={batchIds()}
                     joining={joining()}
                     onStartDev={(ids) => setSheet({ kind: "run-all", ids })}
                     onFinish={() => void finishBatch()}
