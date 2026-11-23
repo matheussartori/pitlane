@@ -292,7 +292,7 @@ pub fn drop_hunk(repo: &Repo, branch: &str, base: &str, head: &str, file: &str, 
     let patch = format!("{header}{hunk}");
     g.run_stdin(&["apply", "-R", "--index", "--whitespace=nowarn", "-"], &patch).context("git could not take that change out cleanly")?;
     // Only this file goes into the commit, whatever else was staged in the worktree.
-    g.run(&["commit", "-q", "-m", &format!("review: drop a change in {file}"), "--", file])?;
+    g.without_hooks().run(&["commit", "-q", "-m", &format!("review: drop a change in {file}"), "--", file])?;
     g.run(&["rev-parse", "HEAD"])
 }
 

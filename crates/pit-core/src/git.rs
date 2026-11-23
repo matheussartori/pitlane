@@ -10,20 +10,29 @@ use anyhow::{Context, Result, bail};
 #[derive(Debug, Clone)]
 pub struct Git {
     dir: PathBuf,
+    hooks: bool,
 }
 
 impl Git {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self { dir: dir.into(), hooks: true }
+    }
+
+    /// The same, with the repository's hooks off: for what Pitlane does by itself in a lane
+    /// (a checkpoint, a local merge, a new worktree). A lane's hooks may be ones an agent wrote,
+    /// in a hooks folder kept in the repository (husky, lefthook), and they would run as you,
+    /// outside the agent's sandbox. Your own commits and pushes keep them.
+    pub fn without_hooks(&self) -> Self {
+        Self { dir: self.dir.clone(), hooks: false }
     }
 
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
-    /// Same repository, run from another worktree.
+    /// Same repository, run from another worktree (hooks as they were).
     pub fn at(&self, dir: impl Into<PathBuf>) -> Self {
-        Self::new(dir)
+        Self { dir: dir.into(), hooks: self.hooks }
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -31,8 +40,11 @@ impl Git {
         cmd.arg("-C")
             .arg(&self.dir)
             // Paths as they are (café.rs), not quoted and octal-escaped: the output is parsed.
-            .args(["-c", "core.quotePath=false"])
-            .args(args)
+            .args(["-c", "core.quotePath=false"]);
+        if !self.hooks {
+            cmd.args(["-c", "core.hooksPath=/dev/null"]);
+        }
+        cmd.args(args)
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null());
         cmd
@@ -134,5 +146,29 @@ impl Git {
 
     pub fn config_set(&self, key: &str, value: &str) -> Result<()> {
         self.run(&["config", key, value]).map(drop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hooks_off_means_a_hook_in_the_repository_does_not_run() {
+        let dir = std::env::temp_dir().join(format!("pit-hooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hooks")).unwrap();
+        let g = Git::new(&dir);
+        g.run(&["init", "-q"]).unwrap();
+        g.run(&["config", "core.hooksPath", ".hooks"]).unwrap();
+        let hook = dir.join(".hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\ntouch ran\n").unwrap();
+        std::process::Command::new("chmod").arg("+x").arg(&hook).status().unwrap();
+        let commit = |g: &Git, m: &str| g.run(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m]).unwrap();
+        commit(&g.without_hooks(), "quiet");
+        assert!(!dir.join("ran").exists(), "the hook ran with hooks off");
+        commit(&g, "loud");
+        assert!(dir.join("ran").exists(), "the hook should run by default");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

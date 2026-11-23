@@ -104,6 +104,7 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
         Some(sha) => {
             let remote_branch = format!("{}/{branch}", flow.remote);
             repo.git
+                .without_hooks()
                 .run(&["worktree", "add", "--quiet", "--track", "-b", branch, &path_s, &remote_branch])?;
             (remote_branch, sha)
         }
@@ -113,7 +114,7 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
                 Some(s) => s,
                 None => repo.git.rev_parse(&repo.remote_ref(from))?.with_context(|| format!("branch {from} not found"))?,
             };
-            repo.git.run(&["worktree", "add", "--quiet", "--no-track", "-b", branch, &path_s, &sha])?;
+            repo.git.without_hooks().run(&["worktree", "add", "--quiet", "--no-track", "-b", branch, &path_s, &sha])?;
             repo.git.config_set(&format!("branch.{branch}.pitBase"), &sha)?;
             repo.git.config_set(&format!("branch.{branch}.pitFrom"), from)?;
             (from.to_owned(), sha)
@@ -123,6 +124,7 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
                 bail!("base branch {} not found", flow.base);
             };
             repo.git
+                .without_hooks()
                 .run(&["worktree", "add", "--quiet", "--no-track", "-b", branch, &path_s, &base.sha])?;
             repo.git.config_set(&format!("branch.{branch}.pitBase"), &base.sha)?;
             (format!("{}/{}", flow.remote, flow.base), base.sha)
@@ -182,7 +184,7 @@ pub fn land_local(repo: &Repo, branch: &str, into: &str) -> Result<Result<String
     check_branch(repo, branch)?;
     check_branch(repo, into)?;
     let wt = ensure_worktree(repo, into)?;
-    let g = crate::git::Git::new(&wt);
+    let g = crate::git::Git::new(&wt).without_hooks();
     if !g.run(&["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {
         bail!("{into} has changes that are not committed in {}; commit or stash them, then retry", wt.display());
     }
@@ -212,7 +214,7 @@ pub fn ensure_worktree(repo: &Repo, branch: &str) -> Result<PathBuf> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    repo.git.run(&["worktree", "add", "--quiet", &path.to_string_lossy(), branch])?;
+    repo.git.without_hooks().run(&["worktree", "add", "--quiet", &path.to_string_lossy(), branch])?;
     Ok(path)
 }
 
@@ -471,7 +473,7 @@ fn fast_forward_local(repo: &Repo, branch: &str, sha: &str) -> Result<LocalUpdat
             if dirty_count(&g)? > 0 {
                 return Ok(LocalUpdate::LeftBehind(w.path));
             }
-            g.run(&["merge", "--ff-only", "--quiet", sha])?;
+            g.without_hooks().run(&["merge", "--ff-only", "--quiet", sha])?;
         }
         None => {
             repo.git.run(&["update-ref", &format!("refs/heads/{branch}"), sha, &local])?;

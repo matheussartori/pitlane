@@ -34,7 +34,7 @@ pub(super) struct Prepared {
 /// The card's lane and worktree, made when missing, and what the agent is launched with.
 /// Commits whatever is uncommitted in the worktree, so the next agent starts from it.
 pub(super) fn checkpoint(worktree: &Path, card: u32) -> Result<Option<String>> {
-    let g = pit_core::git::Git::new(worktree);
+    let g = pit_core::git::Git::new(worktree).without_hooks();
     if g.lines(&["status", "--porcelain"])?.is_empty() {
         return Ok(None);
     }
