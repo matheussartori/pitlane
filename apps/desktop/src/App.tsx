@@ -122,6 +122,9 @@ export default function App() {
   const [sheet, setSheet] = createSignal<SheetState>(null);
   const [menu, setMenu] = createSignal(false);
   const [palette, setPalette] = createSignal(false);
+  /** Presence in force, read each time ⌘K opens so its entry offers the other mode. */
+  const [presence, setPresence] = createSignal<"here" | "away" | null>(null);
+  createEffect(on(palette, (open) => open && void api.presence().then((p) => setPresence(p.mode)).catch(() => setPresence(null))));
   let repoBox: HTMLDivElement | undefined;
   dismissable(() => repoBox, menu, () => setMenu(false));
   const [booted, setBooted] = createSignal(false);
@@ -465,6 +468,19 @@ export default function App() {
       { id: "a-tower", group: t("Actions"), icon: "tower", title: towerOpen() ? t("Fold the Tower") : t("Open the Tower"), keys: "⌘\\", run: toggleTower },
       { id: "a-settings", group: t("Actions"), icon: "settings", title: t("Settings"), keys: "⌘,", run: go("settings") },
     );
+    const mode = presence();
+    if (mode)
+      out.push({
+        id: "a-presence",
+        group: t("Actions"),
+        icon: "person",
+        title: mode === "here" ? t("Go away (agents take their recommendation)") : t("I'm here (agents ask me their calls)"),
+        run: () =>
+          void api
+            .presenceSet({ mode: mode === "here" ? "away" : "here" })
+            .then((p) => toast({ tone: "done", title: p.mode === "here" ? t("You're here: agents ask you their calls") : t("Away: agents take their recommendation") }))
+            .catch((e) => toast({ tone: "fail", title: t("Presence not changed"), body: msg(e) })),
+      });
     if (has) {
       out.push(
         { id: "a-accounts", group: t("Actions"), icon: "person", title: t("Accounts"), searchOnly: true, run: () => setSheet({ kind: "accounts" }) },

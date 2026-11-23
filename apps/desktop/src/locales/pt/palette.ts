@@ -1,4 +1,9 @@
 export default {
+  "Go away (agents take their recommendation)": "Sair (os agentes seguem a recomendação)",
+  "I'm here (agents ask me their calls)": "Estou aqui (os agentes me perguntam)",
+  "You're here: agents ask you their calls": "Você está aqui: os agentes perguntam a você",
+  "Away: agents take their recommendation": "Fora: os agentes seguem a recomendação",
+  "Presence not changed": "Presença não alterada",
   "Search {name}": "Buscar em {name}",
   "Search": "Buscar",
   "Go to anything": "Ir para qualquer coisa",
