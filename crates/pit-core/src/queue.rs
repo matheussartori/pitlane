@@ -82,7 +82,7 @@ pub fn ship(repo_path: &Path, home: &Path, pitlane_home: &Path, branch: &str, ta
         }
         match actions::execute_ship(&repo, &plan) {
             Ok(r) => return Ok(Outcome::Shipped { merge_sha: Some(r.merge_sha) }),
-            Err(e) if attempt == 1 && format!("{e:#}").contains("rejected") => continue,
+            Err(e) if attempt == 1 && e.downcast_ref::<actions::PushRejected>().is_some() => continue,
             Err(e) => return Err(e),
         }
     }
@@ -111,11 +111,12 @@ pub fn set_paused(pitlane_home: &Path, on: bool) -> std::io::Result<()> {
 }
 
 /// `~/.pitlane/queue.json`: the queue survives a daemon restart (a job left shipping goes back to queued).
-pub fn load(pitlane_home: &Path) -> Vec<ShipJob> {
-    std::fs::read_to_string(pitlane_home.join("queue.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Vec<ShipJob>>(&t).ok())
-        .unwrap_or_default()
+/// No file is an empty queue; one that cannot be read is an error, so nobody saves over it.
+pub fn load(pitlane_home: &Path) -> Result<Vec<ShipJob>> {
+    let path = pitlane_home.join("queue.json");
+    let Some(text) = crate::fsutil::read_optional(&path)? else { return Ok(Vec::new()) };
+    let jobs = serde_json::from_str::<Vec<ShipJob>>(&text).with_context(|| format!("{} is not a queue", path.display()))?;
+    Ok(jobs
         .into_iter()
         .map(|mut j| {
             if j.state == JobState::Shipping {
@@ -123,9 +124,46 @@ pub fn load(pitlane_home: &Path) -> Vec<ShipJob> {
             }
             j
         })
-        .collect()
+        .collect())
+}
+
+/// The daemon's start: the saved queue, or, when it cannot be read, an empty one with the old
+/// file kept aside (`queue.json.unreadable-<secs>`) so the next save does not lose it.
+pub fn load_or_set_aside(pitlane_home: &Path) -> (Vec<ShipJob>, Option<String>) {
+    match load(pitlane_home) {
+        Ok(jobs) => (jobs, None),
+        Err(e) => {
+            let path = pitlane_home.join("queue.json");
+            let aside = pitlane_home.join(format!("queue.json.unreadable-{}", crate::lanes::now_secs()));
+            let moved = std::fs::rename(&path, &aside);
+            let note = match moved {
+                Ok(()) => format!("{e:#}; kept it as {} and started an empty queue", aside.display()),
+                Err(m) => format!("{e:#}; could not set it aside ({m}), started an empty queue"),
+            };
+            (Vec::new(), Some(note))
+        }
+    }
 }
 
 pub fn save(pitlane_home: &Path, jobs: &[ShipJob]) -> Result<()> {
     crate::fsutil::write_atomic(&pitlane_home.join("queue.json"), serde_json::to_string_pretty(jobs)?).context("could not save the queue")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreadable_queue_is_set_aside_not_lost() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(load(d.path()).unwrap().is_empty(), "no file is an empty queue");
+        std::fs::write(d.path().join("queue.json"), "[{ half").unwrap();
+        assert!(load(d.path()).is_err());
+        let (jobs, note) = load_or_set_aside(d.path());
+        assert!(jobs.is_empty() && note.is_some());
+        let aside: Vec<_> = std::fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert_eq!(aside.len(), 1);
+        assert!(aside[0].starts_with("queue.json.unreadable-"));
+        assert_eq!(std::fs::read_to_string(d.path().join(&aside[0])).unwrap(), "[{ half");
+    }
 }

@@ -381,3 +381,36 @@ fn moves_by_hand_follow_the_board_rules() {
     let reopened = mv(&r, c.id, Backlog, false).unwrap().0;
     assert_eq!((reopened.state, reopened.lane), (CardState::Ready, None));
 }
+
+#[test]
+fn decisions_survive_odd_files() {
+    let (_t, r) = repo();
+    let c = cards::add(
+        &r,
+        NewCard {
+            title: "Café".into(),
+            questions: vec![q("Qual região?", &["São Paulo", "Ceará"], Some(0)), q("Blank options?", &["", "Keep", " "], Some(1))],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // The recommendation follows its option when blank ones are dropped.
+    assert_eq!(c.questions[1].options, vec!["Keep"]);
+    assert_eq!(c.questions[1].recommended, Some(0));
+
+    cards::answer(&r, c.id, 1, "1").unwrap();
+    // Someone saved the file with CRLF and accents before the entry: changing it still lands on it.
+    let path = cards::decisions_path(&r);
+    let crlf = fs::read_to_string(&path).unwrap().replace('\n', "\r\n").replacen("# Decisions", "# Decisões ção", 1);
+    fs::write(&path, crlf).unwrap();
+    cards::reanswer(&r, c.id, 1, "2").unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("## D-01").count(), 1);
+    assert!(text.contains("Ceará") && text.contains("changed from: São Paulo"));
+    assert!(!text.contains("\r\nSão Paulo\r\n"), "the old answer is gone");
+
+    // A decisions file that cannot be read is an error, never replaced by a new one.
+    fs::write(&path, [0xff, 0xfe, b'x']).unwrap();
+    assert!(cards::answer(&r, c.id, 2, "1").is_err());
+    assert_eq!(fs::read(&path).unwrap(), vec![0xff, 0xfe, b'x']);
+}

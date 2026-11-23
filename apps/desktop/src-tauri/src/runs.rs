@@ -253,7 +253,7 @@ pub(crate) async fn queue_list(path: String) -> CmdResult<Vec<pit_core::queue::S
         let root = open(&path)?.root;
         // No daemon: nothing is shipping; the saved queue still says what waits.
         if running().is_none() {
-            return Ok(pit_core::queue::load(&default_homes().1).into_iter().filter(|j| j.repo == root).collect());
+            return Ok(pit_core::queue::load(&default_homes().1)?.into_iter().filter(|j| j.repo == root).collect());
         }
         daemon()?.queue(Some(&root))
     })
@@ -268,7 +268,7 @@ pub(crate) async fn queue_paused() -> CmdResult<usize> {
         if !pit_core::queue::paused(&home) {
             return Ok(0);
         }
-        Ok(pit_core::queue::load(&home).iter().filter(|j| j.state.is_open()).count())
+        Ok(pit_core::queue::load(&home)?.iter().filter(|j| j.state.is_open()).count())
     })
     .await
 }

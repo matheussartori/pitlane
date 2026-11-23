@@ -1172,15 +1172,19 @@ pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Ans
 #[allow(clippy::too_many_arguments)]
 fn rewrite_decision(repo: &Repo, id: &str, question: &str, answer: &str, old: &str, card: u32, title: &str, day: &str) -> Result<bool> {
     let path = decisions_path(repo);
-    let Ok(text) = fs::read_to_string(&path) else { return Ok(false) };
+    let Some(text) = crate::fsutil::read_optional(&path)? else { return Ok(false) };
     let head = format!("## {id}:");
-    let Some(start) = text.lines().scan(0usize, |at, l| {
-        let here = *at;
-        *at += l.len() + 1;
-        Some((here, l))
-    })
-    .find(|(_, l)| l.starts_with(&head))
-    .map(|(at, _)| at) else {
+    // Offsets from the lines as they are (`\n` or `\r\n`), so the splice lands on the heading.
+    let Some(start) = text
+        .split_inclusive('\n')
+        .scan(0usize, |at, l| {
+            let here = *at;
+            *at += l.len();
+            Some((here, l))
+        })
+        .find(|(_, l)| l.starts_with(&head))
+        .map(|(at, _)| at)
+    else {
         return Ok(false);
     };
     let rest = &text[start..];
@@ -1214,11 +1218,16 @@ fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
         {
             bail!("recommended option {r} is out of range for {:?}", text);
         }
+        // Blank options go, and the recommendation keeps pointing at the same option (none when
+        // it was a blank one).
+        let recommended = q.recommended.filter(|&r| !q.options[r].trim().is_empty()).map(|r| {
+            q.options[..r].iter().filter(|o| !o.trim().is_empty()).count()
+        });
         card.questions.push(Question {
             id: next,
             text: text.to_owned(),
             options: q.options.into_iter().map(|o| o.trim().to_owned()).filter(|o| !o.is_empty()).collect(),
-            recommended: q.recommended,
+            recommended,
             context: q.context.map(|c| c.trim().to_owned()).filter(|c| !c.is_empty()),
             answer: None,
             answered_at: None,
@@ -1233,7 +1242,7 @@ fn push_questions(card: &mut Card, new: Vec<NewQuestion>) -> Result<()> {
 }
 
 fn next_decision_id(repo: &Repo) -> Result<String> {
-    let text = fs::read_to_string(decisions_path(repo)).unwrap_or_default();
+    let text = crate::fsutil::read_optional(&decisions_path(repo))?.unwrap_or_default();
     let max = text
         .lines()
         .filter_map(|l| l.strip_prefix("## D-"))
@@ -1245,7 +1254,7 @@ fn next_decision_id(repo: &Repo) -> Result<String> {
 
 fn append_decision(repo: &Repo, id: &str, question: &str, answer: &str, card: u32, title: &str, day: &str) -> Result<()> {
     let path = decisions_path(repo);
-    let mut text = fs::read_to_string(&path).unwrap_or_else(|_| {
+    let mut text = crate::fsutil::read_optional(&path)?.unwrap_or_else(|| {
         "# Decisions\n\nAnswers given while specifying cards. Agents read these before working.\n".to_owned()
     });
     if !text.ends_with('\n') {

@@ -236,9 +236,46 @@ impl Decision {
 const RUNS_ANYTHING: &[&str] = &[
     "bash", "sh", "zsh", "dash", "fish", "env", "xargs", "sudo", "doas", "eval", "exec", "nohup", "time", "timeout", "nice",
     "command", "builtin", "watch", "parallel",
+    // Interpreters and package runners: `python3 -c …`, `node -e …`, `npx anything`.
+    "python", "python2", "python3", "node", "deno", "bun", "bunx", "npx", "pnpx", "uvx", "ruby", "perl", "php", "lua",
+    "osascript", "awk", "gawk",
 ];
 
-/// The words of one simple command, past grouping marks and `VAR=value` prefixes.
+/// Whether a simple command starts with `VAR=value`: the variable can change what the program
+/// does (`NODE_OPTIONS=--require=x`, `PATH=.:$PATH`), so no prefix rule vouches for it.
+fn sets_variables(part: &str) -> bool {
+    part.split_whitespace()
+        .find(|w| !w.chars().all(|c| "{}()!".contains(c)))
+        .is_some_and(|w| w.contains('=') && !w.starts_with('-'))
+}
+
+/// Whether a Bash line sends output to a file (`> f`, `>> ~/.zshrc`, `&> f`, `>| f`). Copying a
+/// descriptor (`2>&1`) and `/dev/null` are fine. A `>` inside quotes counts too: that only asks more.
+fn writes_files(cmd: &str) -> bool {
+    let b = cmd.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'>' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        if j < b.len() && b[j] == b'>' {
+            j += 1;
+        }
+        let rest = &cmd[j..];
+        let dup = rest.strip_prefix('&').is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit() || c == '-'));
+        let null = rest.trim_start().strip_prefix("/dev/null").is_some_and(|r| r.is_empty() || r.starts_with(|c: char| c.is_whitespace() || ";|&)".contains(c)));
+        if !dup && !null {
+            return true;
+        }
+        i = j;
+    }
+    false
+}
+
+/// The words of one simple command, past grouping marks and `VAR=value` prefixes (which
+/// `sets_variables` looks at on its own).
 fn program_words(part: &str) -> impl Iterator<Item = &str> {
     part.split_whitespace()
         .skip_while(|w| w.chars().all(|c| "{}()!".contains(c)) || (w.contains('=') && !w.starts_with('-')))
@@ -255,19 +292,24 @@ fn simple_commands(cmd: &str) -> Option<Vec<&str>> {
         cmd.split(['\n', ';', '&', '|'])
             .map(str::trim)
             // What is left of a group or a redirect after the split is not a command of its own.
-            .filter(|p| program_words(p).next().is_some_and(|w| !w.starts_with(['>', '<']) && !w.chars().all(|c| c.is_ascii_digit())))
+            .filter(|p| {
+                program_words(p).next().is_some_and(|w| {
+                    !w.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with(['>', '<']) && !w.chars().all(|c| c.is_ascii_digit())
+                })
+            })
             .collect(),
     )
 }
 
-/// The rule that allows "the same command": a Bash command by its first one or two words,
-/// any other tool by its name. A shell or a wrapper, or a line of several commands, gets the
-/// exact line, so allowing it never allows more than the person saw.
 /// Whether a tool call asks to run outside Claude Code's sandbox.
 pub fn unsandboxed(input: &Value) -> bool {
     input.get("dangerouslyDisableSandbox").and_then(Value::as_bool) == Some(true)
 }
 
+/// The rule that allows "the same command": a Bash command by its first one or two words,
+/// any other tool by its name. A shell, a wrapper or an interpreter, a line of several commands,
+/// one that sets variables or one that writes to a file gets the exact line, so allowing it
+/// never allows more than the person saw.
 pub fn rule_for(tool: &str, input: &Value) -> String {
     if tool != "Bash" {
         return tool.to_owned();
@@ -275,7 +317,7 @@ pub fn rule_for(tool: &str, input: &Value) -> String {
     let cmd = input.get("command").and_then(Value::as_str).unwrap_or_default().trim();
     let parts = simple_commands(cmd).unwrap_or_default();
     let words: Vec<&str> = match parts.as_slice() {
-        [one] => program_words(one).take(2).collect(),
+        [one] if !sets_variables(one) && !writes_files(cmd) => program_words(one).take(2).collect(),
         _ => Vec::new(),
     };
     let prefix = match words.as_slice() {
@@ -303,6 +345,9 @@ pub fn rule_allows(rule: &str, tool: &str, input: &Value) -> bool {
             return cmd == inner;
         };
         let Some(parts) = simple_commands(cmd) else { return false };
+        if writes_files(cmd) || parts.iter().any(|p| sets_variables(p)) {
+            return false;
+        }
         return !parts.is_empty()
             && parts.iter().all(|p| {
                 let p = program_words(p).collect::<Vec<_>>().join(" ");
@@ -1090,10 +1135,11 @@ mod tests {
     fn rules_for_the_same_command() {
         let bash = |c: &str| json!({ "command": c });
         assert_eq!(rule_for("Bash", &bash("npm test -- drift")), "Bash(npm test:*)");
-        assert_eq!(rule_for("Bash", &bash("python3 -c \"print(6*7)\"")), "Bash(python3:*)");
+        assert_eq!(rule_for("Bash", &bash("python3 -c \"print(6*7)\"")), "Bash(python3 -c \"print(6*7)\")");
         assert_eq!(rule_for("Bash", &bash("cargo build --release")), "Bash(cargo build:*)");
-        assert_eq!(rule_for("Bash", &bash("{ python3 --version; } > V.txt")), "Bash(python3:*)");
-        assert_eq!(rule_for("Bash", &bash("CI=1 npm test")), "Bash(npm test:*)");
+        assert_eq!(rule_for("Bash", &bash("{ make --version; } > V.txt")), "Bash({ make --version; } > V.txt)");
+        assert_eq!(rule_for("Bash", &bash("CI=1 npm test")), "Bash(CI=1 npm test)");
+        assert_eq!(rule_for("Bash", &bash("npm test 2>&1 > /dev/null")), "Bash(npm test:*)");
         assert_eq!(rule_for("WebFetch", &json!({ "url": "https://x" })), "WebFetch");
         assert!(rule_allows("Bash(npm test:*)", "Bash", &bash("npm test -- other")));
         assert!(rule_allows("Bash(npm test:*)", "Bash", &bash("npm test")));
@@ -1120,12 +1166,23 @@ mod tests {
             "npm test `curl evil`",
             "npm test\nrm -rf ~",
             "npm test & sh x",
+            "NODE_OPTIONS=--require=/tmp/x.js npm test",
+            "PATH=.:$PATH npm test",
+            "CI=1 npm test",
+            "npm test >> ~/.zshrc",
+            "npm test > out.txt",
+            "npm test &> log",
+            "npm test 2>&1 >| f",
         ] {
             assert!(!rule_allows(npm, "Bash", &bash(sneaky)), "{sneaky}");
         }
         assert!(rule_allows(npm, "Bash", &bash("npm test && npm test -- b")));
-        assert!(rule_allows(npm, "Bash", &bash("CI=1 npm test 2>&1")));
-        assert!(rule_allows("Bash(python3:*)", "Bash", &bash("{ python3 --version; } > V.txt")));
+        assert!(rule_allows(npm, "Bash", &bash("npm test 2>&1")));
+        assert!(rule_allows(npm, "Bash", &bash("npm test > /dev/null 2>&1")));
+        assert!(rule_allows(npm, "Bash", &bash("{ npm test; } 2>/dev/null")));
+        // An interpreter runs whatever its arguments say: its rule is the line as it was seen.
+        assert_eq!(rule_for("Bash", &bash("node -e 'x'")), "Bash(node -e 'x')");
+        assert_eq!(rule_for("Bash", &bash("npx some-tool")), "Bash(npx some-tool)");
         // A shell, a wrapper or a line of several commands is allowed as it was seen, no more.
         assert_eq!(rule_for("Bash", &bash("bash -c 'make'")), "Bash(bash -c 'make')");
         assert_eq!(rule_for("Bash", &bash("env X=1 make")), "Bash(env X=1 make)");

@@ -36,6 +36,16 @@ pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> Result<()> {
     written.with_context(|| format!("could not write {}", path.display()))
 }
 
+/// Reads a whole text file, `None` only when there is none. Any other failure (permissions, bad
+/// UTF-8) is an error: treating it as "no file" would have the next write replace what is there.
+pub fn read_optional(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("could not read {}", path.display())),
+    }
+}
+
 /// Edits the TOML file at `path` keeping its comments and layout: reads it (`template` when there
 /// is none), lets `change` edit the document, has `check` read the result, and only then writes
 /// it, whole. Edits made in this process go one at a time, so two never drop each other's change.
@@ -47,11 +57,7 @@ pub fn edit_toml<T>(
 ) -> Result<T> {
     static EDITING: Mutex<()> = Mutex::new(());
     let _one = EDITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => template.to_owned(),
-        Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
-    };
+    let text = read_optional(path)?.unwrap_or_else(|| template.to_owned());
     let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
     let out = change(&mut doc)?;
     let text = doc.to_string();

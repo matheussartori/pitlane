@@ -155,7 +155,10 @@ const LEFT_RUNNING_MS: u64 = 120_000;
 impl Supervisor {
     pub fn new(cfg: Config) -> Arc<Self> {
         let home = cfg.home.clone();
-        let queue = pit_core::queue::load(&cfg.home);
+        let (queue, unreadable) = pit_core::queue::load_or_set_aside(&cfg.home);
+        if let Some(why) = unreadable {
+            eprintln!("pitd: merge queue: {why}");
+        }
         Arc::new(Self {
             cfg,
             live: Arc::new(Mutex::new(HashMap::new())),

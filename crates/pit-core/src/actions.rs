@@ -448,14 +448,34 @@ pub fn execute_ship(repo: &Repo, plan: &ShipPlan) -> Result<ShipReport> {
     let remote = &repo.flow.flow.remote;
     // The merge's first parent is the remote tip we planned against, so this is a
     // fast-forward; if someone pushed meanwhile the remote rejects it and nothing changes.
-    repo.git
-        .run(&["push", "--quiet", remote, &format!("{merge}:refs/heads/{}", plan.target)])
-        .with_context(|| format!("push to {remote}/{} was rejected; run pit ship again", plan.target))?;
+    if let Err(e) = repo.git.run(&["push", "--quiet", remote, &format!("{merge}:refs/heads/{}", plan.target)]) {
+        let why = format!("{e:#}");
+        // Only "the remote moved" is worth planning again; auth, network or a hook is not.
+        if ["[rejected]", "non-fast-forward", "fetch first"].iter().any(|m| why.contains(m)) {
+            return Err(anyhow::Error::new(PushRejected { remote: remote.clone(), target: plan.target.clone() }));
+        }
+        return Err(e).with_context(|| format!("could not push to {remote}/{}", plan.target));
+    }
     let _ = repo.git.run(&["update-ref", &repo.remote_ref(&plan.target), &merge]);
 
     let local = fast_forward_local(repo, &plan.target, &merge)?;
     Ok(ShipReport { merge_sha: merge, target: plan.target.clone(), local })
 }
+
+/// The remote refused a push because its branch moved since the plan: someone got there first.
+#[derive(Debug)]
+pub struct PushRejected {
+    pub remote: String,
+    pub target: String,
+}
+
+impl std::fmt::Display for PushRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "push to {}/{} was rejected (it moved meanwhile); run pit ship again", self.remote, self.target)
+    }
+}
+
+impl std::error::Error for PushRejected {}
 
 /// Brings the local copy of `branch` up to `sha` when that is a clean fast-forward.
 fn fast_forward_local(repo: &Repo, branch: &str, sha: &str) -> Result<LocalUpdate> {

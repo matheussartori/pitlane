@@ -66,11 +66,17 @@ impl Git {
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("could not run git {}", args.join(" ")))?;
-        child.stdin.take().context("no stdin")?.write_all(input.as_bytes())?;
+        // Written from its own thread: a large input whose output fills the pipe would otherwise
+        // leave git waiting on us to read and us waiting on git to read.
+        let mut stdin = child.stdin.take().context("no stdin")?;
+        let input = input.to_owned();
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
         let out = child.wait_with_output()?;
+        let written = writer.join().map_err(|_| anyhow::anyhow!("writing to git panicked"))?;
         if !out.status.success() {
             bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
         }
+        written?;
         Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_owned())
     }
 

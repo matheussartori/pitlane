@@ -180,7 +180,9 @@ fn mtime(p: &Path) -> u64 {
 
 fn parse_file(parser: &mut Parser, root: &Path, path: &str, blob: &str, lang: Lang) -> Option<FileEntry> {
     let full = root.join(path);
-    if std::fs::metadata(&full).ok()?.len() > MAX_BYTES {
+    // A tracked symlink can point anywhere on the disk: only real files of the repository.
+    let meta = std::fs::symlink_metadata(&full).ok()?;
+    if !meta.file_type().is_file() || meta.len() > MAX_BYTES {
         return None;
     }
     let text = std::fs::read_to_string(&full).ok()?;

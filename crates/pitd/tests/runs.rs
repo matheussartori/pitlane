@@ -829,7 +829,8 @@ async fn approvals_wait_for_a_person_and_remember_rules() {
     s.decide(&run, Some("t3"), Decision::Always, None).unwrap();
     assert_eq!(py.await.unwrap()["behavior"], "allow");
     let flow = fs::read_to_string(fx.repo.join(".pitlane/flow.toml")).unwrap();
-    assert!(flow.contains("Bash(python3:*)"), "{flow}");
+    // An interpreter is saved as the exact line: `python3:*` would run any code.
+    assert!(flow.contains("Bash(python3 scripts/check.py)"), "{flow}");
     assert!(flow.contains("[worktree]"), "the rest of the file is kept");
 
     // Deny with a reason the agent reads.

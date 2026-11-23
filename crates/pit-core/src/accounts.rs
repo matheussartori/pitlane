@@ -142,11 +142,15 @@ impl Routing {
     /// Reads and validates the file; without one, the default account and the CLI's model.
     pub fn load(pitlane_home: &Path) -> Result<Self> {
         let path = Self::path(pitlane_home);
-        let mut r: Routing = match std::fs::read_to_string(&path) {
-            Ok(t) => toml::from_str(&t).with_context(|| format!("invalid {}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Routing::default(),
-            Err(e) => return Err(e).with_context(|| format!("could not read {}", path.display())),
-        };
+        match crate::fsutil::read_optional(&path)? {
+            Some(t) => Self::from_text(&t).with_context(|| format!("in {}", path.display())),
+            None => Self::from_text(""),
+        }
+    }
+
+    /// Parses routing.toml's text, adds the default account when it is not listed, and validates.
+    fn from_text(text: &str) -> Result<Self> {
+        let mut r: Routing = toml::from_str(text).context("invalid routing")?;
         if !r.accounts.iter().any(|a| a.id == DEFAULT_ACCOUNT) {
             r.accounts.insert(0, Account {
                 id: DEFAULT_ACCOUNT.into(),
@@ -157,7 +161,7 @@ impl Routing {
                 api_key_helper: None,
             });
         }
-        r.validate().with_context(|| format!("in {}", path.display()))?;
+        r.validate()?;
         Ok(r)
     }
 
@@ -378,61 +382,61 @@ pub fn set_repo_account(pitlane_home: &Path, repo: &Path, account: &str) -> Resu
     if r.account(account).is_none() {
         bail!("no account {account}; add it with pit account add {account}");
     }
-    let path = Routing::path(pitlane_home);
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
-    let repos = doc
-        .entry("repo")
-        .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
-        .as_array_of_tables_mut()
-        .context("repo in routing.toml must be [[repo]] tables")?;
     let key = repo.to_string_lossy().into_owned();
-    if let Some(t) = repos.iter_mut().find(|t| t.get("path").and_then(|p| p.as_str()) == Some(key.as_str())) {
-        t["account"] = toml_edit::value(account);
-    } else {
-        let mut t = toml_edit::Table::new();
-        t["path"] = toml_edit::value(key);
-        t["account"] = toml_edit::value(account);
-        repos.push(t);
-    }
-    crate::fsutil::write_atomic(&path, doc.to_string())?;
-    Routing::load(pitlane_home).map(drop)
+    crate::fsutil::edit_toml(
+        &Routing::path(pitlane_home),
+        "",
+        |doc| {
+            let repos = doc
+                .entry("repo")
+                .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
+                .as_array_of_tables_mut()
+                .context("repo in routing.toml must be [[repo]] tables")?;
+            if let Some(t) = repos.iter_mut().find(|t| t.get("path").and_then(|p| p.as_str()) == Some(key.as_str())) {
+                t["account"] = toml_edit::value(account);
+            } else {
+                let mut t = toml_edit::Table::new();
+                t["path"] = toml_edit::value(key.as_str());
+                t["account"] = toml_edit::value(account);
+                repos.push(t);
+            }
+            Ok(())
+        },
+        |text| Routing::from_text(text).map(drop),
+    )
 }
 
 /// Adds an account to routing.toml and makes its profile directory. You sign in yourself, with the
 /// official CLI (`pit account login <id>` opens it).
 pub fn add_account(pitlane_home: &Path, id: &str, kind: Kind, api_key_helper: Option<&str>) -> Result<Option<PathBuf>> {
-    let path = Routing::path(pitlane_home);
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
-    let accounts = doc
-        .entry("account")
-        .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
-        .as_array_of_tables_mut()
-        .context("account in routing.toml must be [[account]] tables")?;
-    if accounts.iter().any(|t| t.get("id").and_then(|v| v.as_str()) == Some(id)) {
-        bail!("account {id} already exists");
-    }
-    let mut t = toml_edit::Table::new();
-    t["id"] = toml_edit::value(id);
-    t["provider"] = toml_edit::value("anthropic");
-    t["kind"] = toml_edit::value(match kind {
-        Kind::Subscription => "subscription",
-        Kind::Team => "team",
-        Kind::ApiKey => "api-key",
-    });
-    if let Some(h) = api_key_helper {
-        t["api_key_helper"] = toml_edit::value(h);
-    }
-    accounts.push(t);
-    // Validate before writing anything.
-    let candidate: Routing = toml::from_str(&doc.to_string())?;
-    let mut check = candidate.clone();
-    if !check.accounts.iter().any(|a| a.id == DEFAULT_ACCOUNT) {
-        check.accounts.insert(0, Account { id: DEFAULT_ACCOUNT.into(), provider: Provider::Anthropic, kind: Kind::Subscription, max_parallel: None, repos: Vec::new(), api_key_helper: None });
-    }
-    check.validate()?;
-    crate::fsutil::write_atomic(&path, doc.to_string())?;
+    crate::fsutil::edit_toml(
+        &Routing::path(pitlane_home),
+        "",
+        |doc| {
+            let accounts = doc
+                .entry("account")
+                .or_insert_with(|| toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
+                .as_array_of_tables_mut()
+                .context("account in routing.toml must be [[account]] tables")?;
+            if accounts.iter().any(|t| t.get("id").and_then(|v| v.as_str()) == Some(id)) {
+                bail!("account {id} already exists");
+            }
+            let mut t = toml_edit::Table::new();
+            t["id"] = toml_edit::value(id);
+            t["provider"] = toml_edit::value("anthropic");
+            t["kind"] = toml_edit::value(match kind {
+                Kind::Subscription => "subscription",
+                Kind::Team => "team",
+                Kind::ApiKey => "api-key",
+            });
+            if let Some(h) = api_key_helper {
+                t["api_key_helper"] = toml_edit::value(h);
+            }
+            accounts.push(t);
+            Ok(())
+        },
+        |text| Routing::from_text(text).map(drop),
+    )?;
     let dir = profile_dir(id, pitlane_home);
     if let Some(d) = &dir {
         std::fs::create_dir_all(d)?;
