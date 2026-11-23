@@ -8,7 +8,7 @@ import { LedgerView } from "./ledger";
 import { PerformanceView } from "./performance";
 import { ReviewScreen } from "./review";
 import { RunScreen } from "./run";
-import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, holdNote, planNote } from "./board";
+import { BoardView, CardSheet, NewCardSheet, QuestionsSheet, holdNote, onItsWay, planNote } from "./board";
 import { keepUnchanged, openQuestions } from "./cards";
 import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
@@ -459,6 +459,12 @@ export default function App() {
   /** Step two: the agents work the cards into the chosen branch, in board order. */
   let sessionIds: number[] = [];
   let sessionStart = 0;
+  /** How many times each card came back to the backlog and was taken again in this batch. */
+  const again = new Map<number, number>();
+  /** A card comes back at most this often: a run that never finishes it does not spend the night on it. */
+  const AGAIN = 5;
+  /** After a run ends, its next step (a fix round, landing) is the daemon's and takes a moment to show. */
+  const SETTLE = 45;
   async function startDev(ids: number[], c: RunAllChoice) {
     const path = repo();
     if (!path || phase() !== "idle" || ids.length === 0) return;
@@ -466,6 +472,7 @@ export default function App() {
     sessionPath = path;
     sessionIds = ids;
     sessionStart = Math.floor(Date.now() / 1000) - 5;
+    again.clear();
     setChoice(c);
     setQueue(ids);
     setPhase("working");
@@ -536,16 +543,25 @@ export default function App() {
       const all = cards() ?? [];
       const liveCards = (runs() ?? []).filter((r) => isLive(r.state)).map((r) => r.card);
       const live = (id: number) => liveCards.includes(id);
-      // Cards that started, finished or left the backlog leave the queue.
-      const q = queue().filter((id) => {
-        const c = all.find((x) => x.id === id);
-        return c && !live(id) && (c.state === "inbox" || c.state === "ready" || c.state === "blocked");
+      const state = (id: number) => all.find((x) => x.id === id)?.state;
+      // A card of this batch that is back in the backlog is taken again: its run closed one
+      // stage of a larger card, its question was answered, or it was sent back. Not one whose
+      // run the person stopped, and not for ever.
+      const back = sessionIds.filter((id) => {
+        if (queue().includes(id) || live(id) || (state(id) !== "ready" && state(id) !== "inbox")) return false;
+        const last = (runs() ?? []).filter((r) => r.card === id && r.started_at >= sessionStart).sort((x, y) => y.started_at - x.started_at)[0];
+        return !!last && last.state !== "stopped" && (again.get(id) ?? 0) < AGAIN;
       });
+      for (const id of back) again.set(id, (again.get(id) ?? 0) + 1);
+      // Cards that started, finished or left the backlog leave the queue.
+      const q = [...queue(), ...back].filter((id) => !live(id) && (state(id) === "inbox" || state(id) === "ready" || state(id) === "blocked"));
       // Directly in one branch: one card at a time, in board order.
       const busy = [...liveCards];
+      // The planner's file clashes hold a card only for cards on their way to landing.
+      const moving = onItsWay(all, liveCards, q, sessionIds);
       const ready = q.filter((id) => {
         const c = all.find((x) => x.id === id)!;
-        return (c.questions ?? []).every((x) => x.answer != null) && !planNote(plan(), id, all);
+        return (c.questions ?? []).every((x) => x.answer != null) && !planNote(plan(), id, all, moving);
       });
       const started: number[] = [];
       // How many agents this Mac takes now (the setting, lowered while it is loaded).
@@ -592,8 +608,15 @@ export default function App() {
       // Nothing working and nothing landing: whatever is still waiting waits on something that will
       // not move by itself. Run all never stalls in silence: each such card goes to Blocked with why,
       // and the batch closes. A blocked card the person frees later still starts while it is open.
-      const idle = !(runs() ?? []).some((r) => isLive(r.state)) && !jobs().some(isOpenJob);
-      if (started.length === 0 && idle && room > 0) {
+      const idle = () => !(runs() ?? []).some((r) => isLive(r.state)) && !jobs().some(isOpenJob);
+      if (started.length === 0 && idle() && room > 0) {
+        // Never on old news, and never in the moment after a run ends: what comes next for its
+        // card (a fix round, landing) is the daemon's step and takes a moment to show. Judged
+        // then, a card that was landing went to Blocked as "did not land".
+        await Promise.allSettled([loadRuns(), loadQueue(), loadCards()]);
+        if (!current_(token)) return;
+        const ended = Math.max(0, ...(runs() ?? []).filter((r) => sessionIds.includes(r.card)).map((r) => r.ended_at ?? 0));
+        if (!idle() || Date.now() / 1000 - ended < SETTLE) return; // the next pass looks again
         const now = cards() ?? [];
         const why = (id: number): string | null => {
           const c = now.find((x) => x.id === id);
@@ -602,7 +625,8 @@ export default function App() {
           if (c.state === "running" || c.state === "verifying") return t("Its run ended without handing the card back.");
           // Open questions are yours already (Needs you): the batch waits for the answers.
           if ((c.questions ?? []).some((x) => x.answer == null)) return null;
-          const held = holdNote(id, now, []) ?? planNote(plan(), id, now);
+          // Nothing is at work or landing by now: only what can still start counts as on its way.
+          const held = holdNote(id, now, []) ?? planNote(plan(), id, now, onItsWay(now, [], queue(), []));
           return held ? `${held}.` : null;
         };
         const stuck = [...new Set([...left, ...sessionIds])].map((id) => [id, why(id)] as const).filter((x): x is readonly [number, string] => x[1] != null);
@@ -642,10 +666,13 @@ export default function App() {
     }),
   );
 
-  // The Mac's room changes on its own (builds end, tests calm down): look again now and then.
+  // The batch works with nobody looking, so it reads the board, the runs and the merge queue
+  // itself: what the screen polls stops while the window is hidden, and a card that landed, or
+  // came back, would only be seen when some other run happened to end. The Mac's room changes
+  // on its own too (builds end, tests calm down).
   createEffect(() => {
     if (phase() !== "working") return;
-    const tick = window.setInterval(() => void advance(), 30_000);
+    const tick = window.setInterval(() => void Promise.allSettled([loadCards(), loadRuns(), loadQueue()]).then(() => advance()), 15_000);
     onCleanup(() => clearInterval(tick));
   });
 
@@ -1134,6 +1161,7 @@ export default function App() {
                     onNew={() => setSheet({ kind: "new-card" })}
                     onAnalyse={(ids) => void analyse(ids)}
                     onJoin={(ids) => void analyseInto(ids)}
+                    batch={sessionIds}
                     joining={joining()}
                     onStartDev={(ids) => setSheet({ kind: "run-all", ids })}
                     onFinish={() => void finishBatch()}

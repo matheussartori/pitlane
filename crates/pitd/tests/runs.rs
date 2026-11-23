@@ -12,9 +12,13 @@ use pit_core::runs::{Client, RunEvent, RunState};
 use pitd::{Config, Supervisor};
 use tempfile::TempDir;
 
-/// One result per user message, like the real CLI; exits when stdin closes.
+/// One result per user message; exits when stdin closes.
 /// FAKE_MODE=slow waits on SIGINT before answering; FAKE_MODE=ask ends blocked with a question;
 /// FAKE_MODE=ask-done finishes and asks anyway; FAKE_MODE=related commits in the related repo.
+/// FAKE_MODE=fold takes a message that arrives mid-turn into that turn, as Claude Code does: it
+/// gets no result of its own. FAKE_MODE=server hands off with a background task still running.
+/// FAKE_MODE=linger hands off and then never leaves, whatever stdin does.
+/// FAKE_MODE=partial hands off one stage of a larger card, with what is left.
 const FAKE: &str = r#"#!/bin/bash
 # The judge, a side session: one prompt line on stdin, one result. FAKE_VERDICT picks the verdict.
 if [[ " $* " == *" --permission-prompts none "* ]]; then
@@ -43,6 +47,14 @@ while IFS= read -r line; do
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Fixed it in games."}}'
     elif [ "$FAKE_MODE" = "ask-done" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"done","summary":"Did it.","questions":[{"text":"Also the studio?","options":["No","Yes"],"recommended":0}]}}'
+    elif [ "$FAKE_MODE" = "partial" ]; then
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"partial","summary":"Stage 1 of 3: measured.","left":["Stage 2: the walls","Stage 3: the props"]}}'
+    elif [ "$FAKE_MODE" = "server" ]; then
+      echo '{"type":"system","subtype":"background_tasks_changed","tasks":[{"id":"b1","command":"npm run dev"}]}'
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Did it, server left up."}}'
+    elif [ "$FAKE_MODE" = "linger" ]; then
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Did it, and stayed."}}'
+      sleep 600
     elif [ "$FAKE_MODE" = "self-turn" ]; then
       # Out of turns while a background task was due; Claude Code then starts a turn by itself.
       echo '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3,"duration_ms":100,"total_cost_usd":0.02,"usage":{}}'
@@ -54,6 +66,8 @@ while IFS= read -r line; do
     else
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":1200,"total_cost_usd":0.05,"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":3},"structured_output":{"status":"done","summary":"Did it."}}'
     fi
+  elif [ "$FAKE_MODE" = "fold" ]; then
+    continue
   else
     echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Noted."}]}}'
     echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":10,"total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1},"structured_output":{"status":"done","summary":"Did it, with the note."}}'
@@ -310,6 +324,108 @@ async fn a_turn_the_agent_starts_by_itself_still_hears_you() {
         end.handoff.as_ref().unwrap()["summary"],
         "Did it, with the note."
     );
+}
+
+/// The stand-in agent in one of its modes.
+fn fake_in(fx: &Fx, mode: &str) -> Arc<Supervisor> {
+    let wrapper = fx.fake.with_file_name(format!("fake-{mode}"));
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/bash\nFAKE_MODE={mode} exec {} \"$@\"\n",
+            fx.fake.display()
+        ),
+    )
+    .unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(&wrapper)
+        .status()
+        .unwrap();
+    Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: None,
+    })
+}
+
+/// The run ends by itself within `secs`, or the test fails: nobody stops it.
+async fn ends_within(s: &Arc<Supervisor>, id: &str, secs: u64) -> pit_core::runs::RunMeta {
+    for _ in 0..secs * 20 {
+        let m = s.get(id).unwrap();
+        if !m.state.is_live() {
+            return m;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("run {id} was still open after {secs} s with its work handed off");
+}
+
+/// What happened on the night of the stuck board: a message sent while the agent worked was
+/// taken into that turn, so the session had two messages and one result, and waited for a second
+/// result for ever. The run stayed "running" for eight hours with its work long handed off.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_taken_into_the_turn_does_not_keep_the_run_open() {
+    let fx = fx();
+    let id = card(&fx, "Add a line");
+    let s = fake_in(&fx, "fold");
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
+    for _ in 0..200 {
+        if s.subscribe(&meta.id, 0)
+            .unwrap()
+            .replay
+            .iter()
+            .any(|(_, e)| matches!(e, RunEvent::Quota { .. }))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    s.say(&meta.id, "Just move it back and stop.").await.unwrap();
+
+    let end = ends_within(&s, &meta.id, 20).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    assert_eq!(end.handoff.as_ref().unwrap()["summary"], "Did it.");
+    assert_eq!(card_state(&fx, id).0, CardState::Review);
+    assert!(s.list(None).unwrap().iter().all(|m| !m.state.is_live()));
+}
+
+/// The handoff is the end of the work: what the agent left running (a dev server) holds the
+/// session for a moment, not for a quarter of an hour, and goes with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handoff_ends_the_run_whatever_was_left_running() {
+    let fx = fx();
+    let id = card(&fx, "Add a line");
+    let s = fake_in(&fx, "server");
+    s.set_patience(Duration::from_secs(30), Duration::from_millis(500));
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
+    let end = ends_within(&s, &meta.id, 15).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    assert_eq!(card_state(&fx, id).0, CardState::Review);
+}
+
+/// Closing the session is a request. An agent that stays anyway is ended by the daemon, and
+/// the card moves on with the work it handed off.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_does_not_leave_is_ended() {
+    let fx = fx();
+    let id = card(&fx, "Add a line");
+    let s = fake_in(&fx, "linger");
+    s.set_patience(Duration::from_millis(400), Duration::from_secs(120));
+    let meta = s
+        .start(fx.repo.clone(), id, None, Default::default())
+        .unwrap();
+    let end = ends_within(&s, &meta.id, 15).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    assert_eq!(
+        end.handoff.as_ref().unwrap()["summary"],
+        "Did it, and stayed."
+    );
+    assert_eq!(card_state(&fx, id).0, CardState::Review);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1025,6 +1141,81 @@ async fn run_all_fixes_and_lands_on_its_own() {
         .status()
         .unwrap();
     assert!(merged.success(), "feat/x is in origin/dev");
+}
+
+/// A large card whose run closed one stage: what it did lands, but the card is not done. On the
+/// night of the stuck board a six-stage card closed as done after its first stage.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_all_does_not_close_a_card_that_says_more_is_needed() {
+    let fx = fx();
+    let origin = fx.home.parent().unwrap().join("origin.git");
+    git(
+        fx.home.parent().unwrap(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(
+        &fx.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&fx.repo, &["push", "-q", "origin", "main"]);
+    git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let id = card(&fx, "Maps and props, in stages");
+    git(&fx.repo, &["switch", "-q", "feat/x"]);
+    fs::write(fx.repo.join("stage-1.md"), "measured\n").unwrap();
+    git(&fx.repo, &["add", "stage-1.md"]);
+    git(&fx.repo, &["commit", "-qm", "stage 1"]);
+    git(&fx.repo, &["switch", "-q", "main"]);
+    let s = fake_in(&fx, "partial");
+    s.start_queue();
+
+    let opts = pitd::supervisor::StartOpts {
+        autopilot: true,
+        ..Default::default()
+    };
+    s.start(fx.repo.clone(), id, None, opts).unwrap();
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let mut reopened = false;
+    for _ in 0..600 {
+        reopened = cards::get(&r, id)
+            .unwrap()
+            .notes
+            .iter()
+            .any(|n| n.text.contains("said more is needed"));
+        if reopened || card_state(&fx, id).0 == CardState::Blocked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(reopened, "the card was told it is not done");
+    assert_eq!(
+        card_state(&fx, id).0,
+        CardState::Ready,
+        "back in the backlog, not done"
+    );
+    let c = cards::get(&r, id).unwrap();
+    assert!(
+        c.notes
+            .iter()
+            .any(|n| n.text.contains("Stage 2: the walls")),
+        "what is left stays on the card"
+    );
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let merged = Command::new("git")
+        .arg("-C")
+        .arg(&fx.repo)
+        .args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"])
+        .status()
+        .unwrap();
+    assert!(merged.success(), "the stage it finished landed");
+    assert!(s.list(None).unwrap().iter().all(|m| !m.state.is_live()));
 }
 
 #[tokio::test(flavor = "multi_thread")]

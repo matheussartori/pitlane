@@ -78,9 +78,15 @@ pub enum ReviewAction {
 struct Live {
     meta: RunMeta,
     stdin: Option<ChildStdin>,
-    /// User messages written to stdin, and results read back: stdin closes when they match,
-    /// which is how a stream-json session ends.
-    sent: usize,
+    /// A turn is in flight: a message was written, or the agent started one by itself, and its
+    /// result has not been read yet. Stdin closes once no turn is, which is how a stream-json
+    /// session ends. Messages are not counted against results: Claude Code folds a message that
+    /// arrives mid-turn into that turn, so it never gets a result of its own, and a session
+    /// waiting for one would stay open (and count as work) for ever.
+    turn: bool,
+    /// A message was written while the turn ran: if Claude Code did not fold it in, it answers
+    /// it in a turn of its own right after the result, so the session waits a little longer.
+    said: bool,
     results: usize,
     /// Background tasks (a test suite, a server) the agent left running: when one reports back,
     /// Claude Code starts a turn by itself, so stdin stays open until they are done.
@@ -112,6 +118,11 @@ pub struct Supervisor {
     analysing: Mutex<std::collections::HashSet<(PathBuf, u32)>>,
     /// Performance: Full or Light, and the governor that keeps the agents to it.
     pub perf: crate::perf::Perf,
+    /// How long an agent may take to leave once its session was closed, in milliseconds.
+    leave_ms: AtomicU64,
+    /// How long what a card's agent left running (a push, a server) holds its session after the
+    /// handoff, in milliseconds.
+    left_running_ms: AtomicU64,
 }
 
 /// What a side session needs: who it is for, where it runs, and Claude Code's arguments
@@ -156,7 +167,19 @@ impl Supervisor {
             analysis_gate: Arc::new(tokio::sync::Semaphore::new(3)),
             analysing: Mutex::new(Default::default()),
             perf: crate::perf::Perf::new(&home),
+            leave_ms: AtomicU64::new(30_000),
+            left_running_ms: AtomicU64::new(120_000),
         })
+    }
+
+    /// How long a finished session is waited for (tests shorten it): `leave` for the agent to go
+    /// once its session was closed, `left_running` for what a card's agent left running after
+    /// its handoff.
+    pub fn set_patience(&self, leave: Duration, left_running: Duration) {
+        self.leave_ms
+            .store(leave.as_millis() as u64, Ordering::Relaxed);
+        self.left_running_ms
+            .store(left_running.as_millis() as u64, Ordering::Relaxed);
     }
 
     fn dir(&self, id: &str) -> PathBuf {
@@ -526,7 +549,8 @@ impl Supervisor {
             Live {
                 meta: meta.clone(),
                 stdin: None,
-                sent: 0,
+                turn: false,
+                said: false,
                 results: 0,
                 background: 0,
                 stop_requested: false,
@@ -821,7 +845,7 @@ impl Supervisor {
             let mut live = self.live.lock().unwrap();
             if let Some(l) = live.get_mut(&id) {
                 l.stdin = Some(stdin);
-                l.sent = 1;
+                l.turn = true;
                 l.meta.pid = pid;
                 l.meta.state = RunState::Running;
             }
@@ -1102,6 +1126,12 @@ impl Supervisor {
                     ));
                 }
                 if c.direct() {
+                    // Worked in its target, the work is already there. Done, unless the agent
+                    // said more is needed: then the card is back in the backlog for the rest.
+                    if unfinished(&m) {
+                        self.reopen_unfinished(&m.repo, m.card);
+                        return;
+                    }
                     let _ = cards::update(
                         &r,
                         m.card,
@@ -1124,16 +1154,20 @@ impl Supervisor {
 
     /// Keeps the run record in step with what the agent reports.
     async fn absorb(&self, id: &str, ev: &RunEvent, finished_ok: &mut Option<bool>) {
+        // The agent is at work: a turn somebody asked for, or one it started by itself (a
+        // background task reported back after the last result). Either ends with a result.
+        if matches!(
+            ev,
+            RunEvent::Started { .. }
+                | RunEvent::Text { .. }
+                | RunEvent::Tool { .. }
+                | RunEvent::ToolDone { .. }
+        ) && let Some(l) = self.live.lock().unwrap().get_mut(id)
+        {
+            l.turn = true;
+        }
         match ev {
             RunEvent::Started { model, session } => {
-                // A turn nobody asked for (a background task reported back after the last
-                // result): it ends with a result like a message would, so count it as one.
-                if let Some(l) = self.live.lock().unwrap().get_mut(id)
-                    && l.results > 0
-                    && l.results >= l.sent
-                {
-                    l.sent += 1;
-                }
                 let (model, session) = (model.clone(), session.clone());
                 self.update(id, move |m| {
                     m.model = Some(model);
@@ -1184,6 +1218,7 @@ impl Supervisor {
                 limited,
             } => {
                 *finished_ok = Some(*ok);
+                let handed_off = handoff.is_some();
                 if *limited && let Some(l) = self.live.lock().unwrap().get_mut(id) {
                     l.limited = true;
                 }
@@ -1219,10 +1254,15 @@ impl Supervisor {
                         serde_json::to_string_pretty(&h).unwrap_or_default(),
                     );
                 }
-                if let Some(l) = self.live.lock().unwrap().get_mut(id) {
-                    l.results += 1;
-                }
-                self.close_when_idle(id);
+                let said = match self.live.lock().unwrap().get_mut(id) {
+                    Some(l) => {
+                        l.results += 1;
+                        l.turn = false;
+                        std::mem::take(&mut l.said)
+                    }
+                    None => false,
+                };
+                self.close_when_idle(id, handed_off, said);
             }
             _ => {}
         }
@@ -1241,24 +1281,38 @@ impl Supervisor {
             l.background = n;
         }
         if n == 0 {
-            self.close_when_idle(id);
+            self.close_when_idle(id, false, false);
         }
     }
 
-    /// Closes stdin, which is how a stream-json session ends, once the session is idle: every
-    /// message answered, no background task left, and no new turn for a moment. Claude Code can
-    /// start a turn by itself right after a result (a task it waited on reported back); closing
-    /// at once would leave that turn unable to hear the person. A background task that never
-    /// ends (a dev server) keeps it open for at most a quarter of an hour.
-    fn close_when_idle(&self, id: &str) {
+    /// Ends the session once its work is over: closes stdin, which is how a stream-json session
+    /// ends, when no turn is in flight and none starts for a moment. Claude Code can start a turn
+    /// by itself right after a result (a task it waited on reported back, or a message that came
+    /// too late to be folded into the turn); closing at once would leave that turn unable to hear
+    /// the person.
+    ///
+    /// A background task the agent left running keeps the session open until it reports back,
+    /// for at most a quarter of an hour. A card's handoff is the end of its work, though: what
+    /// still runs then (a push finishing, a server nobody stopped) gets two minutes, not a
+    /// quarter of an hour of a card that looks at work.
+    ///
+    /// Closing stdin is a request. An agent still there half a minute later, with no turn in
+    /// flight, is ended: a session whose work is in never stays behind as a run that looks alive.
+    fn close_when_idle(&self, id: &str, handed_off: bool, said: bool) {
         const GRACE: Duration = Duration::from_secs(2);
+        const SAID_GRACE: Duration = Duration::from_secs(6);
         const BACKGROUND_WAIT: Duration = Duration::from_secs(15 * 60);
+        let leave = Duration::from_millis(self.leave_ms.load(Ordering::Relaxed));
+        let left_running = Duration::from_millis(self.left_running_ms.load(Ordering::Relaxed));
         let (live, id) = (Arc::clone(&self.live), id.to_owned());
         tokio::spawn(async move {
             let since = tokio::time::Instant::now();
+            if said {
+                tokio::time::sleep(SAID_GRACE - GRACE).await;
+            }
             loop {
                 tokio::time::sleep(GRACE).await;
-                let stdin = {
+                let (stdin, pid) = {
                     let mut live = live.lock().unwrap();
                     let Some(l) = live.get_mut(&id) else { return };
                     // A session the person opened (the Board's assistant) is theirs to end:
@@ -1266,16 +1320,35 @@ impl Supervisor {
                     if l.meta.kind == SessionKind::Assist {
                         return;
                     }
-                    if l.results == 0 || l.results < l.sent {
+                    if l.results == 0 || l.turn {
                         return; // working again: its next result checks once more
                     }
-                    if l.background > 0 && since.elapsed() < BACKGROUND_WAIT {
+                    let wait = if handed_off && l.meta.kind == SessionKind::Run {
+                        left_running
+                    } else {
+                        BACKGROUND_WAIT
+                    };
+                    if l.background > 0 && since.elapsed() < wait {
                         continue;
                     }
-                    l.stdin.take()
+                    (l.stdin.take(), l.meta.pid)
                 };
                 if let Some(mut s) = stdin {
                     let _ = s.shutdown().await;
+                }
+                // Paused by Performance, it would not hear the end.
+                if let Some(pid) = pid {
+                    signal(pid, libc::SIGCONT);
+                }
+                tokio::time::sleep(leave).await;
+                let lingering = live
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .filter(|l| !l.turn)
+                    .and_then(|l| l.meta.pid);
+                if let Some(pid) = lingering {
+                    end_group(pid);
                 }
                 return;
             }
@@ -2252,7 +2325,8 @@ impl Supervisor {
             Live {
                 meta,
                 stdin: None,
-                sent: 0,
+                turn: false,
+                said: false,
                 results: 0,
                 background: 0,
                 stop_requested: false,
@@ -2360,7 +2434,7 @@ impl Supervisor {
                 let mut live = self.live.lock().unwrap();
                 if let Some(l) = live.get_mut(&id) {
                     l.stdin = Some(stdin);
-                    l.sent = 1;
+                    l.turn = true;
                     l.meta.pid = child.id();
                 }
             }
@@ -2920,6 +2994,9 @@ impl Supervisor {
             if let Ok((Outcome::Conflict { files }, _)) = &result {
                 self.conflict_round(&job, files);
             }
+            if let Ok((Outcome::Shipped { .. }, Some(card))) = &result {
+                self.reopen_unfinished(&job.repo, *card);
+            }
             let mut q = self.queue.lock().unwrap();
             if let Some(j) = q.iter_mut().find(|j| j.id == job.id) {
                 j.finished_at = Some(now_secs());
@@ -2940,6 +3017,42 @@ impl Supervisor {
             }
             let _ = pit_core::queue::save(&self.cfg.home, &q);
         }
+    }
+
+    /// A Run all card whose work landed, but whose agent said more is needed (a partial handoff):
+    /// it is not done. It goes back to the backlog with what is left on it, where the batch (or
+    /// the next one) works it again, instead of closing with part of its spec undone.
+    fn reopen_unfinished(&self, repo: &Path, card: u32) {
+        let Ok(r) = Repo::open(repo, &home_dir(), &self.cfg.home) else {
+            return;
+        };
+        let Some(last) = self.list(Some(&r.root)).ok().and_then(|l| {
+            l.into_iter()
+                .filter(|m| m.card == card)
+                .max_by_key(|m| (m.started_at, m.round))
+        }) else {
+            return;
+        };
+        if !unfinished(&last) {
+            return;
+        }
+        let _ = cards::update(
+            &r,
+            card,
+            CardPatch {
+                state: Some(CardState::Ready),
+                ..Default::default()
+            },
+        );
+        let _ = cards::note(
+            &r,
+            card,
+            "pitlane",
+            &format!(
+                "Run {} landed what it did and said more is needed, so this card is not done: it is back in the backlog for what is left (see the note above).",
+                last.id
+            ),
+        );
     }
 
     /// A Run all card whose lane conflicts with its Into branch: its agent brings the branch in and
@@ -3054,7 +3167,9 @@ impl Supervisor {
                 .stdin
                 .take()
                 .context("the agent already finished this session; resume it to continue")?;
-            l.sent += 1;
+            // Mid-turn, Claude Code may fold it into the turn or answer it right after.
+            l.said = l.turn;
+            l.turn = true;
             s
         };
         let res = async {
@@ -3248,6 +3363,17 @@ impl Supervisor {
         });
         Ok(())
     }
+}
+
+/// A Run all run that ended well but handed off as partial: the card still has work left.
+fn unfinished(m: &RunMeta) -> bool {
+    m.autopilot
+        && m.state == RunState::Done
+        && m.handoff
+            .as_ref()
+            .and_then(|h| h.get("status"))
+            .and_then(Value::as_str)
+            == Some("partial")
 }
 
 const ASSIST_RULES: &str = "You are Pitlane's board assistant. The person tells you, typed or dictated (so expect \

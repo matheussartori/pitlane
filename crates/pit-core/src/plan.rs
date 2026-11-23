@@ -12,7 +12,6 @@ use crate::Repo;
 use crate::brief::{self, DEFAULT_BUDGET};
 use crate::cards::{self, Card, CardState};
 use crate::index;
-use crate::lanes::Target;
 
 /// Predicted files kept per card: the head of the map, where a change most likely lands.
 const PREDICTED: usize = 4;
@@ -57,11 +56,28 @@ fn at_work(c: &Card) -> bool {
     c.lane.is_some() && matches!(c.state, CardState::Running | CardState::Verifying | CardState::Review | CardState::Blocked | CardState::Ready | CardState::InDev)
 }
 
-/// The files a lane changed since it left production.
-pub fn lane_files(repo: &Repo, branch: &str) -> Vec<String> {
+/// The files a lane changed itself: since it left the branch it lands in.
+///
+/// Measured from production alone, a lane cut from an integration branch seems to have changed
+/// everything that branch already holds, and every card near those files waits for a lane that
+/// has nothing of the kind to land. So the base is the nearest of the branches the lane can have
+/// left: the card's target, the flow's integration and production, each here and on the remote
+/// (work lands locally before it is pushed).
+pub fn lane_files(repo: &Repo, branch: &str, target: Option<&str>) -> Vec<String> {
     let Ok(Some(head)) = repo.git.rev_parse(&format!("refs/heads/{branch}")) else { return Vec::new() };
-    let Ok(Some(prod)) = Target::resolve(repo, &repo.flow.flow.production) else { return Vec::new() };
-    let Ok(base) = repo.git.run(&["merge-base", &prod.sha, &head]) else { return Vec::new() };
+    let flow = &repo.flow.flow;
+    let ahead = |base: &String| -> u64 {
+        repo.git.run(&["rev-list", "--count", &format!("{base}..{head}")]).ok().and_then(|n| n.trim().parse().ok()).unwrap_or(u64::MAX)
+    };
+    let base = target
+        .into_iter()
+        .chain(flow.integration())
+        .chain([flow.production.as_str()])
+        .flat_map(|name| [repo.remote_ref(name), format!("refs/heads/{name}")])
+        .filter_map(|r| repo.git.rev_parse(&r).ok().flatten())
+        .filter_map(|sha| repo.git.run(&["merge-base", &sha, &head]).ok())
+        .min_by_key(ahead);
+    let Some(base) = base else { return Vec::new() };
     repo.git.lines(&["diff", "--name-only", &format!("{base}..{head}")]).unwrap_or_default()
 }
 
@@ -77,7 +93,7 @@ pub fn plan(repo: &Repo, pitlane_home: &Path) -> Result<Plan> {
             fps.push(Footprint { card: c.id, title: c.title.clone(), source: "predicted".into(), lane: None, files });
         } else if at_work(c) {
             let lane = c.lane.clone().unwrap_or_default();
-            let files = lane_files(repo, &lane);
+            let files = lane_files(repo, &lane, c.target.as_deref());
             if !files.is_empty() {
                 fps.push(Footprint { card: c.id, title: c.title.clone(), source: "lane".into(), lane: Some(lane), files });
             }
@@ -170,5 +186,47 @@ mod tests {
         assert_eq!(p.waits.len(), 1);
         assert_eq!((p.waits[0].card, p.waits[0].with_lane.as_deref()), (4, Some("feat/9")));
         assert_eq!(p.batches, vec![vec![1, 2], vec![3], vec![4]]);
+    }
+
+    /// The night the board stood still: lanes cut from the batch's branch had changed nothing in
+    /// this repository, but counted as having changed all 31 files that branch was ahead of main
+    /// by, so six cards waited for them to land.
+    #[test]
+    fn a_lane_owns_what_it_changed_not_what_its_branch_already_held() {
+        use std::process::Command;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |a: &[&str]| {
+            let ok = Command::new("git").arg("-C").arg(&root).args(a).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").status().unwrap();
+            assert!(ok.success(), "git {a:?}");
+        };
+        let commit = |file: &str| {
+            std::fs::write(root.join(file), file).unwrap();
+            git(&["add", "-A"]);
+            git(&["commit", "-qm", file]);
+        };
+        git(&["init", "-q", "-b", "main"]);
+        commit("base.ts");
+        // The batch's branch, a day ahead of production.
+        git(&["switch", "-q", "-c", "feat/today"]);
+        commit("lobby.ts");
+        // One lane that changed a file, one that changed nothing yet, one already landed.
+        git(&["switch", "-q", "-c", "feat/1"]);
+        commit("own.ts");
+        git(&["branch", "feat/2", "feat/today"]);
+        git(&["switch", "-q", "feat/today"]);
+        git(&["switch", "-q", "-c", "feat/3"]);
+        commit("landed.ts");
+        git(&["switch", "-q", "feat/today"]);
+        git(&["merge", "-q", "--no-ff", "-m", "land", "feat/3"]);
+
+        let home = tmp.path().join("home");
+        let repo = Repo::open(&root, &home, &home.join(".pitlane")).unwrap();
+        assert_eq!(lane_files(&repo, "feat/1", Some("feat/today")), ["own.ts"]);
+        assert!(lane_files(&repo, "feat/2", Some("feat/today")).is_empty());
+        assert!(lane_files(&repo, "feat/3", Some("feat/today")).is_empty());
+        // Without a target, production is all there is to measure from.
+        assert_eq!(lane_files(&repo, "feat/1", None), ["lobby.ts", "own.ts"]);
     }
 }

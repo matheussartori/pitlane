@@ -61,7 +61,7 @@ export function LaneTrack(props: { branch: string | undefined; yard: Yard | null
 }
 
 /** One quiet line for a card the planner would hold back; nothing for one that can start now. */
-export function planNote(plan: Plan | null | undefined, id: number, cards: Card[] = []): string | null {
+export function planNote(plan: Plan | null | undefined, id: number, cards: Card[] = [], counts: (other: number) => boolean = () => true): string | null {
   if (!plan) return null;
   const name = (f: string) => {
     const [n, dir] = f.split("/").reverse();
@@ -71,12 +71,12 @@ export function planNote(plan: Plan | null | undefined, id: number, cards: Card[
     const c = cards.find((x) => x.id === other);
     return c ? `#${other} ${c.title}` : `#${other}`;
   };
-  const wait = plan.waits.find((w) => w.card === id);
+  const wait = plan.waits.find((w) => w.card === id && (w.with_card == null || counts(w.with_card)));
   if (wait) return t("Waits for {other} to land: both touch {file}", { other: wait.with_lane ?? called(wait.with_card!), file: name(wait.files[0]!) });
   const batch = plan.batches.findIndex((b) => b.includes(id));
   if (batch <= 0) return null;
   const earlier = new Set(plan.batches.slice(0, batch).flat());
-  const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1)) || (x.with_card === id && earlier.has(x.card)));
+  const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1) && counts(x.with_card!)) || (x.with_card === id && earlier.has(x.card) && counts(x.card)));
   if (!c) return null;
   const other = c.card === id ? c.with_card! : c.card;
   return t("After {other}: both touch {file}", { other: called(other), file: name(c.files[0]!) });
@@ -266,6 +266,38 @@ async function deleteCards(repo: string, cards: Card[], onChanged: () => void) {
 const landedState = (c: Card) => c.state === "done" || c.state === "in-dev";
 
 /**
+ * Which cards are on their way to landing, for Run all: at work, being checked, landing, or
+ * about to start in this batch. The planner's file clashes hold a card only for one of these.
+ * A parked card (blocked, waiting for an answer, back in the backlog outside the queue) will not
+ * land by itself, so nobody waits for it: whoever did would wait for ever.
+ *
+ * `busy` is the cards running now, `queued` what the batch still has to start, `batch` every
+ * card it took.
+ */
+export function onItsWay(cards: Card[], busy: number[], queued: number[], batch: number[]): (id: number) => boolean {
+  const known = new Map<number, boolean>();
+  const check = (id: number, seen: number[]): boolean => {
+    const hit = known.get(id);
+    if (hit !== undefined) return hit;
+    if (seen.includes(id)) return true; // waiting on each other: the board order decides
+    const c = cards.find((x) => x.id === id);
+    let on = false;
+    if (!c) on = false;
+    else if (busy.includes(id) || c.state === "running" || c.state === "verifying") on = true;
+    else if (c.state === "review") on = batch.includes(id);
+    else if (queued.includes(id) && (c.questions ?? []).every((x) => x.answer != null))
+      // It starts once what it builds on lands: that has to be on its way too.
+      on = (c.after ?? []).every((a) => {
+        const dep = cards.find((x) => x.id === a);
+        return !dep || landedState(dep) || (dep.after ?? []).includes(id) || check(a, [...seen, id]);
+      });
+    known.set(id, on);
+    return on;
+  };
+  return (id) => check(id, []);
+}
+
+/**
  * Why Run all holds a card back beyond the planner's file clashes: a card the analysis said must
  * land first, or a shared area (an engine, a schema) another card is changing right now.
  * `busy` is the cards running now (or started in this pass).
@@ -321,6 +353,8 @@ export function BoardView(props: {
   onReorder: (ids: number[]) => void;
   /** The planner's view of open cards, only while Run all works. */
   plan?: Plan | null;
+  /** Every card the working batch took (started ones too). */
+  batch?: number[];
 }) {
   const liveRun = (id: number) => props.runs.find((r) => r.card === id && isLive(r.state));
   // The order you just dragged to, shown until the saved cards come back.
@@ -342,7 +376,8 @@ export function BoardView(props: {
         ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? t("Wants to run") : t("Wants {tool}", { tool: asking.waiting[0]!.tool }), why: t("Asks to run {detail}", { detail: asking.waiting[0]!.detail }) }
         : place(c, props.yard);
       const busy = props.runs.filter((r) => isLive(r.state)).map((r) => r.card);
-      const note = props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [])) : null;
+      const moving = onItsWay(props.cards ?? [], busy, props.queued, props.batch ?? props.queued);
+      const note = props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [], moving)) : null;
       return { card: c, p: note && p.column === "backlog" ? { ...p, why: note } : p };
     }),
   );
