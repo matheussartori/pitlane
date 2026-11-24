@@ -12,6 +12,9 @@ export function ruleLabel(rule: string): string {
   return m ? m[1]! : rule;
 }
 
+/** How long a request shows before 1 to 4 answer it. */
+const ANSWER_AFTER_MS = 600;
+
 export function ApprovalBlock(props: {
   run: string;
   approval: Approval;
@@ -50,8 +53,12 @@ export function ApprovalBlock(props: {
   }
 
   onMount(() => {
+    // A request that has just appeared takes no key: nobody has read it yet, and a digit already
+    // on its way (you were typing a message) must not allow a command for good.
+    const armed = performance.now() + ANSWER_AFTER_MS;
     const onKey = (e: KeyboardEvent) => {
       if (!props.keys || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (performance.now() < armed) return;
       if (ownsKey(e)) return;
       if (document.querySelector("dialog[open]")) return;
       const pick: Record<string, () => void> = {

@@ -7,6 +7,7 @@ import { Icon, type IconName } from "./icons";
 import { locale, plural, t, tx } from "./i18n";
 import { Spinner, toast } from "./ui";
 import { msg } from "./format";
+import { KIND } from "./agents";
 
 
 /** 1.2 GB, 420 MB. */
@@ -25,7 +26,6 @@ const stateView: Record<PerfAgent["state"], { chip: string; icon: IconName; labe
   starting: { chip: "queued", icon: "queued", label: "Starting" },
 };
 const pausedBy = { you: "by you", mode: "by the mode", memory: "for memory" } as const;
-const kindLabel: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant" };
 
 export function PerformanceView(props: { onOpen: (id: string) => void }) {
   const [snap, setSnap] = createSignal<PerfSnapshot | null>(null);
@@ -471,7 +471,7 @@ function AgentsTable(props: { agents: PerfAgent[]; memTotal: number; busy: strin
                         <span class="card-id">#{a.card}</span> {a.title}
                       </span>
                       <span class="subject">
-                        {a.kind === "run" ? tx("Run", "kind") : t(kindLabel[a.kind] ?? a.kind)} · <span class="mono">{a.branch || a.model || ""}</span>
+                        {tx(KIND[a.kind] ?? a.kind, "kind")} · <span class="mono">{a.branch || a.model || ""}</span>
                       </span>
                     </span>
                   </td>

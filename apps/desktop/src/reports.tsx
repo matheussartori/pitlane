@@ -5,7 +5,7 @@ import { Portal } from "solid-js/web";
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
-import { Spinner, toast } from "./ui";
+import { Spinner, toast, escapeCloses } from "./ui";
 import { ago, clock, money, msg } from "./format";
 
 /** The first sentence of a suggestion's spec, for its tile when Claude's line is not there. */
@@ -19,9 +19,7 @@ const firstLine = (body: string) => {
 function ReportShot(props: { run: string; file: string; label: string }) {
   const [src] = createResource(() => [props.run, props.file] as const, ([r, f]) => api.runShot(r, f).catch(() => ""));
   const [big, setBig] = createSignal(false);
-  const key = (ev: KeyboardEvent) => ev.key === "Escape" && setBig(false);
-  createEffect(() => (big() ? window.addEventListener("keydown", key) : window.removeEventListener("keydown", key)));
-  onCleanup(() => window.removeEventListener("keydown", key));
+  escapeCloses(big, () => setBig(false));
   return (
     <Show when={src()}>
       {(u) => (

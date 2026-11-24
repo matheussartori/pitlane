@@ -53,17 +53,30 @@ pub(super) fn board_key(remote_url: Option<&str>, root: &Path) -> String {
 
 /// Moves a board kept under the old key (no hash) to its new folder, and leaves the old name as a
 /// link to it, so an older `pit` (the MCP Claude Code runs) still finds the same cards. Does
-/// nothing once moved, or when the new folder already exists.
+/// nothing once moved, or when the new folder already exists. The same goes for a board kept
+/// under the repository's path from before it had a remote.
 pub fn adopt_flat_board(pitlane_home: &Path, remote_url: Option<&str>, root: &Path) -> Result<()> {
     let key = board_key(remote_url, root);
     let old = pitlane_home.join("boards").join(crate::fsutil::flat_name(&key));
     let new = board_for(pitlane_home, remote_url, root);
-    let is_dir = fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir());
+    move_board(&old, &new)?;
+    // A repository that had no remote kept its board under its path. Now that it has one (the
+    // first `git remote add`), that board follows it to the remote's key: its cards do not vanish.
+    if remote_url.map(str::trim).is_some_and(|u| !u.is_empty()) {
+        move_board(&board_for(pitlane_home, None, root), &new)?;
+    }
+    Ok(())
+}
+
+/// Moves the board folder `old` to `new` and leaves `old` as a link to it. Does nothing when
+/// `old` is not a folder of its own or `new` already exists.
+fn move_board(old: &Path, new: &Path) -> Result<()> {
+    let is_dir = fs::symlink_metadata(old).is_ok_and(|m| m.is_dir());
     if !is_dir || new.exists() {
         return Ok(());
     }
-    fs::rename(&old, &new).with_context(|| format!("could not move {} to {}", old.display(), new.display()))?;
-    std::os::unix::fs::symlink(&new, &old).with_context(|| format!("could not link {}", old.display()))?;
+    fs::rename(old, new).with_context(|| format!("could not move {} to {}", old.display(), new.display()))?;
+    std::os::unix::fs::symlink(new, old).with_context(|| format!("could not link {}", old.display()))?;
     Ok(())
 }
 

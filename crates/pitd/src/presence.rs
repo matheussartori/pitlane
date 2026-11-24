@@ -79,7 +79,8 @@ impl Presence {
             cfg.per_run = (n as u32).clamp(1, 20);
         }
         std::fs::create_dir_all(&self.home)?;
-        std::fs::write(config_path(&self.home), serde_json::to_string_pretty(&cfg)?)?;
+        // Whole or not at all: a half-written file would read as "no settings" on the next start.
+        pit_core::fsutil::write_atomic(&config_path(&self.home), serde_json::to_string_pretty(&cfg)?)?;
         *cur = cfg.clone();
         Ok(cfg)
     }

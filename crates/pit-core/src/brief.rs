@@ -3,7 +3,7 @@
 //! changed together in git; the result is a compact map (files, symbols with lines and signatures,
 //! tests nearby) under a size budget. Deterministic: same card and index, same bytes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -115,10 +115,11 @@ fn stem(w: String) -> String {
 }
 
 /// Identifiers and paths as written in the card: `laneDiff`, `src/lanes.tsx`, `pit ship`.
-fn mentions(text: &str) -> HashSet<String> {
+// Sorted: the reasons a file is in the briefing must read the same on every run.
+fn mentions(text: &str) -> BTreeSet<String> {
     // Anything in backticks is a name, whatever its case.
     let quoted = text.split('`').skip(1).step_by(2).map(str::trim).filter(|w| w.len() >= 3 && !w.contains(' ')).map(str::to_owned);
-    let mut found: HashSet<String> = quoted.collect();
+    let mut found: BTreeSet<String> = quoted.collect();
     found.extend(text.split(|c: char| c.is_whitespace() || matches!(c, '`' | '(' | ')' | ',' | ';' | ':' | '"' | '\'' | '[' | ']'))
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '/' && c != '.'))
         .map(|w| w.trim_end_matches('.'))

@@ -3,6 +3,7 @@
 // run's What changed; the file list beside it moves between the files of the same diff.
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { DiffFile, DiffHunk } from "./review";
+import { highlight, langOf } from "./highlight";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
 import { DIFF_FILES_W, Grip } from "./layout";
@@ -71,6 +72,7 @@ const hunkWhere = (head: string) => /@@[^@]*@@\s?(.*)$/.exec(head)?.[1]?.trim() 
 /** The diff of one file, side by side or inline. */
 export function FileDiffView(props: { file: DiffFile; inline: boolean }) {
   const table = createMemo(() => rows(props.file.hunks));
+  const lang = createMemo(() => langOf(props.file.path, props.file.hunks.reduce((n, h) => n + h.lines.length, 0)));
   return (
     <Show when={!props.file.binary} fallback={<p class="dv-empty">{t("A binary file changed: there is no text to compare.")}</p>}>
       <Show when={props.file.hunks.length > 0} fallback={<p class="dv-empty">{t("Only the file's mode or name changed.")}</p>}>
@@ -88,7 +90,7 @@ export function FileDiffView(props: { file: DiffFile; inline: boolean }) {
                           <span class="dv-no">{l.old ?? ""}</span>
                           <span class="dv-no">{l.new ?? ""}</span>
                           <span class="dv-sign">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}</span>
-                          <code class="dv-text">{l.text || " "}</code>
+                          <code class="dv-text">{highlight(l.text || " ", lang())}</code>
                         </div>
                       )}
                     </For>
@@ -106,9 +108,9 @@ export function FileDiffView(props: { file: DiffFile; inline: boolean }) {
                 ) : (
                   <div class="dv-row">
                     <span class="dv-no" data-kind={r.left.kind}>{r.left.no ?? ""}</span>
-                    <code class="dv-text" data-kind={r.left.kind}>{r.left.text || " "}</code>
+                    <code class="dv-text" data-kind={r.left.kind}>{highlight(r.left.text || " ", lang())}</code>
                     <span class="dv-no dv-gutter" data-kind={r.right.kind}>{r.right.no ?? ""}</span>
-                    <code class="dv-text" data-kind={r.right.kind}>{r.right.text || " "}</code>
+                    <code class="dv-text" data-kind={r.right.kind}>{highlight(r.right.text || " ", lang())}</code>
                   </div>
                 )
               }

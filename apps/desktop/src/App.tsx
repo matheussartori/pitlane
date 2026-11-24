@@ -19,7 +19,7 @@ import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalAt, terminalsWanting } from "./terminals";
 import { AgentDock, agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./agents";
 import { PreviewScreen } from "./preview";
-import { CodeScreen, codeRoot, openInCode, prewarmCode, rethemeCode, setCodePlaces } from "./code";
+import { CodeScreen, codeRoot, openInCode, prewarmCode, resetCodeRoot, rethemeCode, setCodePlaces } from "./code";
 import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
@@ -173,6 +173,7 @@ export default function App() {
 
   // VS Code loads in the background on the repository, so the Code tab opens at once.
   createEffect(on(repo, (r) => r && prewarmCode(r)));
+  createEffect(on(repo, resetCodeRoot, { defer: true }));
   createEffect(on(repo, (r) => setAgentsRepo(r)));
   // VS Code's own folder picker offers the repository and the lanes' worktrees.
   createEffect(() => {
@@ -409,10 +410,19 @@ export default function App() {
       if (!fetching() && !sheet()) void load(false);
     };
     // Agents write cards through MCP while the app is open: pick them up within a few seconds.
+    // One of each at a time: a new read drops the answer of the one on its way, so when the daemon
+    // answers slower than the pace (a loaded Mac) polling over it would never show anything.
+    const reading = new Set<string>();
+    const once = (what: string, read: () => Promise<void>) => {
+      if (reading.has(what)) return;
+      reading.add(what);
+      void read().finally(() => reading.delete(what));
+    };
     const poll = setInterval(() => {
-      if (document.visibilityState === "visible" && (tab() === "inbox" || tab() === "board") && !sheet()) void loadCards();
-      if (document.visibilityState === "visible" && (runs() ?? []).some((r) => isLive(r.state))) void loadRuns();
-      if (document.visibilityState === "visible" && jobs().some(isOpenJob)) void loadQueue();
+      if (document.visibilityState !== "visible") return;
+      if ((tab() === "inbox" || tab() === "board") && !sheet()) once("cards", loadCards);
+      if ((runs() ?? []).some((r) => isLive(r.state))) once("runs", loadRuns);
+      if (jobs().some(isOpenJob)) once("queue", loadQueue);
     }, 4000);
     const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn });
     // ⌘P everywhere (Warp's key), ⌘K too except on the Terminal, where it clears the screen. Taken
@@ -425,7 +435,7 @@ export default function App() {
         void terminalHere();
         return;
       }
-      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey || !(k === "p" || (k === "k" && tab() !== "terminal"))) return;
+      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey || !(k === "p" || (k === "k" && !here("terminal")))) return;
       e.preventDefault();
       e.stopPropagation();
       setPalette((p) => !p);
@@ -918,6 +928,7 @@ export default function App() {
                     }}
                     onNew={() => setSheet({ kind: "new-card" })}
                     onAnalyse={(ids) => void analyse(ids)}
+                    onQuestions={() => setSheet({ kind: "questions" })}
                     onJoin={(ids) => void analyseInto(ids)}
                     batch={batchIds()}
                     joining={joining()}

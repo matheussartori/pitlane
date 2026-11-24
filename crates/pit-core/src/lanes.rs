@@ -255,7 +255,7 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
     let mut inputs: Vec<Input> = Vec::new();
     for line in git.lines(&[
         "for-each-ref",
-        "--format=%(refname:short)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)",
+        "--format=%(refname:lstrip=2)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)",
         "refs/heads",
     ])? {
         let f: Vec<&str> = line.splitn(6, '\0').collect();
@@ -394,7 +394,8 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
         fetched: opts.fetch,
         github: prs.is_some(),
         lanes,
-        head: repo.git.run(&["rev-parse", "--abbrev-ref", "HEAD"]).ok().filter(|h| h != "HEAD" && !h.is_empty()),
+        // The full ref, cut here: the short forms turn into `heads/x` when a tag shares the name.
+        head: repo.git.run(&["symbolic-ref", "-q", "HEAD"]).ok().and_then(|h| h.strip_prefix("refs/heads/").map(str::to_owned)),
         only_in_integration,
     })
 }

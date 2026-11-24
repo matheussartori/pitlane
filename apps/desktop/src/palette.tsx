@@ -2,7 +2,7 @@
 // actions, matched as you type; Enter does the obvious thing, ⌘Enter the second one (a card's
 // last run, a terminal in a lane's worktree). Every action shows its own key, so the palette
 // also teaches the keys.
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show, untrack } from "solid-js";
 import { Icon, type IconName } from "./icons";
 import { t } from "./i18n";
 
@@ -54,9 +54,11 @@ export function Palette(props: { commands: () => Command[]; onClose: () => void 
     field.focus();
   });
 
+  // What ⌘K reaches, read once as it opens: a poll landing while you choose must not rebuild the
+  // list and move a row from under the cursor just before Enter.
+  const all = untrack(() => props.commands());
   const shown = createMemo(() => {
     const query = q().trim().toLowerCase();
-    const all = props.commands();
     if (!query) return all.filter((c) => !c.searchOnly);
     return all
       .map((c) => ({ c, s: Math.max(score(c.title, query), score(`${c.words ?? ""} ${c.sub ?? ""}`, query) - 150) }))

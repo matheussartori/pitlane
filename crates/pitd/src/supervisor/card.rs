@@ -306,7 +306,7 @@ pub(super) fn check_of(m: &RunMeta) -> Option<NewQuestion> {
     if h.get("status").and_then(Value::as_str) != Some("partial") {
         return None;
     }
-    serde_json::from_value::<NewQuestion>(h.get("check")?.clone()).ok().filter(|q| !q.text.trim().is_empty())
+    serde_json::from_value::<NewQuestion>(h.get("check")?.clone()).ok().filter(|q| !q.text.trim().is_empty()).map(NewQuestion::sound)
 }
 
 /// Puts a run's check on its card as an open question, for the Inbox; returns the block that
@@ -419,7 +419,9 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
     {
         let qs: Vec<NewQuestion> = qs
             .iter()
-            .filter_map(|q| serde_json::from_value(q.clone()).ok())
+            .filter_map(|q| serde_json::from_value::<NewQuestion>(q.clone()).ok())
+            .filter(|q| !q.text.trim().is_empty())
+            .map(NewQuestion::sound)
             .collect();
         if status == Some("blocked") {
             if !qs.is_empty() {

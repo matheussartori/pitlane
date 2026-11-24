@@ -563,7 +563,7 @@ function linkFiles(term: Terminal, id: number) {
             activate: (e: MouseEvent) => {
               if (e.metaKey) openInCode(hit.root, hit.rel, ln, col, true);
             },
-            hover: (e: MouseEvent) => e.target instanceof HTMLElement && (e.target.title = "⌘-click to open in Code"),
+            hover: (e: MouseEvent) => e.target instanceof HTMLElement && (e.target.title = t("⌘-click to open in Code")),
             leave: (e: MouseEvent) => e.target instanceof HTMLElement && e.target.removeAttribute("title"),
           };
         }),

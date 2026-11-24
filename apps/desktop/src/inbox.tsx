@@ -11,6 +11,7 @@ import { plural, t } from "./i18n";
 import { Spinner, toast, ownsKey } from "./ui";
 import { age, clock, elapsed, msg } from "./format";
 import { kindLabel } from "./agents";
+import { repo as currentRepo } from "./store/repo";
 
 
 export const MCP_INSTALL = "claude mcp add pitlane -- pit mcp";
@@ -51,7 +52,8 @@ export function QuestionBlock(props: {
   busy: boolean;
   onAnswer: (answer: string) => void;
 }) {
-  const draft = `${props.q.card.id}-${props.q.id}`;
+  // By repository too: card numbers start at 1 in each one.
+  const draft = `${currentRepo()}|${props.q.card.id}-${props.q.id}`;
   const [other, setOther] = createSignal(drafts.get(draft) ?? "");
   const write = (v: string) => {
     setOther(v);
@@ -605,7 +607,13 @@ export function InboxView(props: {
   const nextAsk = () => asks()[at() + 1];
 
   return (
-    <div class="inbox" ref={root}>
+    <div
+      class="inbox"
+      ref={root}
+      // Typing in an item keeps it: a permission arriving meanwhile waits its turn instead of
+      // taking the field (and your next keys) away.
+      onInput={() => (moved = true)}
+    >
       <header class="screen-head">
         <h1 class="title">{t("Inbox")}</h1>
         <Show when={asks().length > 0}>

@@ -6,7 +6,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, on, 
 import { Portal } from "solid-js/web";
 import { api, isLive, type RunEvent, type RunMeta } from "./api";
 import { plural, t } from "./i18n";
-import { Spinner, toast, tailFollower } from "./ui";
+import { Spinner, toast, tailFollower, escapeCloses } from "./ui";
 import { ApprovalBlock } from "./approvals";
 import { Icon } from "./icons";
 import { Prose } from "./prose";
@@ -167,7 +167,8 @@ export function AgentConsole(props: {
     on(
       () => m().waiting.length,
       (n, prev) => {
-        if (n > (prev ?? 0) && document.activeElement === input) root?.focus();
+        // Never while you are mid-sentence: the next key you type would answer the request.
+        if (n > (prev ?? 0) && document.activeElement === input && !input?.value) root?.focus();
         if (n > (prev ?? 0)) tail.follow();
       },
     ),
@@ -451,9 +452,7 @@ function Shot(props: { run: string; file: string }) {
     return api.runShot(r, f).catch(() => "");
   });
   const [big, setBig] = createSignal(false);
-  const key = (ev: KeyboardEvent) => ev.key === "Escape" && setBig(false);
-  createEffect(() => (big() ? window.addEventListener("keydown", key) : window.removeEventListener("keydown", key)));
-  onCleanup(() => window.removeEventListener("keydown", key));
+  escapeCloses(big, () => setBig(false));
   return (
     <Show when={src()}>
       {(u) => (

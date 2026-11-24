@@ -25,10 +25,7 @@ pub fn answer_as(repo: &Repo, id: u32, question: u32, answer: &str, auto: bool) 
     if !q.is_open() {
         bail!("question {question} on card #{id} is already answered");
     }
-    let text = match answer.parse::<usize>() {
-        Ok(n) if n >= 1 && n <= q.options.len() => q.options[n - 1].clone(),
-        _ => answer.to_owned(),
-    };
+    let text = chosen(q, answer);
     let now_s = now_secs();
     let now = timestamp(now_s);
     let decision = next_decision_id(repo)?;
@@ -55,6 +52,19 @@ pub fn answer_as(repo: &Repo, id: u32, question: u32, answer: &str, auto: bool) 
     Ok(Answered { card, decision })
 }
 
+/// What an answer says: one of the question's options word for word (what the app sends, so an
+/// option that reads "2" is that option and never "the second one"), else its 1-based number
+/// (the CLI's `pit card answer 3 1 2`), else the person's own words.
+fn chosen(q: &Question, answer: &str) -> String {
+    if let Some(o) = q.options.iter().find(|o| o.as_str() == answer) {
+        return o.clone();
+    }
+    match answer.parse::<usize>() {
+        Ok(n) if n >= 1 && n <= q.options.len() => q.options[n - 1].clone(),
+        _ => answer.to_owned(),
+    }
+}
+
 /// Chooses again on an answered question: the card and its decision (same `D-xx`) take the new
 /// answer, and the decisions file keeps a line saying what it was before.
 pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Answered> {
@@ -71,10 +81,7 @@ pub fn reanswer(repo: &Repo, id: u32, question: u32, answer: &str) -> Result<Ans
         .find(|q| q.id == question)
         .with_context(|| format!("card #{id} has no question {question}"))?;
     let Some(old) = q.answer.clone() else { bail!("question {question} on card #{id} is not answered yet") };
-    let text = match answer.parse::<usize>() {
-        Ok(n) if n >= 1 && n <= q.options.len() => q.options[n - 1].clone(),
-        _ => answer.to_owned(),
-    };
+    let text = chosen(q, answer);
     let now_s = now_secs();
     let now = timestamp(now_s);
     if text == old {

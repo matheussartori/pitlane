@@ -72,7 +72,9 @@ pub fn read_optional(path: &Path) -> Result<Option<String>> {
 
 /// Edits the TOML file at `path` keeping its comments and layout: reads it (`template` when there
 /// is none), lets `change` edit the document, has `check` read the result, and only then writes
-/// it, whole. Edits made in this process go one at a time, so two never drop each other's change.
+/// it, whole. Edits go one at a time, in this process and across them (the app, the daemon and the
+/// CLI all edit `flow.toml`), so two never drop each other's change. The lock that says so lives
+/// in the temporary folder, named after the file: nothing is written beside a file in a repository.
 pub fn edit_toml<T>(
     path: &Path,
     template: &str,
@@ -81,6 +83,7 @@ pub fn edit_toml<T>(
 ) -> Result<T> {
     static EDITING: Mutex<()> = Mutex::new(());
     let _one = EDITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _others = FileLock::take(&edit_lock(path), Duration::from_secs(5))?;
     let text = read_optional(path)?.unwrap_or_else(|| template.to_owned());
     let mut doc: toml_edit::DocumentMut = text.parse().with_context(|| format!("invalid {}", path.display()))?;
     let out = change(&mut doc)?;
@@ -88,6 +91,14 @@ pub fn edit_toml<T>(
     check(&text).with_context(|| format!("{} would no longer be valid", path.display()))?;
     write_atomic(path, text)?;
     Ok(out)
+}
+
+/// Where the lock for editing `path` lives: one file per edited file, by a hash of its path.
+fn edit_lock(path: &Path) -> std::path::PathBuf {
+    let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // FNV-1a, spelled out: every pit binary must name the same lock, whatever built it.
+    let hash = full.as_os_str().as_encoded_bytes().iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3));
+    std::env::temp_dir().join(format!("pitlane-edit-{hash:016x}.lock"))
 }
 
 /// Cross-process lock: an OS lock (`flock`) on a lock file, held while the value lives. The OS

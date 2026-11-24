@@ -199,6 +199,27 @@ fn a_board_under_the_old_key_moves_and_stays_reachable() {
 }
 
 #[test]
+fn a_board_follows_its_repository_when_it_gets_a_remote() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+    let root = std::path::Path::new("/work/amity");
+    let local = cards::board_for(home, None, root);
+    fs::create_dir_all(local.join("cards")).unwrap();
+    fs::write(local.join("cards/0001-x.md"), "card").unwrap();
+    // No remote yet: nothing moves.
+    cards::adopt_flat_board(home, None, root).unwrap();
+    assert!(fs::symlink_metadata(&local).unwrap().is_dir());
+    let url = Some("git@github.com:me/amity.git");
+    cards::adopt_flat_board(home, url, root).unwrap();
+    let remote = cards::board_for(home, url, root);
+    assert_eq!(fs::read_to_string(remote.join("cards/0001-x.md")).unwrap(), "card");
+    assert!(fs::symlink_metadata(&local).unwrap().file_type().is_symlink(), "the path's name still leads there");
+    // A board already under the remote's key is never replaced.
+    cards::adopt_flat_board(home, url, root).unwrap();
+    assert_eq!(fs::read_to_string(remote.join("cards/0001-x.md")).unwrap(), "card");
+}
+
+#[test]
 fn legacy_cards_in_the_repository_move_to_the_board() {
     let tmp = TempDir::new().unwrap();
     let work = tmp.path().join("work");

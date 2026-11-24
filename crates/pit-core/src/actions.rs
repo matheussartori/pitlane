@@ -129,37 +129,16 @@ pub fn new_lane_from(repo: &Repo, branch: &str, opts: NewOptions, from: Option<&
         }
     };
 
-    let mut copied = Vec::new();
-    let mut missing = Vec::new();
-    for rel in &repo.flow.worktree.copy {
-        let src = repo.root.join(rel);
-        if !src.exists() {
-            missing.push(rel.clone());
-            continue;
+    // The branch and its worktree exist from here on. If filling the worktree fails (a copy, the
+    // setup stopped), both go again: the next try starts clean instead of finding "branch already exists".
+    let filled = fill_worktree(repo, &path, opts.setup);
+    let (copied, missing, cloned, setup_ok) = match filled {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = repo.git.run(&["worktree", "remove", "--force", &path_s]);
+            let _ = repo.git.run(&["branch", "-D", branch]);
+            return Err(e);
         }
-        let dst = path.join(rel);
-        if dst.exists() {
-            continue;
-        }
-        copy_tree(&src, &dst, false)?;
-        copied.push(rel.clone());
-    }
-
-    let mut cloned = Vec::new();
-    for pattern in &repo.flow.worktree.clone_deps {
-        for rel in expand(&repo.root, pattern)? {
-            let dst = path.join(&rel);
-            if dst.exists() {
-                continue;
-            }
-            copy_tree(&repo.root.join(&rel), &dst, true)?;
-            cloned.push(rel.to_string_lossy().into_owned());
-        }
-    }
-
-    let setup_ok = match (&repo.flow.worktree.setup, opts.setup) {
-        (Some(cmd), true) => Some(shell(cmd, &path)?),
-        _ => None,
     };
 
     Ok(NewReport {
@@ -275,15 +254,76 @@ fn expand(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
     Ok(found.into_iter().filter(|p| !p.as_os_str().is_empty()).collect())
 }
 
-/// Runs a user command from flow.toml in `dir`, output straight to the terminal.
-fn shell(cmd: &str, dir: &Path) -> Result<bool> {
-    Ok(Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .with_context(|| format!("could not run {cmd:?}"))?
-        .success())
+/// What a new worktree gets beyond the checkout: the files flow.toml copies, the dependency
+/// folders it clones, and its setup command. Returns (copied, missing, cloned, setup_ok).
+#[allow(clippy::type_complexity)]
+fn fill_worktree(repo: &Repo, path: &Path, setup: bool) -> Result<(Vec<String>, Vec<String>, Vec<String>, Option<bool>)> {
+    let mut copied = Vec::new();
+    let mut missing = Vec::new();
+    for rel in &repo.flow.worktree.copy {
+        let src = repo.root.join(rel);
+        if !src.exists() {
+            missing.push(rel.clone());
+            continue;
+        }
+        let dst = path.join(rel);
+        if dst.exists() {
+            continue;
+        }
+        copy_tree(&src, &dst, false)?;
+        copied.push(rel.clone());
+    }
+
+    let mut cloned = Vec::new();
+    for pattern in &repo.flow.worktree.clone_deps {
+        for rel in expand(&repo.root, pattern)? {
+            let dst = path.join(&rel);
+            if dst.exists() {
+                continue;
+            }
+            copy_tree(&repo.root.join(&rel), &dst, true)?;
+            cloned.push(rel.to_string_lossy().into_owned());
+        }
+    }
+
+    let setup_ok = match (&repo.flow.worktree.setup, setup) {
+        (Some(cmd), true) => Some(shell(cmd, path)?.ok),
+        _ => None,
+    };
+    Ok((copied, missing, cloned, setup_ok))
+}
+
+/// How long a watched flow.toml command (a setup, a ship's check) may take before it is killed.
+const SHELL_LIMIT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// How a flow.toml command went: whether it passed and, when watched, the end of what it printed.
+struct Shell {
+    ok: bool,
+    tail: String,
+}
+
+/// Runs a user command from flow.toml in `dir`. From a terminal (the CLI) its output goes
+/// straight to the screen. Under `procs::watched` (the daemon, the app) nobody would see it or be
+/// able to stop it, so it runs in a group of its own, under a limit, ends when the watcher says
+/// so, and what it printed comes back for the error.
+fn shell(cmd: &str, dir: &Path) -> Result<Shell> {
+    let Some(cancelled) = crate::procs::watch() else {
+        let ok = Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .current_dir(dir)
+            .status()
+            .with_context(|| format!("could not run {cmd:?}"))?
+            .success();
+        return Ok(Shell { ok, tail: String::new() });
+    };
+    let ran = crate::procs::run_shell(dir, cmd, SHELL_LIMIT, &*cancelled).with_context(|| format!("could not run {cmd:?}"))?;
+    let lines: Vec<&str> = ran.output.lines().collect();
+    let tail = lines[lines.len().saturating_sub(20)..].join("\n");
+    match (ran.status, ran.why) {
+        (Some(st), _) => Ok(Shell { ok: st.success(), tail }),
+        (None, why) => bail!("{cmd:?} {}", why.unwrap_or_else(|| "did not finish".into())),
+    }
 }
 
 // ---------------------------------------------------------------- ship
@@ -447,10 +487,12 @@ pub fn execute_ship(repo: &Repo, plan: &ShipPlan) -> Result<ShipReport> {
     let Some(tree) = &plan.tree else {
         bail!("{} conflicts with {}: {}", plan.branch, plan.target, plan.conflicts.join(", "));
     };
-    if let Some((cmd, dir)) = &plan.check
-        && !shell(cmd, dir)?
-    {
-        bail!("check {cmd:?} failed in {}; nothing shipped", dir.display());
+    if let Some((cmd, dir)) = &plan.check {
+        let check = shell(cmd, dir)?;
+        if !check.ok {
+            let said = if check.tail.is_empty() { String::new() } else { format!(":\n{}", check.tail) };
+            bail!("check {cmd:?} failed in {}; nothing shipped{said}", dir.display());
+        }
     }
     let msg = format!("Merge {} into {}", plan.branch, plan.target);
     let merge = repo

@@ -45,7 +45,11 @@ pub(crate) fn preview_show(app: tauri::AppHandle, url: String, x: f64, y: f64, w
             return true;
         }
         if matches!(u.scheme(), "http" | "https") {
-            let _ = std::process::Command::new("open").arg(u.as_str()).spawn();
+            // Waited for on a thread of its own: a child nobody waits for stays a zombie until the app quits.
+            let url = u.to_string();
+            std::thread::spawn(move || {
+                let _ = std::process::Command::new("/usr/bin/open").arg(url).status();
+            });
         }
         false
     });

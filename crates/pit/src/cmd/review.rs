@@ -8,16 +8,16 @@ use pit_core::protocol::ReviewAction;
 
 use super::runs::{follow_or_detach, state_word};
 use super::{daemon, pitlane_home};
-use crate::term::{ACCENT, DONE, FAIL, MUTED, RUN, paint};
+use crate::term::{ACCENT, DONE, FAIL, MUTED, RUN, paint, plain};
 
 pub fn review(repo: &Repo, card: u32) -> Result<ExitCode> {
     let runs = daemon()?.list(Some(&repo.root))?;
     let Some(m) = runs.iter().filter(|m| m.card == card).max_by_key(|m| (m.round, m.started_at)) else {
         bail!("card #{card} has no runs");
     };
-    println!("#{} {}  {}  {}", m.card, m.card_title, state_word(m.state), paint(MUTED, &m.branch));
+    println!("#{} {}  {}  {}", m.card, plain(&m.card_title), state_word(m.state), paint(MUTED, &m.branch));
     if let Some(s) = m.handoff.as_ref().and_then(|h| h.get("summary")).and_then(|s| s.as_str()) {
-        println!("\n{s}");
+        println!("\n{}", plain(s));
     }
     match std::fs::read_to_string(pit_core::runs::runs_dir(&pitlane_home()).join(&m.id).join("verify.json")) {
         Ok(t) => {
@@ -27,10 +27,10 @@ pub fn review(repo: &Repo, card: u32) -> Result<ExitCode> {
                 println!("{}", paint(MUTED, "no checks configured ([verify] commands in .pitlane/flow.toml)"));
             }
             for p in &v.proofs {
-                println!("{} {}  {}", if p.ok { paint(DONE, "✓") } else { paint(FAIL, "✕") }, p.command, paint(MUTED, &format!("{:.1}s", p.duration_ms as f64 / 1000.0)));
+                println!("{} {}  {}", if p.ok { paint(DONE, "✓") } else { paint(FAIL, "✕") }, plain(&p.command), paint(MUTED, &format!("{:.1}s", p.duration_ms as f64 / 1000.0)));
                 if !p.ok {
                     for l in p.tail.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev() {
-                        println!("    {}", paint(MUTED, l));
+                        println!("    {}", paint(MUTED, &plain(l)));
                     }
                 }
             }
@@ -39,17 +39,17 @@ pub fn review(repo: &Repo, card: u32) -> Result<ExitCode> {
                     pit_core::verify::Verdict::Approve => paint(DONE, "approves"),
                     pit_core::verify::Verdict::Changes => paint(ACCENT, "asks for changes"),
                 };
-                println!("\njudge {word}: {}", j.summary);
+                println!("\njudge {word}: {}", plain(&j.summary));
                 for f in &j.findings {
                     let at = match (&f.file, f.line) {
                         (Some(file), Some(l)) => format!("{file}:{l} "),
                         (Some(file), None) => format!("{file} "),
                         _ => String::new(),
                     };
-                    println!("  {} {at}{}", paint(MUTED, &f.severity), f.text);
+                    println!("  {} {}{}", paint(MUTED, &plain(&f.severity)), plain(&at), plain(&f.text));
                 }
             } else if let Some(e) = v.judge.as_ref().and_then(|j| j.error.as_ref()) {
-                println!("\njudge could not finish: {e}");
+                println!("\njudge could not finish: {}", plain(e));
             }
         }
         Err(_) => println!("\n{}", paint(MUTED, "no checks ran for this run")),

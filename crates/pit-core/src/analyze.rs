@@ -137,7 +137,7 @@ pub fn record_recheck(repo: &Repo, id: u32, a: Analysis) -> Result<bool> {
     for n in a.notes.iter().filter(|n| !n.trim().is_empty()) {
         cards::note(repo, id, "claude", n)?;
     }
-    let qs: Vec<NewQuestion> = a.questions.into_iter().filter(|q| !q.text.trim().is_empty()).collect();
+    let qs: Vec<NewQuestion> = a.questions.into_iter().filter(|q| !q.text.trim().is_empty()).map(NewQuestion::sound).collect();
     let clear = qs.is_empty();
     if !clear {
         cards::ask(repo, id, qs)?;
@@ -247,7 +247,7 @@ pub fn record(repo: &Repo, id: u32, a: Analysis) -> Result<Card> {
     for n in a.notes.iter().filter(|n| !n.trim().is_empty()) {
         cards::note(repo, id, "claude", n)?;
     }
-    let qs: Vec<NewQuestion> = a.questions.into_iter().filter(|q| !q.text.trim().is_empty()).collect();
+    let qs: Vec<NewQuestion> = a.questions.into_iter().filter(|q| !q.text.trim().is_empty()).map(NewQuestion::sound).collect();
     if !qs.is_empty() {
         cards::ask(repo, id, qs)?;
     }

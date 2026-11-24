@@ -31,6 +31,10 @@ pub(crate) struct CodeView {
     /// What the page draws over VS Code (tooltips, toasts): window rects (x, y, w, h, radius).
     holes: Mutex<Vec<[f64; 5]>>,
     next: std::sync::atomic::AtomicU32,
+    /// Held while a view is looked up and made, so two callers asking for one folder at once
+    /// (the tab mounting, its first resize, the prewarm) end with one view. Only ever taken off
+    /// the main thread (the commands are async), so the webview calls made under it cannot wait on it.
+    making: Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -174,6 +178,7 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     let mut url = tauri::Url::parse(&format!("http://127.0.0.1:{}/", r.port)).map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("folder", folder);
     let state = app.state::<CodeView>();
+    let _one = state.making.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     // The list is never held while a webview is asked or changed: those calls wait on the main
     // thread, which itself takes the list (placing views, the holes, the places), so holding it
     // across them could freeze the app for good.

@@ -127,6 +127,8 @@ export function CardImages(props: { repo: string; card: Card; onChanged: () => v
     setBusy(true);
     try {
       await api.cardDetach(props.repo, props.card.id, file);
+      // Its name is free again: the next image may take it, and must not show this one's picture.
+      shown.delete(`${props.repo}\n${props.card.id}\n${file}`);
       props.onChanged();
     } catch (e) {
       toast({ tone: "fail", title: t("The image was not removed"), body: msg(e) }, 0);

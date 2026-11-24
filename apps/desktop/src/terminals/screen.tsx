@@ -47,6 +47,8 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
 
   // The Ghostty and iTerm2 keys. Taken before the terminal sees them; Ctrl keys stay the shell's.
   function onKey(e: KeyboardEvent) {
+    // A sheet over the terminal owns the keys: ⌘W there must not close a pane and end its shell.
+    if (document.querySelector("dialog[open]")) return;
     if (!e.metaKey || e.ctrlKey && !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Equal"].includes(e.code)) return;
     // An agent on screen: only the keys that leave it for a shell apply.
     if (agentSelected() && !(e.key.toLowerCase() === "t" && !e.shiftKey) && !/^Digit[1-9]$/.test(e.code)) return;

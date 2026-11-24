@@ -41,7 +41,9 @@ pub fn new(repo: &Repo, branch: String, no_fetch: bool, no_setup: bool, card: Op
         cards::update(repo, id, CardPatch { lane: Some(Some(r.branch.clone())), ..Default::default() })?;
     }
     if json {
-        return print_json(&r);
+        // The report says it too (`setup_ok`); the exit code must not call a failed setup a success.
+        let printed = print_json(&r)?;
+        return Ok(if r.setup_ok == Some(false) { ExitCode::FAILURE } else { printed });
     }
     println!("{} {} from {} {}", paint(DONE, "✓"), r.branch, r.base, short(&r.base_sha));
     println!("  {}", r.path.display());

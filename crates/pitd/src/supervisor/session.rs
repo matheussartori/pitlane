@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use pit_core::runs;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, Command};
 use tokio::task::JoinHandle;
 
@@ -135,13 +135,43 @@ impl Supervisor {
     }
 }
 
+/// A session's output, line by line. A byte that is not UTF-8 is replaced, never the end of the
+/// read: a pipe nobody reads any more would end the agent on its next write (EPIPE).
+pub(super) struct Lines<R> {
+    reader: R,
+    line: Vec<u8>,
+}
+
+impl<R: AsyncBufRead + Unpin> Lines<R> {
+    pub(super) fn new(reader: R) -> Self {
+        Self { reader, line: Vec::new() }
+    }
+
+    /// The next line without its newline, or none at the end. Safe to drop mid-read (a
+    /// `select!`): what was read of an unfinished line stays for the next call.
+    pub(super) async fn next_line(&mut self) -> Option<String> {
+        let read = self.reader.read_until(b'\n', &mut self.line).await;
+        if read.is_err() || self.line.is_empty() {
+            return None;
+        }
+        let mut line = std::mem::take(&mut self.line);
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        Some(String::from_utf8_lossy(&line).into_owned())
+    }
+}
+
 /// Reads a session's stderr into `path` (made at its first line) and keeps its last lines.
 pub(super) fn capture_stderr(stderr: ChildStderr, path: PathBuf) -> JoinHandle<Vec<String>> {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
+        let mut lines = Lines::new(BufReader::new(stderr));
         let mut tail: Vec<String> = Vec::new();
         let mut file = None;
-        while let Ok(Some(l)) = lines.next_line().await {
+        while let Some(l) = lines.next_line().await {
             if file.is_none() {
                 file = OpenOptions::new().create(true).append(true).open(&path).ok();
             }

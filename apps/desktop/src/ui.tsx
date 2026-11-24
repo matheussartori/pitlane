@@ -244,15 +244,38 @@ export interface Toast {
 
 const [toasts, setToasts] = createSignal<Toast[]>([]);
 let nextId = 1;
+/** Escape closes what is enlarged over the screen (a screenshot) and nothing else: the key is
+ *  taken before the screen under it sees it, so a run's own Escape does not also leave the run. */
+export function escapeCloses(open: () => boolean, close: () => void) {
+  const key = (ev: KeyboardEvent) => {
+    if (ev.key !== "Escape" || !open()) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    close();
+  };
+  window.addEventListener("keydown", key, true);
+  onCleanup(() => window.removeEventListener("keydown", key, true));
+}
+
+/** The toasts that stay until answered. */
+const sticky = new Set<number>();
 
 export function toast(msg: Omit<Toast, "id">, ms = 7000) {
   const id = nextId++;
-  setToasts((all) => [...all.slice(-3), { ...msg, id }]);
-  // 0 keeps it until it is answered or dismissed: for anything that waits on a decision.
+  // 0 keeps it until it is answered or dismissed: for anything that waits on a decision. Those
+  // are never pushed out by newer ones (some carry the only way to an action, such as resuming
+  // the merge queue): only passing notices give way, the oldest first.
+  if (ms === 0) sticky.add(id);
+  setToasts((all) => {
+    const passing = all.filter((x) => !sticky.has(x.id));
+    const out = new Set(passing.slice(0, Math.max(0, passing.length - 3)).map((x) => x.id));
+    return [...all.filter((x) => !out.has(x.id)), { ...msg, id }];
+  });
   if (ms > 0) setTimeout(() => dismiss(id), ms);
 }
 
 function dismiss(id: number) {
+  sticky.delete(id);
   setToasts((all) => all.filter((x) => x.id !== id));
 }
 

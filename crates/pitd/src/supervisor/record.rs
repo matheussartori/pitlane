@@ -63,8 +63,11 @@ impl Supervisor {
                     signal(pid, libc::SIGKILL);
                 }
                 if m.kind == SessionKind::Run {
-                    // The agent had started: the next Run resumes its session.
-                    let paused = m.pid.is_some().then(|| m.id.clone());
+                    // The agent had started (it was running, or had finished and its work was
+                    // being checked): the next Run resumes its session. Interrupted before that,
+                    // the session it was going to resume is still the one (as `settle_card` keeps it).
+                    let ran = m.pid.is_some() || m.state == RunState::Verifying;
+                    let paused = if ran { Some(m.id.clone()) } else { m.resumed_from.clone() };
                     let _ = Repo::open(&m.repo, &home_dir(), &self.cfg.home).and_then(|r| {
                         cards::update(
                             &r,

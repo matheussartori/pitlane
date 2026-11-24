@@ -42,7 +42,7 @@ impl Supervisor {
             args.extend(["--add-dir".into(), l.worktree.to_string_lossy().into_owned()]);
         }
         if r.flow.run.sandbox {
-            let settings = sandbox_settings(&m.worktree, m.related.iter().map(|l| l.worktree.as_path()), &r.flow.run.write, r.flow.run.ask_unsandboxed);
+            let settings = sandbox_settings(&self.cfg.home, &m.worktree, m.related.iter().map(|l| l.worktree.as_path()), &r.flow.run.write, r.flow.run.ask_unsandboxed);
             args.extend(["--settings".into(), Value::Object(settings).to_string()]);
         }
         args.extend(["--append-system-prompt".into(), ASIDE_RULES.into()]);

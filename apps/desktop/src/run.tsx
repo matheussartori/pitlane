@@ -76,6 +76,7 @@ export function RunScreen(props: {
       () => props.meta?.id,
       (id) => {
         setEvents(new Map());
+        setError(null); // the last run's failure is not this one's
         if (!id) return;
         let off: (() => void) | undefined;
         let gone = false;
@@ -111,11 +112,17 @@ export function RunScreen(props: {
   const steps = (cmd: string) => cmd.split(/\s*(?:;|&&)\s*/).filter(Boolean);
 
   // What the lane changed in this run (from the commit it started on), with counts per file.
-  const diffKey = () => {
-    const m = props.meta;
-    if (!m?.branch) return null;
-    return { repo: props.repo, branch: m.branch, from: m.base_sha ?? undefined, files: (m.handoff?.files_changed ?? []).join("|"), state: m.state };
-  };
+  // Compared by what it says: the run's record is re-read every few seconds while it works, and
+  // a key that is a new object each time would fetch and parse the same diff again each time.
+  const diffKey = createMemo(
+    () => {
+      const m = props.meta;
+      if (!m?.branch) return null;
+      return { repo: props.repo, branch: m.branch, from: m.base_sha ?? undefined, files: (m.handoff?.files_changed ?? []).join("|"), state: m.state };
+    },
+    undefined,
+    { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
+  );
   const [diff] = createResource(diffKey, (k) => api.laneDiff(k.repo, k.branch, k.from).catch(() => null));
   const parsed = createMemo(() => (diff() ? parsePatch(diff()!.patch) : []));
   const changed = createMemo<ChangedFile[]>(() => {

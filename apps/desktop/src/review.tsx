@@ -8,6 +8,7 @@ import { plural, t } from "./i18n";
 import { ErrorLine, Spinner, toast, ok, okLatest } from "./ui";
 import { Grip, REVIEW_SIDE_W } from "./layout";
 import { clock, elapsed, money, msg } from "./format";
+import { highlight, langOf } from "./highlight";
 
 
 // ---------------------------------------------------------------- the diff
@@ -185,7 +186,9 @@ function DiffView(props: {
     <div class="review-diff">
       <For each={files()}>
         {(f) => {
-          const big = f.hunks.reduce((n, h) => n + h.lines.length, 0) > 400;
+          const lines = f.hunks.reduce((n, h) => n + h.lines.length, 0);
+          const big = lines > 400;
+          const lang = () => langOf(f.path, lines);
           const [open, setOpen] = createSignal(!big && !viewed().has(f.path));
           const count = () => props.findings.filter((x) => x.file === f.path).length;
           return (
@@ -310,7 +313,7 @@ function DiffView(props: {
                                     </button>
                                   </Show>
                                   <span class="sign">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : ""}</span>
-                                  <span>{l.text}</span>
+                                  <span>{highlight(l.text, lang())}</span>
                                 </div>
                                 <For each={at(f.path, l.new)}>
                                   {({ f: fi, i }) => <FindingLine f={fi} i={i} picked={props.picked.has(i)} onPick={props.onPick} />}
@@ -400,7 +403,8 @@ export function ReviewScreen(props: {
   const [picked, setPicked] = createSignal<Set<number>>(new Set());
   const [note, setNote] = createSignal("");
   // Comments on lines, kept per card until they are sent (leaving the screen does not lose them).
-  const notesKey = () => `pitlane.review.${props.card?.id}.notes`;
+  // By repository too: card numbers start at 1 in each one.
+  const notesKey = () => `pitlane.review.${props.repo}.${props.card?.id}.notes`;
   const readNotes = (): LineNote[] => {
     try {
       return JSON.parse(localStorage.getItem(notesKey()) ?? "[]") as LineNote[];

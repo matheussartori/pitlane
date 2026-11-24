@@ -352,6 +352,8 @@ export function BoardView(props: {
   onChanged: () => void;
   /** Claude reads the backlog cards not analysed yet (questions, notes, order). */
   onAnalyse: (ids: number[]) => void;
+  /** Brings Run all's questions back up: the way on when their sheet was closed some other way. */
+  onQuestions: () => void;
   /** While Run all works: cards moved to Queued that Claude never read are analysed, then the batch takes them. */
   onJoin: (ids: number[]) => void;
   /** Cards being analysed to join the running batch. */
@@ -383,22 +385,31 @@ export function BoardView(props: {
     const o = order();
     return o ? [...all].sort((x, y) => o.indexOf(x.id) - o.indexOf(y.id)) : all;
   });
-  const placed = createMemo(() =>
-    sorted().map((c) => {
+  // Each card with where it sits and what it says. A recompute (a poll, the yard, Run all moving
+  // on) hands back the same entry for a card that reads the same, so its tile keeps its DOM, its
+  // focus and its hover instead of being rebuilt every few seconds while an agent works.
+  type Placed = { card: Card; p: ReturnType<typeof place> };
+  const placed = createMemo<Placed[]>((prev) => {
+    const before = new Map(prev.map((x) => [x.card.id, x]));
+    const busy = props.runs.filter((r) => isLive(r.state)).map((r) => r.card);
+    const moving = onItsWay(props.cards ?? [], busy, props.queued, props.batch ?? props.queued);
+    const same = (next: Placed) => {
+      const o = before.get(next.card.id);
+      return o && o.card === next.card && JSON.stringify(o.p) === JSON.stringify(next.p) ? o : next;
+    };
+    return sorted().map((c) => {
       const asking = props.runs.find((r) => r.card === c.id && isLive(r.state) && r.waiting.length > 0);
       if (c.state === "review" && !asking) {
         const r = reviewSummary(latestRun(props.runs, c.id));
-        return { card: c, p: { ...place(c, props.yard), chip: r.chip, icon: r.icon, label: r.label, why: r.text } };
+        return same({ card: c, p: { ...place(c, props.yard), chip: r.chip, icon: r.icon, label: r.label, why: r.text } });
       }
       const p = asking
         ? { ...place(c, props.yard), column: "needs" as const, chip: "needs" as const, icon: "needs" as const, label: asking.waiting[0]!.tool === "Bash" ? t("Wants to run") : t("Wants {tool}", { tool: asking.waiting[0]!.tool }), why: t("Asks to run {detail}", { detail: asking.waiting[0]!.detail }) }
         : place(c, props.yard);
-      const busy = props.runs.filter((r) => isLive(r.state)).map((r) => r.card);
-      const moving = onItsWay(props.cards ?? [], busy, props.queued, props.batch ?? props.queued);
       const note = props.phase === "working" && props.queued.includes(c.id) ? (holdNote(c.id, props.cards ?? [], busy) ?? planNote(props.plan, c.id, props.cards ?? [], moving)) : null;
-      return { card: c, p: note && p.column === "queued" ? { ...p, why: note } : p };
-    }),
-  );
+      return same({ card: c, p: note && p.column === "queued" ? { ...p, why: note } : p });
+    });
+  }, []);
   const byColumn = (col: string) => placed().filter((x) => x.p.column === col);
   const needs = () => byColumn("needs").length;
   const backlog = () => byColumn("backlog").filter(({ card }) => !liveRun(card.id) && card.state !== "done");
@@ -597,6 +608,7 @@ export function BoardView(props: {
     props.phase === "analyzing" ? t("Stop analysing") : props.phase === "asking" ? t("Answer to go on") : t("Analyse {n}", { n: unanalysed().length });
   const analyseAction = () => {
     if (props.phase === "analyzing") return props.onStopAll();
+    if (props.phase === "asking") return props.onQuestions();
     if (props.phase === "idle") props.onAnalyse(unanalysed().map(({ card }) => card.id));
   };
   const showAnalyse = () => props.phase === "analyzing" || props.phase === "asking" || (props.phase === "idle" && unanalysed().length > 0);
@@ -693,7 +705,6 @@ export function BoardView(props: {
                       <button
                         type="button"
                         class="btn btn-ghost col-action"
-                        disabled={props.phase === "asking"}
                         aria-busy={props.phase === "analyzing"}
                         title={props.phase === "analyzing" ? t("Stops the analysis; nothing starts") : t("Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine. Nothing starts")}
                         onClick={analyseAction}

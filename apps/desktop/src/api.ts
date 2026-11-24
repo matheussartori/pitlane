@@ -100,12 +100,6 @@ export type LocalUpdate =
   | { kind: "diverged" }
   | { kind: "no-local-branch" };
 
-export interface ShipReport {
-  merge_sha: string;
-  target: string;
-  local: LocalUpdate;
-}
-
 export interface CleanItem {
   branch: string;
   sha: string;
@@ -793,14 +787,6 @@ export const api = {
   newLane: (path: string, branch: string) => invoke<NewReport>("new_lane", { path, branch }),
   shipPlan: (path: string, branch: string, to: string | null) =>
     invoke<ShipPlan>("ship_plan", { path, branch, to }),
-  ship: (path: string, plan: ShipPlan) =>
-    invoke<ShipReport>("ship", {
-      path,
-      branch: plan.branch,
-      to: plan.target,
-      sha: plan.sha,
-      targetSha: plan.target_sha,
-    }),
   cleanPlan: (path: string) => invoke<CleanPlan>("clean_plan", { path }),
   clean: (path: string, branches: string[]) => invoke<CleanOutcome[]>("clean", { path, branches }),
   undoClean: (path: string, branch: string) => invoke<UndoReport>("undo_clean", { path, branch }),

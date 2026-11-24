@@ -180,7 +180,8 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
     setBusy(true);
     setError(null);
     try {
-      const out = await api.clean(props.repo, branches);
+      const repo = props.repo; // Undo, clicked later, restores here even if another repository is open by then
+      const out = await api.clean(repo, branches);
       const ok = out.filter((o) => !o.error).map((o) => o.branch);
       const failed = out.filter((o) => o.error);
       if (ok.length) {
@@ -194,7 +195,7 @@ export function CleanSheet(props: { repo: string; onDone: () => void; onClose: (
               run: async () => {
                 for (const b of ok) {
                   try {
-                    await api.undoClean(props.repo, b);
+                    await api.undoClean(repo, b);
                   } catch (e) {
                     toast({ tone: "fail", title: t("Could not restore {branch}", { branch: b }), body: msg(e) });
                   }
@@ -557,7 +558,16 @@ export function RunAllSheet(props: {
  * never in the repository; runs, analyses and the closing session all read it.
  */
 export function ProjectSheet(props: { repo: string; repoName: string; onClose: () => void }) {
-  const [saved, { mutate: setSaved }] = createResource(() => props.repo, (p) => api.projectContext(p).catch(() => ""));
+  // A read that failed is not an empty context: saving over it would wipe the real one.
+  const [unread, setUnread] = createSignal<string | null>(null);
+  const [saved, { mutate: setSaved }] = createResource(
+    () => props.repo,
+    (p) =>
+      api.projectContext(p).catch((e) => {
+        setUnread(msg(e));
+        return "";
+      }),
+  );
   const [text, setText] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   const value = () => text() ?? saved() ?? "";
@@ -594,7 +604,7 @@ export function ProjectSheet(props: { repo: string; repoName: string; onClose: (
           <button type="button" class="btn btn-ghost" onClick={props.onClose}>
             {t("Cancel")}
           </button>
-          <button type="button" class="btn btn-primary" disabled={busy() || !dirty()} onClick={() => void save()}>
+          <button type="button" class="btn btn-primary" disabled={busy() || !dirty() || unread() !== null} title={unread() ? t("The project context could not be read, so it cannot be saved over: {why}", { why: unread()! }) : undefined} onClick={() => void save()}>
             {busy() ? <Spinner /> : null} {t("Save")}
           </button>
         </>

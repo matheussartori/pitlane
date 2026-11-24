@@ -432,6 +432,19 @@ pub struct NewQuestion {
     pub context: Option<String>,
 }
 
+impl NewQuestion {
+    /// The question as an agent's structured answer wrote it, without a recommendation that
+    /// points past its options. `ask` refuses such an index, which is right for a caller that can
+    /// fix its call (the CLI, the MCP tool); a handoff or an analysis cannot, and its questions
+    /// must not be lost over it.
+    pub fn sound(mut self) -> Self {
+        if self.recommended.is_some_and(|r| r >= self.options.len()) {
+            self.recommended = None;
+        }
+        self
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct NewCard {
     pub title: String,

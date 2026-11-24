@@ -141,6 +141,8 @@ pub struct Supervisor {
     /// Process groups of the one-shot calls in flight (a card's description, a report's digest):
     /// they are not sessions, but shutting down ends them too.
     one_shots: Mutex<std::collections::HashSet<u32>>,
+    /// The apps holding the daemon open (`Hold`): it ends with the last one.
+    pub holders: std::sync::atomic::AtomicUsize,
 }
 
 pub struct Subscription {
@@ -181,6 +183,7 @@ impl Supervisor {
             left_running_ms: AtomicU64::new(LEFT_RUNNING_MS),
             meta_writes: Mutex::new(()),
             one_shots: Mutex::default(),
+            holders: Default::default(),
         })
     }
 

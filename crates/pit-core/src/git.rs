@@ -46,6 +46,9 @@ impl Git {
         }
         cmd.args(args)
             .env("GIT_TERMINAL_PROMPT", "0")
+            // Its messages in English whatever the Mac speaks: some are read (a rejected push).
+            .env("LANGUAGE", "en")
+            .env("LC_MESSAGES", "C")
             .stdin(Stdio::null());
         cmd
     }
@@ -78,6 +81,41 @@ impl Git {
         }
         written?;
         Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_owned())
+    }
+
+    /// The first `limit` bytes of what git prints, and whether there was more: for output that
+    /// can be any size (a diff with a generated file in it) of which only a screenful is shown.
+    /// git is ended once the limit is read, so nothing waits on the rest. Fails on a non-zero
+    /// exit when the output was read whole.
+    pub fn run_head(&self, args: &[&str], limit: usize) -> Result<(String, bool)> {
+        use std::io::Read;
+        let mut child = self
+            .command(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("could not run git {}", args.join(" ")))?;
+        let mut bytes = Vec::new();
+        let mut stdout = child.stdout.take().context("no stdout")?;
+        let read = (&mut stdout).take(limit as u64 + 1).read_to_end(&mut bytes);
+        let more = bytes.len() > limit;
+        if more {
+            let _ = child.kill();
+        }
+        drop(stdout);
+        let status = child.wait()?;
+        read?;
+        if !more && !status.success() {
+            bail!("git {} failed", args.join(" "));
+        }
+        bytes.truncate(limit);
+        let mut s = String::from_utf8_lossy(&bytes).into_owned();
+        if !more {
+            while s.ends_with('\n') || s.ends_with('\r') {
+                s.pop();
+            }
+        }
+        Ok((s, more))
     }
 
     /// Runs git and returns stdout with the trailing newline removed. Fails on a non-zero exit.

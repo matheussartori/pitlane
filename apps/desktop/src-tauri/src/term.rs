@@ -40,6 +40,10 @@ pub fn app_sink(app: &AppHandle) -> Sink {
 }
 
 const KEEP_BYTES: usize = 256 * 1024;
+/// Output is handed to the window at most this often, and at most this much at a time: short
+/// enough that an echoed key is never felt, long enough that a flood is not an event per read.
+const FLUSH_EVERY: std::time::Duration = std::time::Duration::from_millis(6);
+const FLUSH_BYTES: usize = 64 * 1024;
 
 struct Term {
     info: TermInfo,
@@ -163,20 +167,46 @@ impl Terms {
         let info = TermInfo { id, session, cwd: cwd.to_owned(), label: label.to_owned(), exited: None };
         let buffer = Arc::new(Mutex::new(Kept::default()));
 
-        // Output: bytes into text, an incomplete UTF-8 sequence carried to the next read.
-        let (out, buf2) = (Arc::clone(&sink), Arc::clone(&buffer));
+        // Output. One thread reads the PTY; another turns what was read into text and hands it
+        // on at most every `FLUSH_EVERY`, so a program that floods the terminal (`yes`, a noisy
+        // build) is a few large events instead of thousands of tiny ones the window chokes on.
+        // The channel between them is bounded: when the window falls behind, the reader waits,
+        // the PTY fills and the program slows down, as in any terminal.
+        let (bytes_tx, bytes_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(32);
         std::thread::spawn(move || {
             let mut chunk = [0u8; 16 * 1024];
-            let mut carry: Vec<u8> = Vec::new();
             loop {
-                let n = match reader.read(&mut chunk) {
+                match reader.read(&mut chunk) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => n,
-                };
-                carry.extend_from_slice(&chunk[..n]);
+                    Ok(n) => {
+                        if bytes_tx.send(chunk[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let (out, buf2) = (Arc::clone(&sink), Arc::clone(&buffer));
+        std::thread::spawn(move || {
+            // An incomplete UTF-8 sequence is carried to the next flush.
+            let mut carry: Vec<u8> = Vec::new();
+            while let Ok(first) = bytes_rx.recv() {
+                carry.extend_from_slice(&first);
+                let until = std::time::Instant::now() + FLUSH_EVERY;
+                let mut open = true;
+                while carry.len() < FLUSH_BYTES {
+                    match bytes_rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())) {
+                        Ok(more) => carry.extend_from_slice(&more),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            open = false;
+                            break;
+                        }
+                    }
+                }
                 let valid = match std::str::from_utf8(&carry) {
                     Ok(_) => carry.len(),
-                    Err(e) if e.error_len().is_none() => e.valid_up_to(),
+                    Err(e) if e.error_len().is_none() && open => e.valid_up_to(),
                     Err(_) => carry.len(), // truly invalid bytes: let the lossy decode replace them
                 };
                 let text = String::from_utf8_lossy(&carry[..valid]).into_owned();
@@ -284,6 +314,12 @@ fn zsh_integration() -> Option<&'static str> {
 /// that session reaches the program in front (a dev server, an agent) and the jobs behind it;
 /// what is left a moment later is killed.
 fn end(mut terms: Vec<Term>) {
+    // A shell that already exited was reaped: its pid may be another process's by now, and
+    // there is nothing of it left to end.
+    terms.retain(|t| t.info.exited.is_none());
+    if terms.is_empty() {
+        return;
+    }
     let sids: Vec<i32> = terms.iter().filter_map(|t| t.child.process_id()).map(|p| p as i32).collect();
     signal_sessions(&sids, libc::SIGHUP);
     std::thread::sleep(std::time::Duration::from_millis(300));

@@ -182,20 +182,25 @@ export async function startAgents() {
     () => void refreshAgents(),
   );
   let last = 0;
+  // One poll at a time: when the daemon answers slower than the pace (a loaded Mac), a new poll
+  // would only drop the one on its way, and the list would never update.
+  let polling = false;
   setInterval(() => {
     setNow(Date.now());
     const busy = watching() || sessions().some(live);
     const every = busy ? 1500 : 15_000;
-    if (document.visibilityState === "visible" && Date.now() - last >= every) {
+    if (document.visibilityState === "visible" && !polling && Date.now() - last >= every) {
       last = Date.now();
-      void refreshAgents();
+      polling = true;
+      void refreshAgents().finally(() => (polling = false));
     }
   }, 500);
 }
 
 // ---------------------------------------------------------------- reading a session
 
-const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant", aside: "Aside" };
+/** A session's kind in words (English keys; drawn through `tx(…, "kind")`). */
+export const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant", aside: "Aside" };
 export function kindLabel(m: RunMeta): string {
   const k = tx(KIND[m.kind ?? "run"] ?? "Run", "kind");
   return m.kind === "run" || !m.kind ? ((m.round ?? 0) > 0 ? t("{kind} · round {n}", { kind: k, n: (m.round ?? 0) + 1 }) : k) : k;

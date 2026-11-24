@@ -51,15 +51,36 @@ pub async fn serve(cfg: Config) -> Result<()> {
     sup.start_perf();
     let recovered = sup.recover()?;
     eprintln!("pitd: listening on {} ({recovered} interrupted run(s) recovered)", sock.display());
+    // Asked to end (kill, a closed terminal, Ctrl+C), it stops what it started first: agents are
+    // in groups of their own and would otherwise go on with nobody watching.
+    use tokio::signal::unix::{SignalKind, signal};
+    let (mut term, mut int, mut hup) = (signal(SignalKind::terminate())?, signal(SignalKind::interrupt())?, signal(SignalKind::hangup())?);
     loop {
-        let (stream, _) = listener.accept().await?;
-        let sup = Arc::clone(&sup);
-        tokio::spawn(async move {
-            if let Err(e) = connection(sup, stream).await {
-                eprintln!("pitd: connection: {e:#}");
+        let accepted = tokio::select! {
+            a = listener.accept() => a,
+            _ = term.recv() => break,
+            _ = int.recv() => break,
+            _ = hup.recv() => break,
+        };
+        match accepted {
+            Ok((stream, _)) => {
+                let sup = Arc::clone(&sup);
+                tokio::spawn(async move {
+                    if let Err(e) = connection(sup, stream).await {
+                        eprintln!("pitd: connection: {e:#}");
+                    }
+                });
             }
-        });
+            // Out of descriptors, or a client that left while connecting: the daemon stays.
+            Err(e) => {
+                eprintln!("pitd: accept: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
     }
+    eprintln!("pitd: asked to end; stopping what it started");
+    sup.shutdown().await;
+    Ok(())
 }
 
 /// Takes `pitd.lock` in `home` for good, or fails when another daemon holds it.
@@ -123,9 +144,15 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
         if let Request::Hold = req {
             // The desktop app holds this connection while it is open. When it closes (quit,
             // crash, force quit), everything the daemon started stops and the daemon ends.
+            // More than one app can hold (the installed one and a dev build on the same home):
+            // the daemon goes with the last of them, not the first.
+            sup.holders.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             send(&mut write, &reply(Done { ok: true })?).await?;
             while let Ok(Some(_)) = lines.next_line().await {}
-            sup.shutdown().await;
+            if sup.holders.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                sup.shutdown().await;
+            }
+            return Ok(());
         }
         if let Request::Follow { run, from } = &req {
             // A follow takes over the connection until the run ends.

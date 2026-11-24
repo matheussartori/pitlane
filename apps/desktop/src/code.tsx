@@ -13,6 +13,8 @@ import { msg, cssHex } from "./format";
 const [rootSig, setRootSig] = createSignal<string | null>(null);
 /** The folder Code shows (a lane's worktree or the repository), once it was opened. */
 export const codeRoot = () => rootSig();
+/** Another repository: Code goes back to showing the repository itself, not a folder of the last one. */
+export const resetCodeRoot = () => setRootSig(null);
 let pending: { root: string; path: string; line?: number; col?: number } | null = null;
 
 /** Opens `path` under `root` in the Code tab, at a line when one is given. The app shows the Code

@@ -68,7 +68,8 @@ impl Supervisor {
                         ..next
                     },
                 ) {
-                    Ok(n) => self.emit(
+                    // The run has left the live list by now: `record` still writes to its timeline.
+                    Ok(n) => self.record(
                         id,
                         RunEvent::Note {
                             text: format!("Out of turns: continues as run {}.", n.id),
@@ -120,7 +121,7 @@ impl Supervisor {
                             ..next
                         },
                     ) {
-                        Ok(n) => self.emit(
+                        Ok(n) => self.record(
                             id,
                             RunEvent::Note {
                                 text: format!(

@@ -13,12 +13,12 @@ use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 
 use super::card::{add_to_briefing, last_words, prepare, resume_message, set_card_state, settle_card, block_card};
 use super::control::{Release, end_group, signal};
 use super::launch::{claude_dir, session_saved};
-use super::session::{AFTER_EXIT_READ, capture_stderr, stderr_tail};
+use super::session::{AFTER_EXIT_READ, Lines, capture_stderr, stderr_tail};
 use super::{StartOpts, Supervisor, home_dir};
 
 impl Supervisor {
@@ -215,16 +215,20 @@ impl Supervisor {
             .unwrap_or_default();
         let repo_for_prep = repo.clone();
         let prep = tokio::task::spawn_blocking(move || {
-            prepare(
-                &repo_for_prep,
-                card,
-                &home,
-                prev.as_ref().map(|p| (p, prev_texts.as_str())),
-                !no_brief,
-                into.as_deref(),
-                direct,
-                |t| me.emit(&rid, RunEvent::Note { text: t }),
-            )
+            // The lane's setup command ends when the run is stopped, and with the daemon.
+            let (watcher, watched_id) = (me.clone(), rid.clone());
+            pit_core::procs::watched(Arc::new(move || watcher.stop_requested(&watched_id)), || {
+                prepare(
+                    &repo_for_prep,
+                    card,
+                    &home,
+                    prev.as_ref().map(|p| (p, prev_texts.as_str())),
+                    !no_brief,
+                    into.as_deref(),
+                    direct,
+                    |t| me.emit(&rid, RunEvent::Note { text: t }),
+                )
+            })
         })
         .await??;
         // One agent per worktree: two in the same checkout would edit over each other. Checked
@@ -319,8 +323,8 @@ impl Supervisor {
             let id = id.clone();
             let finished = Arc::clone(&finished);
             tokio::spawn(async move {
-                let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                let mut lines = Lines::new(BufReader::new(stdout));
+                while let Some(line) = lines.next_line().await {
                     if let Some(ok) = me.read_line(&id, &mut raw, &line).await.done {
                         *finished.lock().unwrap() = Some(ok);
                     }
@@ -350,7 +354,10 @@ impl Supervisor {
         let tail = stderr_tail(err_task).await;
         let finished_ok = *finished.lock().unwrap();
         let stopped = self.stop_requested(&id);
+        // A window that refused it mid-run does not undo a session that went on (extra usage, a
+        // model fallback) and ended with its handoff: only an unfinished one moves to the next option.
         let limited = !stopped
+            && finished_ok != Some(true)
             && self.live()
                 .get(&id)
                 .is_some_and(|l| l.limited);
@@ -618,7 +625,9 @@ impl Supervisor {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .get(&id)
-                    .filter(|l| !l.turn)
+                    // Still the process that was closed: a message since then reopened the
+                    // session under the same id, and that one is not this watcher's to end.
+                    .filter(|l| !l.turn && l.meta.pid == pid)
                     .and_then(|l| l.meta.pid);
                 if let Some(pid) = lingering {
                     end_group(pid);

@@ -3,7 +3,6 @@
 //! fixes nothing.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -87,56 +86,15 @@ pub const PROOF_LIMIT: std::time::Duration = std::time::Duration::from_secs(20 *
 /// group of its own, killed whole when it ends, when it takes longer than `PROOF_LIMIT`, or when
 /// `cancelled` says so (a person stopped the run): a watcher or server it starts never lingers.
 pub fn run_proof(worktree: &Path, command: &str, cancelled: &dyn Fn() -> bool) -> Proof {
-    use std::os::unix::process::CommandExt;
     let t = Instant::now();
     let done = |ok: bool, code: Option<i32>, text: &str| Proof { command: command.to_owned(), ok, code, duration_ms: t.elapsed().as_millis() as u64, tail: tail(text, 40, 4000) };
-    // Output to a file, not a pipe: a child that keeps the pipe open cannot hold the proof.
-    let out = match tempfile::NamedTempFile::new() {
-        Ok(f) => f,
-        Err(e) => return done(false, None, &format!("could not run it: {e}")),
-    };
-    let child = out.reopen().and_then(|f| {
-        Command::new("sh")
-            .arg("-c")
-            // Grouped, so stderr of every part of a compound command lands in the output.
-            .arg(format!("{{ {command}\n}} 2>&1"))
-            .current_dir(worktree)
-            .stdin(Stdio::null())
-            .stdout(f)
-            .process_group(0)
-            .spawn()
-    });
-    let mut child = match child {
-        Ok(c) => c,
-        Err(e) => return done(false, None, &format!("could not run it: {e}")),
-    };
-    let group = child.id();
-    let kill_group = |sig: &str| {
-        let _ = Command::new("kill").args([sig, "--", &format!("-{group}")]).stderr(Stdio::null()).status();
-    };
-    let (status, why) = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break (Some(st), None),
-            Ok(None) if cancelled() => break (None, Some("stopped".to_owned())),
-            Ok(None) if t.elapsed() > PROOF_LIMIT => break (None, Some(format!("took longer than {} minutes; killed", PROOF_LIMIT.as_secs() / 60))),
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            Err(e) => break (None, Some(format!("could not wait for it: {e}"))),
-        }
-    };
-    kill_group("-TERM");
-    if status.is_none() {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-    kill_group("-KILL");
-    let _ = child.wait();
-    let mut text = std::fs::read_to_string(out.path()).unwrap_or_default();
-    match (status, why) {
-        (Some(st), _) => done(st.success(), st.code(), &text),
-        (None, Some(w)) => {
-            text.push_str(&format!("\n[pitlane] {w}"));
-            done(false, None, &text)
-        }
-        (None, None) => done(false, None, &text),
+    match crate::procs::run_shell(worktree, command, PROOF_LIMIT, cancelled) {
+        Err(e) => done(false, None, &format!("could not run it: {e}")),
+        Ok(ran) => match (ran.status, ran.why) {
+            (Some(st), _) => done(st.success(), st.code(), &ran.output),
+            (None, Some(w)) => done(false, None, &format!("{}\n[pitlane] {w}", ran.output)),
+            (None, None) => done(false, None, &ran.output),
+        },
     }
 }
 
@@ -199,12 +157,10 @@ pub fn lane_diff(repo: &Repo, branch: &str, limit_bytes: usize, from: Option<&st
             Some(FileStat { path: p.to_owned(), added: a.parse().unwrap_or(0), removed: r.parse().unwrap_or(0) })
         })
         .collect();
-    let mut patch = repo.git.run(&["diff", "--no-color", "--no-ext-diff", &range])?;
-    let truncated = patch.len() > limit_bytes;
-    if truncated {
-        let at = (0..=limit_bytes).rev().find(|i| patch.is_char_boundary(*i)).unwrap_or(0);
-        patch.truncate(at);
-    }
+    // The a/ and b/ prefixes spelled out: the patch is parsed, and `diff.noprefix` or
+    // `diff.mnemonicPrefix` in someone's git config would change them.
+    let (patch, truncated) =
+        repo.git.run_head(&["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &range], limit_bytes)?;
     Ok(LaneDiff { base, head, files, patch, truncated })
 }
 
@@ -369,6 +325,7 @@ pub fn read_judge(stdout: &str) -> Result<(Judgement, Option<f64>, Option<u64>)>
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
     use super::*;
 
     #[test]

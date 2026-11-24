@@ -52,24 +52,53 @@ pub(super) fn program_words(part: &str) -> impl Iterator<Item = &str> {
         .skip_while(|w| w.chars().all(|c| "{}()!".contains(c)) || (w.contains('=') && !w.starts_with('-')))
 }
 
+/// Whether these words are only redirects and their targets (`> f`, `2>/dev/null`), after the
+/// descriptor number a split `2>&1` leaves in front.
+fn only_redirects(words: &[&str]) -> bool {
+    let mut words = words.iter().enumerate();
+    while let Some((i, w)) = words.next() {
+        let mark = w.trim_start_matches(|c: char| c.is_ascii_digit());
+        if mark.is_empty() {
+            if i > 0 {
+                return false;
+            }
+        } else if !mark.starts_with(['>', '<']) {
+            return false;
+        } else if mark.chars().all(|c| "<>".contains(c)) {
+            words.next(); // the target stands apart: `> f`
+        }
+    }
+    true
+}
+
 /// The simple commands of a Bash line, split on `;`, `&`, `|`, `&&`, `||` and newlines, or
-/// `None` when it runs a command inside another (`$(...)`, backticks, process substitution),
-/// which no prefix can vouch for. A separator inside quotes splits too: that only ever asks more.
+/// `None` when no prefix can vouch for it: it runs a command inside another (`$(...)`, backticks,
+/// process substitution), defines a function (`ls () { rm x; }; ls` runs the body under the name
+/// of an allowed command), or opens a command with a redirect (`</dev/null rm x`). A separator
+/// inside quotes splits too: that only ever asks more.
 pub(super) fn simple_commands(cmd: &str) -> Option<Vec<&str>> {
     if cmd.contains('`') || cmd.contains("$(") || cmd.contains("<(") || cmd.contains(">(") {
         return None;
     }
-    Some(
-        cmd.split(['\n', ';', '&', '|'])
-            .map(str::trim)
-            // What is left of a group or a redirect after the split is not a command of its own.
-            .filter(|p| {
-                program_words(p).next().is_some_and(|w| {
-                    !w.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with(['>', '<']) && !w.chars().all(|c| c.is_ascii_digit())
-                })
-            })
-            .collect(),
-    )
+    let mut parts = Vec::new();
+    for part in cmd.split(['\n', ';', '&', '|']).map(str::trim) {
+        let words: Vec<&str> = program_words(part).collect();
+        let Some(first) = words.first() else { continue };
+        if *first == "function" || words.get(1).is_some_and(|w| w.starts_with('(')) {
+            return None;
+        }
+        // What the split leaves of a redirect (`&> f`, the `1 > f` of `2>&1 > f`) is not a command
+        // of its own, as long as it is only that: marks and their targets. A word after them would run.
+        let mark = first.trim_start_matches(|c: char| c.is_ascii_digit());
+        if mark.is_empty() || mark.starts_with(['>', '<']) {
+            if !only_redirects(&words) {
+                return None;
+            }
+            continue;
+        }
+        parts.push(part);
+    }
+    Some(parts)
 }
 
 /// Whether a tool call asks to run outside Claude Code's sandbox.

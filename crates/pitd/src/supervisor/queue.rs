@@ -335,7 +335,8 @@ impl Supervisor {
             let (repo, branch, target) = (job.repo.clone(), job.branch.clone(), job.target.clone());
             let result = tokio::task::spawn_blocking(
                 move || -> Result<(pit_core::queue::Outcome, Option<u32>)> {
-                    let out = pit_core::queue::ship(&repo, &home, &ph, &branch, &target)?;
+                    // The flow's ship check runs watched: under a limit, and ended with the daemon.
+                    let out = pit_core::procs::watched(Arc::new(|| false), || pit_core::queue::ship(&repo, &home, &ph, &branch, &target))?;
                     let card = match &out {
                         Outcome::Shipped { .. } => {
                             pit_core::queue::move_card(&repo, &home, &ph, &branch, &target)?

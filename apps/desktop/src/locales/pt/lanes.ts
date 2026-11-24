@@ -183,6 +183,7 @@ export default {
   "{name}: project context": "{name}: contexto do projeto",
   "Context for every session": "Contexto para todas as sessões",
   "The project context was not saved": "O contexto do projeto não foi salvo",
+  "The project context could not be read, so it cannot be saved over: {why}": "O contexto do projeto não pôde ser lido, então não dá para salvar por cima: {why}",
   "E.g. the games live in ../amity-games: push the lane there before publishing it to the dev channel. Never merge into main.": "Ex.: os jogos ficam em ../amity-games: faça push da lane lá antes de publicar no canal dev. Nunca faça merge em main.",
   "Every run, analysis and closing session of this project reads it. It can allow what the general rules forbid, like pushing a lane or deploying to dev. Kept with the board on this Mac, not in the repository.": "Toda execução, análise e sessão de fechamento deste projeto lê isto. Pode liberar o que as regras gerais proíbem, como fazer push de uma lane ou deploy em dev. Fica com o board neste Mac, não no repositório.",
   "Each lane gets the same branch in these repositories, lands there with it, and ships to dev and main together with it.": "Cada lane ganha a mesma branch nesses repositórios, entra lá junto e vai para dev e main junto com ela.",

@@ -3,8 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::bail;
-use pit_core::actions::{self, CleanOutcome, CleanPlan, NewOptions, NewReport, ShipPlan, ShipReport, UndoReport};
+use pit_core::actions::{self, CleanOutcome, CleanPlan, NewOptions, NewReport, ShipPlan, UndoReport};
 use pit_core::lanes::{self, Yard, YardOptions};
 use pit_core::{default_homes, trash};
 
@@ -17,33 +16,14 @@ pub(crate) async fn yard(path: String, fetch: bool) -> CmdResult<Yard> {
 
 #[tauri::command]
 pub(crate) async fn new_lane(path: String, branch: String) -> CmdResult<NewReport> {
-    blocking(move || actions::new_lane(&open(&path)?, branch.trim(), NewOptions { fetch: true, setup: true }))
+    // The flow's setup command runs watched: in a group of its own, under a limit, ended when the app quits.
+    blocking(move || pit_core::procs::watched(std::sync::Arc::new(|| false), || actions::new_lane(&open(&path)?, branch.trim(), NewOptions { fetch: true, setup: true })))
         .await
 }
 
 #[tauri::command]
 pub(crate) async fn ship_plan(path: String, branch: String, to: Option<String>) -> CmdResult<ShipPlan> {
     blocking(move || actions::plan_ship(&open(&path)?, &branch, to.as_deref(), true)).await
-}
-
-/// Ships only if neither the lane nor the target moved since the user reviewed the plan.
-#[tauri::command]
-pub(crate) async fn ship(
-    path: String,
-    branch: String,
-    to: String,
-    sha: String,
-    target_sha: String,
-) -> CmdResult<ShipReport> {
-    blocking(move || {
-        let repo = open(&path)?;
-        let plan = actions::plan_ship(&repo, &branch, Some(&to), true)?;
-        if plan.sha != sha || plan.target_sha != target_sha {
-            bail!("{branch} or {to} moved since you reviewed it. Review the new plan.");
-        }
-        actions::execute_ship(&repo, &plan)
-    })
-    .await
 }
 
 #[tauri::command]

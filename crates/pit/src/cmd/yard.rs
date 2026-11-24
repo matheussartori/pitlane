@@ -32,7 +32,7 @@ pub fn print_yard(y: &Yard) {
             Cell::plain("NEXT"),
         ]];
         let header_len = rows.len();
-        let build = |compact: bool| -> Vec<[Cell; 9]> { y.lanes.iter().map(|l| row(l, integ, compact)).collect() };
+        let build = |compact: bool| -> Vec<[Cell; 9]> { y.lanes.iter().map(|l| row(l, integ, &y.production, compact)).collect() };
         rows.extend(build(false));
         let measure = |rows: &[[Cell; 9]]| -> Vec<usize> {
             (0..9).map(|c| rows.iter().map(|r| r[c].text.chars().count()).max().unwrap_or(0)).collect()
@@ -118,7 +118,7 @@ fn remote_cell(l: &Lane) -> Cell {
     cell
 }
 
-fn row(l: &Lane, integ: Option<&str>, compact: bool) -> [Cell; 9] {
+fn row(l: &Lane, integ: Option<&str>, production: &str, compact: bool) -> [Cell; 9] {
     let wt = match &l.worktree {
         None => Cell::muted("–"),
         Some(w) if compact => {
@@ -151,7 +151,7 @@ fn row(l: &Lane, integ: Option<&str>, compact: bool) -> [Cell; 9] {
         Status::CanDelete => (Cell::new(DONE, "✓ can delete"), Cell::plain("pit clean")),
         Status::Shipped => (Cell::new(DONE, "✓ shipped"), Cell::muted("–")),
         Status::ShippedDirty => (Cell::new(ACCENT, "● shipped, uncommitted"), Cell::new(ACCENT, "commit or discard")),
-        Status::NeedsProduction => (Cell::new(ACCENT, "● needs ship"), Cell::new(ACCENT, "ship → main")),
+        Status::NeedsProduction => (Cell::new(ACCENT, "● needs ship"), Cell::new(ACCENT, &format!("ship → {production}"))),
         Status::InProgress => (
             Cell::new(RUN, "▸ in progress"),
             match (integ, l.worktree.as_ref().map_or(0, |w| w.dirty)) {

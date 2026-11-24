@@ -15,11 +15,11 @@ use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 
 use crate::supervisor::control::{Release, end_group};
 use crate::supervisor::launch::{mode_for, read_only_args};
-use crate::supervisor::session::{AFTER_EXIT_READ, capture_stderr, stderr_tail};
+use crate::supervisor::session::{AFTER_EXIT_READ, Lines, capture_stderr, stderr_tail};
 use crate::supervisor::{Supervisor, home_dir};
 
 mod analysis;
@@ -137,7 +137,7 @@ impl Supervisor {
             self.update(&id, |_| {});
             let err_task = capture_stderr(child.stderr.take().context("no stderr")?, self.dir(&id).join("stderr.log"));
             let mut raw = self.raw_log(&id)?;
-            let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
+            let mut lines = Lines::new(BufReader::new(child.stdout.take().context("no stdout")?));
             let mut last = None::<String>;
             let mut ok = None::<bool>;
             let pid = child.id();
@@ -146,7 +146,7 @@ impl Supervisor {
             let mut status = None;
             loop {
                 let line = tokio::select! {
-                    l = lines.next_line() => match l { Ok(Some(l)) => l, _ => break },
+                    l = lines.next_line() => match l { Some(l) => l, None => break },
                     st = child.wait(), if status.is_none() => { status = Some(st?); continue; }
                     _ = tokio::time::sleep(AFTER_EXIT_READ), if status.is_some() => break,
                 };

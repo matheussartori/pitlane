@@ -33,6 +33,23 @@ const QUIT_WAIT: Duration = Duration::from_secs(12);
 
 type CmdResult<T> = Result<T, String>;
 
+/// Pitlane's commands answer its own window only. The Preview and the Code tab are webviews of
+/// the same app that load pages served on this machine (a lane's dev server, code an agent
+/// wrote, VS Code's extensions): without this a script in one of them could open a terminal or
+/// start a run as you, outside the sandbox the agents work in.
+fn only_main<F>(commands: F) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static
+where
+    F: Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static,
+{
+    move |invoke| {
+        if invoke.message.webview().label() != "main" {
+            invoke.resolver.reject("this is not open to a page inside Pitlane, only to Pitlane itself");
+            return true;
+        }
+        commands(invoke)
+    }
+}
+
 pub(crate) async fn blocking<T, F>(f: F) -> CmdResult<T>
 where
     T: Send + 'static,
@@ -80,7 +97,7 @@ pub fn run() {
                     let _ = w.hide();
                 }
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(only_main(tauri::generate_handler![
             runs::perf,
             runs::perf_set,
             runs::perf_hold,
@@ -101,7 +118,6 @@ pub fn run() {
             lanes::yard,
             lanes::new_lane,
             lanes::ship_plan,
-            lanes::ship,
             lanes::clean_plan,
             lanes::clean,
             lanes::undo_clean,
@@ -188,7 +204,7 @@ pub fn run() {
             runs::sessions_list,
             accounts::mcp_connected,
             accounts::quota
-        ])
+        ]))
         .build(tauri::generate_context!())
         .expect("Pitlane failed to start")
         .run(|app, event| {
@@ -206,6 +222,8 @@ pub fn run() {
                 }
                 app.state::<term::Terms>().close_all();
                 app.state::<vscode::Vscode>().stop();
+                // A lane's setup command the app started (New lane) and has not finished.
+                pit_core::procs::end_shells();
                 // The Whisper model's Metal buffers must go before the C++ teardown at exit, or
                 // ggml aborts and macOS shows "Pitlane quit unexpectedly". If a transcription
                 // still holds it, leave without running that teardown at all.

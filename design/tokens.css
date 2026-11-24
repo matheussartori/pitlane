@@ -14,12 +14,15 @@
   --color-rule-strong: oklch(39% 0.005 255);
 
   /* Ink. */
-  --color-ink: oklch(94% 0.002 90);
-  --color-ink-2: oklch(80% 0.002 255);
-  --color-muted: oklch(66% 0.003 255);
+  --color-ink: oklch(95% 0.002 90);
+  --color-ink-2: oklch(83% 0.002 255);
+  --color-muted: oklch(70% 0.003 255);
   --color-term-ink: oklch(90.5% 0.003 90); /* terminal and agent text: a step under UI ink, as bright as Warp's (about #dededd) */
-  --color-term-code: oklch(80% 0.085 285); /* code and links in the agent's words: Claude Code's lavender */
+  --color-term-code: oklch(79% 0.1 268); /* code and links in the agent's words: Claude Code's lavender */
   --color-term-select: oklch(37% 0.006 255);
+  /* Reading text (the terminal, the agent log, a diff) is drawn as Warp draws it: the stroke a little fuller with a soft edge, the "slight blur" that
+   * rests the eye. A half-pixel bloom in the text's own colour; never on UI labels (24 nov 2026). */
+  --text-soft: 0 0 0.55px color-mix(in oklab, currentColor 62%, transparent);
   /* The terminal's 16 colours, as Warp tunes them: calm, each normal and bright one distinct. */
   --ansi-black: oklch(45% 0.004 255); --ansi-bright-black: oklch(62% 0.004 255);
   --ansi-red: oklch(72% 0.15 25); --ansi-bright-red: oklch(80% 0.11 25);
@@ -51,29 +54,31 @@
   --color-del-strong: oklch(41% 0.1 25);
 
   /* Code. */
-  --code-keyword: oklch(80% 0.09 285);
-  --code-string: oklch(84% 0.1 95);
-  --code-number: oklch(80% 0.09 200);
-  --code-fn: oklch(86% 0.06 235);
+  /* Calm and few, as Claude Code colours a diff in Warp: names in blue, values in teal, words in violet, text in green. */
+  --code-keyword: oklch(78% 0.1 285);
+  --code-string: oklch(82% 0.09 150);
+  --code-number: oklch(81% 0.08 195);
+  --code-fn: oklch(79% 0.1 252);
   --code-comment: var(--color-muted);
 
   /* Type. One family at small sizes: Geist (UI), Geist Mono (code, terminal, figures). A dense tool, not a page. */
   --font-display: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-outlier: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-outlier: "Hack", "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace; /* Hack, the terminal's face (Warp's), is the one mono everywhere since 24 nov 2026: a branch name, a diff and the shell read alike */
   --font-mono: var(--font-outlier);
 
-  /* Scale: 14px is the UI default (Warp-sized, not a cramped IDE); nothing in the app is larger than 20. Prose reads at --text-lg. */
-  --text-xs: 0.75rem;     /* 12: meta, kbd, figures under a row */
-  --text-sm: 0.8125rem;   /* 13: secondary rows, labels */
-  --text-md: 0.875rem;    /* 14: UI default */
-  --text-lg: 0.9375rem;   /* 15: prose (specs, walkthroughs) */
-  --text-xl: 1rem;        /* 16: sheet and panel titles */
-  --text-2xl: 1.125rem;   /* 18: screen titles */
-  --text-3xl: 0.8125rem;  /* 13: lane numbers, in mono */
+  /* Scale (revised 24 nov 2026, the reading pass): every step half a pixel up and nothing under 12.5, so the small text that fills
+   * a dense screen (meta, sub-lines, labels) reads without leaning in; nothing in the app is larger than 20. Prose reads at --text-lg. */
+  --text-xs: 0.78125rem;  /* 12.5: meta, kbd, figures under a row */
+  --text-sm: 0.84375rem;  /* 13.5: secondary rows, labels */
+  --text-md: 0.90625rem;  /* 14.5: UI default */
+  --text-lg: 0.96875rem;  /* 15.5: prose (specs, walkthroughs) */
+  --text-xl: 1.0625rem;   /* 17: sheet and panel titles */
+  --text-2xl: 1.1875rem;  /* 19: screen titles */
+  --text-3xl: 0.84375rem; /* 13.5: lane numbers, in mono */
   --text-display: 1.25rem; /* 20: an empty state's head */
-  --weight-regular: 400; --weight-strong: 500; --weight-display: 600;
-  --leading-tight: 1.2; --leading-ui: 1.45; --leading-prose: 1.6;
+  --weight-regular: 430; --weight-strong: 540; --weight-display: 640; /* Geist is variable: a little fuller than 400/500/600, as Warp's text is; Hack has 400 and 700 only, so bold mono is written as 700 */
+  --leading-tight: 1.2; --leading-ui: 1.5; --leading-prose: 1.6;
   --tracking-display: -0.011em;
 
   /* Space: 4px grid. */
@@ -113,12 +118,12 @@
   --color-frame: oklch(93.8% 0.002 255); /* the window around the content panel */
   --color-rule: oklch(90.5% 0.002 255);
   --color-rule-strong: oklch(83% 0.003 255);
-  --color-ink: oklch(20% 0.003 255);
-  --color-ink-2: oklch(38% 0.003 255);
-  --color-muted: oklch(50% 0.004 255);
-  --color-term-ink: oklch(24% 0.003 255);
+  --color-ink: oklch(17% 0.003 255);
+  --color-ink-2: oklch(33% 0.003 255);
+  --color-muted: oklch(45% 0.004 255);
+  --color-term-ink: oklch(19% 0.003 255);
   --color-term-select: oklch(89% 0.004 255);
-  --color-term-code: oklch(47% 0.15 285);
+  --color-term-code: oklch(50% 0.16 266);
   --ansi-black: oklch(30% 0.004 255); --ansi-bright-black: oklch(48% 0.004 255);
   --ansi-red: oklch(52% 0.19 25); --ansi-bright-red: oklch(58% 0.17 25);
   --ansi-green: oklch(50% 0.14 150); --ansi-bright-green: oklch(57% 0.13 150);
@@ -137,14 +142,14 @@
   --color-fail: oklch(52% 0.19 25);
   --color-fail-wash: oklch(95% 0.03 25);
   --color-scrim: oklch(22% 0.02 255 / 0.32); /* behind a modal */
-  --color-add: oklch(94% 0.045 152);
+  --color-add: oklch(94.5% 0.06 148);
   --color-add-strong: oklch(86% 0.09 152);
-  --color-del: oklch(94% 0.035 25);
+  --color-del: oklch(93% 0.04 20);
   --color-del-strong: oklch(87% 0.08 25);
-  --code-keyword: oklch(47% 0.15 285);
-  --code-string: oklch(50% 0.11 85);
-  --code-number: oklch(48% 0.11 210);
-  --code-fn: oklch(44% 0.11 245);
+  --code-keyword: oklch(48% 0.16 285);
+  --code-string: oklch(49% 0.11 152);
+  --code-number: oklch(54% 0.095 195);
+  --code-fn: oklch(50% 0.16 258);
   --shadow-pop: 0 0 0 1px var(--color-rule), 0 4px 16px oklch(20% 0.02 255 / 0.10);
 }
 @media (prefers-color-scheme: light) {
@@ -157,12 +162,12 @@
     --color-frame: oklch(93.8% 0.002 255); /* the window around the content panel */
     --color-rule: oklch(90.5% 0.002 255);
     --color-rule-strong: oklch(83% 0.003 255);
-    --color-ink: oklch(20% 0.003 255);
-    --color-ink-2: oklch(38% 0.003 255);
-    --color-muted: oklch(50% 0.004 255);
-  --color-term-ink: oklch(24% 0.003 255);
+    --color-ink: oklch(17% 0.003 255);
+    --color-ink-2: oklch(33% 0.003 255);
+    --color-muted: oklch(45% 0.004 255);
+  --color-term-ink: oklch(19% 0.003 255);
   --color-term-select: oklch(89% 0.004 255);
-  --color-term-code: oklch(47% 0.15 285);
+  --color-term-code: oklch(50% 0.16 266);
     --ansi-black: oklch(30% 0.004 255); --ansi-bright-black: oklch(48% 0.004 255);
     --ansi-red: oklch(52% 0.19 25); --ansi-bright-red: oklch(58% 0.17 25);
     --ansi-green: oklch(50% 0.14 150); --ansi-bright-green: oklch(57% 0.13 150);
@@ -181,14 +186,14 @@
     --color-fail: oklch(52% 0.19 25);
     --color-fail-wash: oklch(95% 0.03 25);
     --color-scrim: oklch(22% 0.02 255 / 0.32); /* behind a modal */
-    --color-add: oklch(94% 0.045 152);
+    --color-add: oklch(94.5% 0.06 148);
     --color-add-strong: oklch(86% 0.09 152);
-    --color-del: oklch(94% 0.035 25);
+    --color-del: oklch(93% 0.04 20);
     --color-del-strong: oklch(87% 0.08 25);
-    --code-keyword: oklch(47% 0.15 285);
-    --code-string: oklch(50% 0.11 85);
-    --code-number: oklch(48% 0.11 210);
-    --code-fn: oklch(44% 0.11 245);
+    --code-keyword: oklch(48% 0.16 285);
+    --code-string: oklch(49% 0.11 152);
+    --code-number: oklch(54% 0.095 195);
+    --code-fn: oklch(50% 0.16 258);
     --shadow-pop: 0 0 0 1px var(--color-rule), 0 4px 16px oklch(20% 0.02 255 / 0.10);
   }
 }

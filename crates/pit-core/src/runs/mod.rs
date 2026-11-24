@@ -318,9 +318,20 @@ mod tests {
             "npm test > out.txt",
             "npm test &> log",
             "npm test 2>&1 >| f",
+            // A redirect in front of a command is still a command.
+            "npm test; </dev/null rm -rf ~",
+            "npm test; 2>/dev/null rm -rf ~",
+            "npm test; < /dev/null rm -rf ~",
+            "npm test &>/dev/null rm -rf ~",
         ] {
             assert!(!rule_allows(npm, "Bash", &bash(sneaky)), "{sneaky}");
         }
+        // A function named after the allowed command runs its own body.
+        for sneaky in ["ls () { rm -rf ~/x; }; ls", "ls ( ) { rm -rf ~/x; }; ls", "function ls { rm -rf ~/x; }; ls"] {
+            assert!(!rule_allows("Bash(ls:*)", "Bash", &bash(sneaky)), "{sneaky}");
+        }
+        assert!(rule_allows(npm, "Bash", &bash("npm test &>/dev/null")));
+        assert!(rule_allows(npm, "Bash", &bash("npm test &> /dev/null")));
         assert!(rule_allows(npm, "Bash", &bash("npm test && npm test -- b")));
         assert!(rule_allows(npm, "Bash", &bash("npm test 2>&1")));
         assert!(rule_allows(npm, "Bash", &bash("npm test > /dev/null 2>&1")));

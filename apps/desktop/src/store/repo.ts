@@ -75,7 +75,7 @@ export async function loadRuns() {
   try {
     const r = await api.runs(path);
     if (gen !== runsGen || path !== repo()) return;
-    setRuns(r);
+    setRuns((old) => keepUnchanged(old, r));
     for (const m of r) if (isLive(m.state)) void api.runFollow(m.id, 0).catch(() => {});
   } catch {
     // Keep what was last read (the daemon may be restarting): an empty list would tell Run all

@@ -259,8 +259,9 @@ export function openQuestions(cards: Card[]): OpenQuestion[] {
 // the same questions, so they keep their DOM (and whatever is being typed into it).
 const asked = new WeakMap<Card, OpenQuestion[]>();
 
-/** The fresh cards, reusing each old object whose content did not change. */
-export function keepUnchanged(old: Card[] | null, fresh: Card[]): Card[] {
+/** A fresh list (cards, runs), reusing each old object whose content did not change: what is
+ *  drawn from an unchanged one keeps its DOM, its focus and its hover across a poll. */
+export function keepUnchanged<T extends { id: number | string }>(old: T[] | null, fresh: T[]): T[] {
   if (!old) return fresh;
   const before = new Map(old.map((c) => [c.id, c]));
   const next = fresh.map((c) => {

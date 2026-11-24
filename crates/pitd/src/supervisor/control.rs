@@ -283,6 +283,8 @@ impl Supervisor {
         for pid in self.one_shots.lock().unwrap().drain() {
             signal(pid, libc::SIGKILL);
         }
+        // A proof, a worktree's setup or a ship's check still running.
+        pit_core::procs::end_shells();
         self.perf.release_all();
         // The app's code-server, when the app went without closing it (a crash, a force quit).
         let home = self.cfg.home.clone();

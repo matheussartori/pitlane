@@ -157,7 +157,7 @@ impl Supervisor {
         // sessions (`INBOUND`).
         let mut settings = serde_json::Map::new();
         if prep.sandbox && !autopilot {
-            settings.extend(sandbox_settings(&prep.worktree, prep.related.iter().map(|l| l.worktree.as_path()), &prep.write, prep.ask_unsandboxed));
+            settings.extend(sandbox_settings(&self.cfg.home, &prep.worktree, prep.related.iter().map(|l| l.worktree.as_path()), &prep.write, prep.ask_unsandboxed));
         }
         if let Some(helper) = &choice.api_key_helper {
             settings.insert("apiKeyHelper".into(), helper.clone().into());
@@ -395,8 +395,12 @@ pub(super) fn read_only_args(mode: &str) -> Vec<String> {
     .to_vec()
 }
 
-/// Playwright's MCP server, pinned, headless and with a throwaway profile: the agent's browser
-/// when the repository turns it on. Its tools are `mcp__browser__*`.
+/// What Pitlane keeps in its home besides the worktrees (`wt`): never an agent's to write.
+const OURS: &[&str] = &[
+    "boards", "runs", "profiles", "index", "reports", "zsh", "code-server", "queue.json", "queue.paused", "routing.toml", "desktop.json", "performance.json", "presence.json",
+    "pitd.sock", "pitd.lock", "pitd.log", "trash.jsonl", ".trash.lock",
+];
+
 /// What stays read-only in your home: where a write becomes code that runs as you later, outside
 /// the sandbox (shell startup, git, launch agents, binaries on the PATH, Claude Code and the other
 /// agents' CLIs' settings), or a login someone could take over.
@@ -418,7 +422,7 @@ const KEEP_OUT: &[&str] = &[
 /// classifier still judges each command. A command that needs more fails, unless the repository
 /// turns on `ask_unsandboxed`: then it asks you, marked as unsandboxed, and Pitlane's "always"
 /// rules never answer that question for you.
-pub(super) fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
+pub(super) fn sandbox_settings<'a>(pitlane: &Path, worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
     let home = home_dir();
     let at_home = |p: &str| home.join(p).to_string_lossy().into_owned();
     let tmp = std::env::temp_dir().to_string_lossy().into_owned();
@@ -428,9 +432,10 @@ pub(super) fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<It
         None => p.clone(),
     }));
     let mut deny: Vec<String> = KEEP_OUT.iter().map(|c| at_home(c)).collect();
-    let pitlane = home.join(".pitlane");
-    let mut ours: Vec<PathBuf> = ["boards", "runs", "profiles", "index", "reports", "zsh"].iter().map(|n| pitlane.join(n)).collect();
-    ours.extend(fs::read_dir(&pitlane).into_iter().flatten().flatten().map(|e| e.path()));
+    // Pitlane's own files, by name and not only as found now: one that does not exist yet (the
+    // queue before the first ship, the routing before the first account) is still not an agent's to write.
+    let mut ours: Vec<PathBuf> = OURS.iter().map(|n| pitlane.join(n)).collect();
+    ours.extend(fs::read_dir(pitlane).into_iter().flatten().flatten().map(|e| e.path()));
     ours.sort();
     ours.dedup();
     deny.extend(ours.iter().filter(|p| p.file_name().is_some_and(|n| n != "wt")).map(|p| p.to_string_lossy().into_owned()));
@@ -467,6 +472,8 @@ pub(super) fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<It
 const BROWSER_MCP: &str = "@playwright/mcp@0.0.84";
 const BROWSER_TOOLS: &str = "mcp__browser";
 
+/// Playwright's MCP server, pinned, headless and with a throwaway profile: the agent's browser
+/// when the repository turns it on. Its tools are `mcp__browser__*`.
 fn browser_server() -> Value {
     serde_json::json!({ "command": "npx", "args": ["-y", BROWSER_MCP, "--headless", "--isolated"] })
 }
@@ -495,14 +502,14 @@ mod your_claude_tests {
     #[test]
     fn sandbox_never_asks_unless_the_repository_says_so() {
         let wt = std::env::temp_dir();
-        let s = Value::Object(sandbox_settings(&wt, std::iter::empty(), &["~/.mytool".into()], false));
+        let s = Value::Object(sandbox_settings(&wt.join(".pitlane"), &wt, std::iter::empty(), &["~/.mytool".into()], false));
         assert_eq!(s["sandbox"]["allowUnsandboxedCommands"], false);
         assert!(s.get("permissions").is_none());
         let write = s["sandbox"]["filesystem"]["allowWrite"].as_array().unwrap();
         for p in [".mytool", ""] {
             assert!(write.iter().any(|w| w == &Value::from(home_dir().join(p).to_string_lossy().into_owned())), "{p}");
         }
-        let asks = Value::Object(sandbox_settings(&wt, std::iter::empty(), &[], true));
+        let asks = Value::Object(sandbox_settings(&wt.join(".pitlane"), &wt, std::iter::empty(), &[], true));
         assert_eq!(asks["sandbox"]["allowUnsandboxedCommands"], true);
         assert_eq!(asks["permissions"]["ask"][0], "Bash(dangerouslyDisableSandbox:true)");
     }

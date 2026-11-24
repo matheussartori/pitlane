@@ -63,6 +63,10 @@ pub fn ensure(resources: Option<&Path>, pitlane_home: &Path) -> Result<PathBuf> 
     let root = dir(pitlane_home);
     let target = root.join(&version);
     let bin = target.join("bin/code-server");
+    // One unpack at a time: the prewarm and the Code tab both get here on a first launch, and a
+    // second caller would wipe the folder the first one's tar is writing.
+    static UNPACKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = UNPACKING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if bin.is_file() {
         return Ok(bin);
     }

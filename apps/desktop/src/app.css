@@ -51,10 +51,11 @@ body { background: var(--color-frame); }
 .navrail-items { display: flex; flex-direction: column; align-items: center; gap: var(--space-3xs); }
 .navrail-sep { width: 20px; height: 1px; margin-block: var(--space-2xs); background: var(--color-rule); }
 .navrail-foot { display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); margin-top: auto; }
-.navrail-item { position: relative; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: var(--radius-lg); background: transparent; color: var(--color-muted); cursor: pointer; }
-.navrail-item .icon { width: 18px; height: 18px; stroke-width: 1.5; }
+.navrail-item { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: var(--radius-lg); background: transparent; color: var(--color-ink-2); cursor: pointer; }
+.navrail-item .icon { width: 20px; height: 20px; stroke-width: 1.5; }
 .navrail-item:hover { color: var(--color-ink); background: color-mix(in oklch, var(--color-ink) 7%, transparent); }
-.navrail-item[aria-current="page"] { color: var(--color-ink); background: color-mix(in oklch, var(--color-ink) 11%, transparent); }
+.navrail-item[aria-current="page"] { color: var(--color-ink); background: color-mix(in oklch, var(--color-ink) 12%, transparent); }
+.navrail-item[aria-current="page"] .icon { stroke-width: 1.8; }
 .navrail-item:focus-visible, .strip-repo-btn:focus-visible, .navrail-quota:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .navrail-count { position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; padding-inline: var(--space-2xs); border-radius: var(--radius-pill); background: var(--color-paper-3); color: var(--color-ink-2); font: var(--weight-strong) 10px/16px var(--font-mono); font-variant-numeric: tabular-nums; text-align: center; box-shadow: 0 0 0 2px var(--color-frame); }
 .navrail-count[data-hot] { background: var(--color-accent-wash); color: var(--color-accent-text); } /* calm (Linear 2026): the figure in accent, never a loud fill */
@@ -737,7 +738,7 @@ body[data-resizing] .pane { pointer-events: none; }
 .term-surface { width: 100%; height: 100%; }
 .term-surface .xterm-viewport { scrollbar-width: thin; }
 /* macOS's own text smoothing, as Warp draws it: fuller strokes, soft edges, easy to read for hours. */
-.term-surface .xterm { -webkit-font-smoothing: subpixel-antialiased; }
+.term-surface .xterm { -webkit-font-smoothing: subpixel-antialiased; text-shadow: var(--text-soft); }
 
 /* Command blocks, as in Warp (src/blocks.ts): a hairline above each command, a fail stripe and a
  * faint fail tint when it failed, its time and two copies on hover. Never in the way of selecting. */
@@ -1043,7 +1044,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-crumb { flex-shrink: 0; border: 0; background: none; padding: 0; color: var(--color-ink-2); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-rule-strong); }
 .ag-bar-meta { flex-shrink: 0; font: var(--text-xs)/1 var(--font-mono); color: var(--color-muted); white-space: pre; }
 .ag-bar-fill { flex: 1; }
-.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) calc(var(--term-size, 14px) - 1px)/1.45 var(--term-face, var(--font-mono)); color: var(--color-term-ink); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; -webkit-font-smoothing: subpixel-antialiased; }
+.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) var(--term-size, 14px)/1.5 var(--term-face, var(--font-mono)); color: var(--color-term-ink); text-shadow: var(--text-soft); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; -webkit-font-smoothing: subpixel-antialiased; }
 /* Jump to present: sticks to the log's bottom edge while you read above, as in Discord and Warp. */
 .ag-jump-dock { position: sticky; bottom: 0; height: 0; display: flex; justify-content: center; pointer-events: none; }
 .ag-jump { pointer-events: auto; display: inline-flex; align-items: center; gap: var(--space-2xs); height: 26px; padding-inline: var(--space-xs) var(--space-sm); transform: translateY(calc(-100% - var(--space-sm))); border: 0; border-radius: var(--radius-md); background: var(--color-paper-3); box-shadow: var(--ring), var(--shadow-pop); color: var(--color-ink); font: var(--weight-strong) var(--text-xs)/1 var(--font-body); cursor: pointer; animation: ag-jump-in 200ms ease-out; }
@@ -1054,7 +1055,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-line { display: block; width: 100%; padding-block: 1px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }
 .ag-text { margin-block: var(--space-2xs); color: var(--color-ink); }
 .ag-tool { color: var(--color-ink-2); }
-.ag-tool-name { color: var(--color-ink); font-weight: var(--weight-strong); }
+.ag-tool-name { color: var(--color-ink); font-weight: 700; }
 .ag-glyph { color: var(--color-muted); }
 .ag-muted { color: var(--color-muted); }
 .ag-fail { color: var(--color-fail); }
@@ -1066,7 +1067,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-input { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-md); border-top: 1px solid var(--color-rule); background: var(--color-paper); }
 .ag-prompt { font: var(--weight-strong) var(--text-md)/1 var(--font-mono); color: var(--color-accent-text); }
 .ag-input[data-off] .ag-prompt { color: var(--color-muted); }
-.ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) calc(var(--term-size, 14px) - 1px)/1 var(--term-face, var(--font-mono)); outline: none; }
+.ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) var(--term-size, 14px)/1 var(--term-face, var(--font-mono)); outline: none; }
 .ag-field::placeholder { color: var(--color-muted); }
 .ag-input { position: relative; }
 /* The model and effort, always in sight under the prompt, as Claude Code's status line. */
@@ -1239,7 +1240,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-sys[data-tone="needs"], .cc-sys[data-tone="needs"] .cc-glyph { color: var(--color-accent-text); }
 .cc-sys[data-tone="ok"] { color: var(--color-ink-2); }
 /* What you said, as Claude Code shows your prompt: on a step lighter, the › in accent. */
-.cc-said { margin-block: var(--space-xs); padding: var(--space-3xs) var(--space-xs) var(--space-3xs) 0; border-radius: var(--radius-sm); background: var(--color-paper-2); color: var(--color-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-said { margin-block: var(--space-xs); padding: var(--space-3xs) var(--space-xs) var(--space-3xs) 0; border-radius: var(--radius-sm); background: var(--color-paper-2); color: var(--color-ink); font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cc-said .cc-glyph { color: var(--color-accent-text); text-align: center; }
 /* An answer from the side (an aside): the agent's words, marked as never read by the run. */
 .cc-aside .cc-dot { color: var(--color-muted); }
@@ -1263,7 +1264,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-text pre code { color: var(--color-term-ink); }
 .cc-tool { margin-block: 0.8lh; }
 .ag-spawn.cc-call { padding: 0; margin-block: var(--space-2xs); }
-.cc-name { color: var(--color-ink); font-weight: var(--weight-strong); }
+.cc-name { color: var(--color-ink); font-weight: 700; }
 .cc-arg { color: var(--color-ink-2); overflow-wrap: anywhere; }
 .cc-result { padding-inline-start: 1.4em; color: var(--color-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cc-shot { display: flex; gap: var(--space-2xs); padding-inline-start: 1.4em; margin-block: var(--space-2xs); color: var(--color-muted); }
@@ -1273,7 +1274,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-shot-thumb img { display: block; max-width: 100%; max-height: 240px; object-fit: contain; }
 .shot-view { position: fixed; inset: 0; z-index: 900; display: grid; place-items: center; padding: var(--space-xl); background: color-mix(in oklch, black 72%, transparent); cursor: zoom-out; }
 .shot-view img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-md); box-shadow: var(--shadow-pop); }
-.cc-diff { margin: var(--space-3xs) 0 var(--space-3xs) 1.4em; padding-block: 2px; border-radius: var(--radius-sm); background: var(--color-paper); box-shadow: var(--ring); font: 12px/1.5 var(--font-mono); overflow-x: auto; }
+.cc-diff { margin: var(--space-3xs) 0 var(--space-3xs) 1.4em; padding-block: 2px; border-radius: var(--radius-sm); background: var(--color-paper); box-shadow: var(--ring); font: 0.92em/1.5 var(--term-face, var(--font-mono)); overflow-x: auto; }
 .cc-diff > div { padding-inline: var(--space-xs); white-space: pre; }
 .cc-sign { display: inline-block; width: 1.4em; color: var(--color-muted); user-select: none; }
 .cc-del { background: color-mix(in oklab, var(--color-fail) 16%, transparent); color: var(--color-ink); }
@@ -1535,7 +1536,7 @@ dialog.dv-sheet { width: min(1320px, calc(100% - 48px)); height: 88vh; max-heigh
 .dv-body { flex: 1; min-height: 0; overflow: auto; background: var(--color-paper-sunk); }
 .dv-foot { display: flex; align-items: center; gap: var(--space-2xs); padding: var(--space-2xs) var(--space-md); border-top: 1px solid var(--color-rule); font-size: var(--text-xs); color: var(--color-muted); background: var(--color-paper-2); }
 .dv-empty { margin: 0; padding: var(--space-lg); color: var(--color-muted); font-size: var(--text-sm); }
-.dv-grid { font: var(--weight-regular) 12px/1.6 var(--font-mono); color: var(--color-term-ink); min-width: 0; }
+.dv-grid { font: var(--weight-regular) var(--text-sm)/1.6 var(--font-mono); color: var(--color-term-ink); text-shadow: var(--text-soft); min-width: 0; }
 .dv-row { display: grid; }
 .dv-split .dv-row { grid-template-columns: 48px minmax(0, 1fr) 48px minmax(0, 1fr); }
 .dv-inline .dv-row { grid-template-columns: 48px 48px 20px minmax(0, 1fr); }
@@ -1546,12 +1547,12 @@ dialog.dv-sheet { width: min(1320px, calc(100% - 48px)); height: 88vh; max-heigh
 .dv-split [data-kind="del"] { background: var(--color-del); }
 .dv-split [data-kind="add"] { background: var(--color-add); }
 .dv-split [data-kind="none"] { background: repeating-linear-gradient(-45deg, transparent 0 5px, color-mix(in oklab, var(--color-rule) 60%, transparent) 5px 6px); }
-.dv-split .dv-no[data-kind="del"] { background: var(--color-del-strong); color: var(--color-ink-2); }
-.dv-split .dv-no[data-kind="add"] { background: var(--color-add-strong); color: var(--color-ink-2); }
+.dv-no[data-kind="del"], .dv-inline .dv-row[data-kind="del"] .dv-no { color: var(--color-fail); font-weight: 700; opacity: 1; }
+.dv-no[data-kind="add"], .dv-inline .dv-row[data-kind="add"] .dv-no { color: var(--color-done); font-weight: 700; opacity: 1; }
 .dv-inline .dv-row[data-kind="del"] { background: var(--color-del); }
 .dv-inline .dv-row[data-kind="add"] { background: var(--color-add); }
-.dv-inline .dv-row[data-kind="del"] .dv-sign { color: var(--color-fail); }
-.dv-inline .dv-row[data-kind="add"] .dv-sign { color: var(--color-done); }
+.dv-inline .dv-row[data-kind="del"] .dv-sign { color: var(--color-fail); font-weight: 700; }
+.dv-inline .dv-row[data-kind="add"] .dv-sign { color: var(--color-done); font-weight: 700; }
 .dv-hunk { padding: var(--space-2xs) var(--space-md); border-block: 1px solid var(--color-rule); background: var(--color-paper-2); color: var(--color-muted); font: var(--weight-regular) var(--text-xs)/1.4 var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dv-hunk:first-child { border-top: 0; }
 @media (max-width: 60rem) { .dv-layout { grid-template-columns: minmax(0, 1fr); } .dv-files { display: none; } }

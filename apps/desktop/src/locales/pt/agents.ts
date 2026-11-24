@@ -141,6 +141,7 @@ export default {
   "Message the agent that opened this subagent (Enter). Ctrl+C stops it": "Envie uma mensagem ao agente que abriu este subagente (Enter). Ctrl+C o para",
   "Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it": "Diga mais ao agente: contexto, uma verificação a fazer… (Enter). Ctrl+C o para",
   "This session ended ({state})": "Esta sessão terminou ({state})",
+  "Ask something else; it picks this conversation back up (Enter)": "Peça mais alguma coisa; ela retoma esta conversa (Enter)",
   "Message the agent": "Mensagem ao agente",
   "Read {n} line": "Leu {n} linha",
   "Read {n} lines": "Leu {n} linhas",

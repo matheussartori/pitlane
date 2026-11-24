@@ -166,13 +166,6 @@ impl ReviewAction {
     }
 }
 
-/// Every op the daemon knows, as it is written in `op`.
-pub const OPS: &[&str] = &[
-    "ping", "start", "analyze", "recheck", "unblock", "move", "report_digest", "describe", "talk", "stop_talk", "finish", "assist", "resume", "list", "sessions", "get",
-    "say", "relay", "tune", "stop", "stop_all", "perf", "perf_set", "perf_hold", "stop_analyses", "shutdown", "hold", "quota", "review", "enqueue",
-    "queue", "queue_resume", "dequeue", "continue", "ask", "consult", "decide", "approvals", "follow", "presence", "presence_set",
-];
-
 /// The op a message names, whether or not it reads as a request ("" when it names none).
 pub fn named_op(v: &Value) -> &str {
     v.get("op").and_then(Value::as_str).unwrap_or_default()
@@ -182,11 +175,15 @@ impl Request {
     /// The request in a message, or why it is not one: an op nobody knows, or a key of the op
     /// that is missing or of the wrong kind.
     pub fn from_value(v: Value) -> Result<Self> {
-        let op = named_op(&v);
-        if !OPS.contains(&op) {
-            bail!("unknown op {op:?}");
-        }
-        Ok(serde_json::from_value(v)?)
+        // The enum is the one list of ops: serde says when the name is none of its variants.
+        let op = named_op(&v).to_string();
+        serde_json::from_value(v).map_err(|e| {
+            if op.is_empty() || e.to_string().starts_with(&format!("unknown variant `{op}`")) {
+                anyhow::anyhow!("unknown op {op:?}")
+            } else {
+                e.into()
+            }
+        })
     }
 
     /// The op, as it is written on the wire.
@@ -490,11 +487,11 @@ mod tests {
         assert!(Request::from_value(json!({ "op": "get" })).is_err(), "run is required");
         assert!(Request::from_value(json!({ "op": "review", "repo": "/r", "card": 1, "action": "ship" })).is_err());
         assert!(Request::from_value(json!({ "op": "decide", "run": "r1", "decision": "maybe" })).is_err());
-        // Every op in OPS is one `Request` reads: none of them is unknown to serde.
-        for op in OPS {
-            if let Err(e) = Request::from_value(json!({ "op": op })) {
-                assert!(!e.to_string().contains("unknown variant"), "{op}: {e}");
-            }
+        // A request reads back under the name `op()` gives it: no second list of ops to fall behind.
+        for r in [Request::Ping, Request::Aside { run: "r1".into(), text: "why?".into() }, Request::Say { run: "r1".into(), text: "go".into() }] {
+            let v = serde_json::to_value(&r).unwrap();
+            assert_eq!(named_op(&v), r.op());
+            assert_eq!(Request::from_value(v).unwrap().op(), r.op());
         }
     }
 }
