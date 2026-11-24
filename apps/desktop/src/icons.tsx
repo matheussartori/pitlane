@@ -39,6 +39,9 @@ const paths: Record<string, () => JSX.Element> = {
   // The side list folding away and coming back (a panel with its edge and an arrow).
   "side-close": () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9 4.5v15M16 9.5L13.5 12l2.5 2.5" /></>),
   "side-open": () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9 4.5v15M13.5 9.5L16 12l-2.5 2.5" /></>),
+  "zoom-in": () => (<><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5M8.5 11h5M11 8.5v5" /></>),
+  "zoom-out": () => (<><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5M8.5 11h5" /></>),
+  download: () => <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14" />,
   code: () => <path d="M9 7l-5 5 5 5M15 7l5 5-5 5" />,
   inbox: () => (<><path d="M4 13l2.4-7.2A1 1 0 0 1 7.35 5h9.3a1 1 0 0 1 .95.8L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z" /><path d="M4 13h4.5l1 2h5l1-2H20" /></>),
   board: () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9.5 4.5v15M14.5 4.5v15" /></>),

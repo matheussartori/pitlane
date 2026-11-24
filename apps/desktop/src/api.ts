@@ -823,6 +823,10 @@ export const api = {
   reportSuggestCard: (path: string, id: string, index: number) => invoke<Card>("report_suggest_card", { path, id, index }),
   reportRestore: (id: string) => invoke<void>("report_restore", { id }),
   printPage: () => invoke<void>("print_page"),
+  /** The image viewer's Download: the save panel, then the file. False when cancelled. */
+  saveImage: (data: string, name: string) => invoke<boolean>("save_image", { data, name }),
+  /** The image viewer's Copy when the webview's clipboard refuses an image (a PNG data URL). */
+  copyImage: (png: string) => invoke<void>("copy_image", { png }),
   cardsForget: (path: string, ids: number[]) => invoke<{ notes: number; questions: number }>("cards_forget", { path, ids }),
   cardDelete: (path: string, id: number) => invoke<void>("card_delete", { path, id }),
   cardRestore: (path: string, id: number) => invoke<void>("card_restore", { path, id }),

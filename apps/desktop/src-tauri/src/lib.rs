@@ -164,6 +164,8 @@ pub fn run() {
             runs::report_restore,
             runs::report_suggest_card,
             os::print_page,
+            os::save_image,
+            os::copy_image,
             runs::board_assist,
             runs::run_decide,
             runs::run_continue,

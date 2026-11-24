@@ -1,6 +1,5 @@
 // Small building blocks: modal sheet, toasts, spinner.
 import { ErrorBoundary, For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX, type Resource } from "solid-js";
-import { Portal } from "solid-js/web";
 import { Icon } from "./icons";
 import { t } from "./i18n";
 
@@ -63,6 +62,9 @@ export function installTips() {
   const show = (el: HTMLElement) => {
     const text = el.dataset.tip;
     if (!text || !el.isConnected) return;
+    // Inside a modal dialog (a sheet, the image viewer) the tip goes with it into the top layer.
+    const host = el.closest("dialog[open]") ?? document.body;
+    if (tip.parentElement !== host) host.append(tip);
     tip.textContent = text;
     tip.dataset.on = "";
     const r = el.getBoundingClientRect();
@@ -262,40 +264,6 @@ const [toasts, setToasts] = createSignal<Toast[]>([]);
 let nextId = 1;
 /** Escape closes what is enlarged over the screen (a screenshot) and nothing else: the key is
  *  taken before the screen under it sees it, so a run's own Escape does not also leave the run. */
-function escapeCloses(open: () => boolean, close: () => void) {
-  const key = (ev: KeyboardEvent) => {
-    if (ev.key !== "Escape" || !open()) return;
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-    close();
-  };
-  window.addEventListener("keydown", key, true);
-  onCleanup(() => window.removeEventListener("keydown", key, true));
-}
-
-/** An image opened full size over the screen: a click anywhere or Escape closes it. `class` is
- *  the caller's own, so each keeps its look. `inline` is for one inside a sheet: a sheet sits in
- *  the browser's top layer, above anything put on the body, so the image stays where it is
- *  written, takes the focus and hears its own Escape. */
-export function Lightbox(props: { open: boolean; src: string; alt: string; label: string; class: string; inline?: boolean; onClose: () => void }) {
-  if (!props.inline) escapeCloses(() => props.open, () => props.onClose());
-  return (
-    <Show when={props.open}>
-      {props.inline ? (
-        <div class={props.class} role="dialog" aria-label={props.label} onClick={() => props.onClose()} onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), props.onClose())} tabindex="-1" ref={(el) => requestAnimationFrame(() => el.focus())}>
-          <img src={props.src} alt={props.alt} />
-        </div>
-      ) : (
-        <Portal>
-          <div class={props.class} role="dialog" aria-label={props.label} onClick={() => props.onClose()}>
-            <img src={props.src} alt={props.alt} />
-          </div>
-        </Portal>
-      )}
-    </Show>
-  );
-}
-
 /** The toasts that stay until answered. */
 const sticky = new Set<number>();
 

@@ -5,7 +5,8 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, untrack, type JSX } from "solid-js";
 import { api, isLive, type RunEvent, type RunMeta } from "./api";
 import { plural, t } from "./i18n";
-import { Lightbox, Spinner, toast, tailFollower } from "./ui";
+import { Spinner, toast, tailFollower } from "./ui";
+import { ImageViewer } from "./viewer";
 import { ApprovalBlock } from "./approvals";
 import { Icon } from "./icons";
 import { Prose } from "./prose";
@@ -612,7 +613,7 @@ function Shot(props: { run: string; file: string }) {
           <button type="button" class="cc-shot-thumb" title={t("Open full size")} onClick={() => setBig(true)}>
             <img src={u()} alt={t("Screenshot")} loading="lazy" />
           </button>
-          <Lightbox open={big()} src={u()} alt={t("Screenshot")} label={t("Screenshot")} class="shot-view" onClose={() => setBig(false)} />
+          <ImageViewer open={big()} src={u()} name={props.file} alt={t("Screenshot")} label={t("Screenshot")} onClose={() => setBig(false)} />
         </div>
       )}
     </Show>

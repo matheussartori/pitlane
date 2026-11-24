@@ -3,7 +3,8 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api, type Card } from "./api";
 import { Icon } from "./icons";
-import { Lightbox, Spinner, toast } from "./ui";
+import { Spinner, toast } from "./ui";
+import { ImageViewer } from "./viewer";
 import { t } from "./i18n";
 import { msg } from "./format";
 
@@ -108,7 +109,7 @@ function Thumb(props: { repo: string; id: number; file: string; busy: boolean; o
 export function CardImages(props: { repo: string; card: Card; onChanged: () => void; ref?: (add: (files: File[]) => void) => void }) {
   const [busy, setBusy] = createSignal(false);
   const [over, setOver] = createSignal(false);
-  const [big, setBig] = createSignal<string | null>(null);
+  const [big, setBig] = createSignal<{ url: string; file: string } | null>(null);
   let picker: HTMLInputElement | undefined;
   const images = () => props.card.images ?? [];
 
@@ -185,11 +186,11 @@ export function CardImages(props: { repo: string; card: Card; onChanged: () => v
         }>
         <ul class="img-list">
           <For each={images()}>
-            {(f) => <Thumb repo={props.repo} id={props.card.id} file={f} busy={busy()} onOpen={setBig} onRemove={() => void remove(f)} />}
+            {(f) => <Thumb repo={props.repo} id={props.card.id} file={f} busy={busy()} onOpen={(url) => setBig({ url, file: f })} onRemove={() => void remove(f)} />}
           </For>
         </ul>
       </Show>
-      <Lightbox open={!!big()} src={big() ?? ""} alt="" label={t("Image")} class="img-big" inline onClose={() => setBig(null)} />
+      <ImageViewer open={!!big()} src={big()?.url ?? ""} name={big()?.file} alt="" label={t("Image")} onClose={() => setBig(null)} />
     </section>
   );
 }

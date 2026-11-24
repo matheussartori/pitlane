@@ -4,7 +4,8 @@ import { For, Show, createEffect, createMemo, createResource, createSignal } fro
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
-import { Lightbox, Spinner, toast } from "./ui";
+import { Spinner, toast } from "./ui";
+import { ImageViewer } from "./viewer";
 import { ago, clock, money, msg } from "./format";
 
 /** The first sentence of a suggestion's spec, for its tile when Claude's line is not there. */
@@ -26,7 +27,7 @@ function ReportShot(props: { run: string; file: string; label: string }) {
             <img src={u()} alt={props.label} loading="lazy" />
           </button>
           <figcaption>{props.label}</figcaption>
-          <Lightbox open={big()} src={u()} alt={props.label} label={t("Screenshot")} class="shot-view" onClose={() => setBig(false)} />
+          <ImageViewer open={big()} src={u()} name={props.file} alt={props.label} label={t("Screenshot")} onClose={() => setBig(false)} />
         </figure>
       )}
     </Show>
