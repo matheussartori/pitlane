@@ -8,7 +8,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice, Pick, Routing, Situation, Usage};
-use pit_core::time::now_secs;
 use pit_core::runs::{RunEvent, RunMeta, RunState};
 
 use super::card::{block_card, checkpoint};
@@ -144,21 +143,7 @@ impl Supervisor {
             );
         }
         let why = format!("Hit the usage limit on {}.", meta.account);
-        self.update(&id, |m| {
-            m.state = RunState::Failed;
-            m.ended_at = Some(now_secs());
-            m.pid = None;
-            m.waiting.clear();
-            m.error = Some(why.clone());
-        });
-        self.emit(
-            &id,
-            RunEvent::Exited {
-                code,
-                state: RunState::Failed,
-            },
-        );
-        self.live().remove(&id);
+        self.end_session(&id, RunState::Failed, code, |m| m.error = Some(why.clone()));
 
         match self.start(
             repo,

@@ -86,8 +86,10 @@ pub(super) struct Read {
 
 impl Supervisor {
     /// Starts the session's process and writes its first message; the pid is in the record
-    /// before anything can fail, so Stop and shutdown reach it. The stdin comes back open.
-    pub(super) async fn spawn_session(&self, id: &str, cmd: &mut Command, first: &str) -> Result<(Child, Stdin)> {
+    /// before anything can fail, so Stop and shutdown reach it. Its stdin goes into the live
+    /// record, open, for whoever writes to the session next. True beside the child when a stop
+    /// came while it was starting: that stop found no process to signal, so the caller ends it.
+    pub(super) async fn spawn_session(&self, id: &str, cmd: &mut Command, first: &str) -> Result<(Child, bool)> {
         let mut child = cmd.spawn().with_context(|| format!("could not start {}", self.cfg.claude_bin))?;
         if let Some(l) = self.live().get_mut(id) {
             l.meta.pid = child.id();
@@ -99,7 +101,17 @@ impl Supervisor {
             }
             return Err(e).context("could not write the first message");
         }
-        Ok((child, stdin))
+        let stopped = {
+            let mut live = self.live();
+            live.get_mut(id).is_some_and(|l| {
+                l.stdin = stdin;
+                l.turn = true;
+                l.meta.state = runs::RunState::Running;
+                l.stop_requested
+            })
+        };
+        self.update(id, |_| {});
+        Ok((child, stopped))
     }
 
     /// The first message's text: `text`, reminded of the language the person wants answers in.
@@ -112,6 +124,63 @@ impl Supervisor {
     pub(super) fn raw_log(&self, id: &str) -> Result<File> {
         let path = self.dir(id).join("events.jsonl");
         OpenOptions::new().create(true).append(true).open(&path).with_context(|| format!("could not open {}", path.display()))
+    }
+
+    /// Reads a started session to its end, whatever kind it is: every line into the record and
+    /// the timeline, until the agent exits (not until the pipe closes: a child it left could hold
+    /// that open). Then the agent's pid is forgotten (it may be reused), what it left in its
+    /// group (a server, a watcher) is ended, and what is still in the pipe is read for a moment.
+    pub(super) async fn read_to_end(&self, id: &str, mut child: Child) -> Result<Ended> {
+        let err_task = capture_stderr(child.stderr.take().context("no stderr")?, self.dir(id).join("stderr.log"));
+        let mut raw = self.raw_log(id)?;
+        let mut lines = Lines::new(BufReader::new(child.stdout.take().context("no stdout")?));
+        let pid = child.id();
+        let (mut last, mut ok) = (None::<String>, None::<bool>);
+        let mut take = |read: Read, line: String| {
+            if read.result {
+                last = Some(line);
+            }
+            ok = read.done.or(ok);
+        };
+        let status = loop {
+            let line = tokio::select! {
+                l = lines.next_line() => match l {
+                    Some(l) => l,
+                    None => break child.wait().await?,
+                },
+                st = child.wait() => break st?,
+            };
+            take(self.read_line(id, &mut raw, &line).await, line);
+        };
+        if let Some(l) = self.live().get_mut(id) {
+            l.meta.pid = None;
+            l.admitted = false;
+        }
+        if let Some(pid) = pid {
+            super::control::end_group(pid);
+        }
+        let until = tokio::time::Instant::now() + AFTER_EXIT_READ;
+        while let Ok(Some(line)) = tokio::time::timeout_at(until, lines.next_line()).await {
+            take(self.read_line(id, &mut raw, &line).await, line);
+        }
+        Ok(Ended { status, last, ok, stderr: stderr_tail(err_task).await })
+    }
+
+    /// Ends a session's record, the one way for every kind and every reason: its state and time,
+    /// no pid and nothing waiting on anyone any more, then `more` (why it failed, say), the
+    /// `Exited` event, and out of the live list. Said last: once it leaves the list nothing more
+    /// is recorded on it.
+    pub(super) fn end_session(&self, id: &str, state: runs::RunState, code: Option<i32>, more: impl FnOnce(&mut runs::RunMeta)) {
+        self.update(id, |m| {
+            m.state = state;
+            m.ended_at = Some(pit_core::time::now_secs());
+            m.pid = None;
+            m.waiting.clear();
+            m.asking.clear();
+            more(m);
+        });
+        self.emit(id, runs::RunEvent::Exited { code, state });
+        self.live().remove(id);
     }
 
     /// One line of the agent's stream-json: kept raw, then turned into the record's changes and
@@ -133,6 +202,17 @@ impl Supervisor {
         self.keep_shots(id, &v);
         read
     }
+}
+
+/// How a session's process ended and what it said last.
+pub(super) struct Ended {
+    pub(super) status: std::process::ExitStatus,
+    /// The last `result` line it printed.
+    pub(super) last: Option<String>,
+    /// Whether its last turn finished well, when one finished.
+    pub(super) ok: Option<bool>,
+    /// The end of its stderr, to say why it failed.
+    pub(super) stderr: Vec<String>,
 }
 
 /// A session's output, line by line. A byte that is not UTF-8 is replaced, never the end of the

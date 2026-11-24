@@ -3,22 +3,20 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice};
 use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
-use tokio::io::BufReader;
 
 use super::card::{add_to_briefing, last_words, prepare, resume_message, set_card_state, settle_card, block_card};
 use super::control::{Release, end_group, signal};
 use super::launch::{claude_dir, session_saved};
-use super::session::{AFTER_EXIT_READ, Lines, capture_stderr, stderr_tail};
 use super::{StartOpts, Supervisor, home_dir};
 
 impl Supervisor {
@@ -171,19 +169,7 @@ impl Supervisor {
                 text: why.to_owned(),
             },
         );
-        self.update(id, |m| {
-            m.state = RunState::Failed;
-            m.error = Some(why.to_owned());
-            m.ended_at = Some(now_secs());
-        });
-        self.emit(
-            id,
-            RunEvent::Exited {
-                code: None,
-                state: RunState::Failed,
-            },
-        );
-        self.live().remove(id);
+        self.end_session(id, RunState::Failed, None, |m| m.error = Some(why.to_owned()));
     }
 
     async fn drive(
@@ -296,63 +282,15 @@ impl Supervisor {
         } else {
             runs::claude_user_line_with(&self.in_their_language(&prep.briefing), &prep.images)
         };
-        let (mut child, stdin) = self.spawn_session(&id, &mut cmd, &first).await?;
-        let pid = child.id();
-        let stopped_meanwhile = {
-            let mut live = self.live();
-            live.get_mut(&id).is_some_and(|l| {
-                l.stdin = stdin;
-                l.turn = true;
-                l.meta.state = RunState::Running;
-                l.stop_requested
-            })
-        };
-        self.update(&id, |_| {});
+        let (child, stopped_meanwhile) = self.spawn_session(&id, &mut cmd, &first).await?;
         // A stop that came while the agent was starting found no process to signal: send it now.
         if stopped_meanwhile {
             let _ = self.stop(&id);
         }
         let _ = set_card_state(&self.get(&id)?, CardState::Running, &self.cfg.home);
 
-        let stdout = child.stdout.take().context("no stdout")?;
-        let err_task = capture_stderr(child.stderr.take().context("no stderr")?, self.dir(&id).join("stderr.log"));
-        let mut raw = self.raw_log(&id)?;
-        let finished = Arc::new(Mutex::new(None::<bool>));
-        let reader = {
-            let me = Arc::clone(&self);
-            let id = id.clone();
-            let finished = Arc::clone(&finished);
-            tokio::spawn(async move {
-                let mut lines = Lines::new(BufReader::new(stdout));
-                while let Some(line) = lines.next_line().await {
-                    if let Some(ok) = me.read_line(&id, &mut raw, &line).await.done {
-                        *finished.lock().unwrap() = Some(ok);
-                    }
-                }
-            })
-        };
-
-        let status = child.wait().await?;
-        // The agent is gone: its pid may be reused, and what it left in its group (a server, a
-        // watcher) must not outlive it.
-        if let Some(l) = self.live().get_mut(&id) {
-            l.meta.pid = None;
-            l.admitted = false;
-        }
-        if let Some(pid) = pid {
-            end_group(pid);
-        }
-        // A tool's child process can keep stdout open after the agent is gone: read what is
-        // left for a moment, then let go.
-        let mut reader = reader;
-        if tokio::time::timeout(AFTER_EXIT_READ, &mut reader)
-            .await
-            .is_err()
-        {
-            reader.abort();
-        }
-        let tail = stderr_tail(err_task).await;
-        let finished_ok = *finished.lock().unwrap();
+        let ended = self.read_to_end(&id, child).await?;
+        let (status, tail, finished_ok) = (ended.status, ended.stderr, ended.ok);
         let stopped = self.stop_requested(&id);
         // A window that refused it mid-run does not undo a session that went on (extra usage, a
         // model fallback) and ended with its handoff: only an unfinished one moves to the next option.
@@ -414,25 +352,12 @@ impl Supervisor {
                 }
             }
         }
-        self.update(&id, |m| {
-            m.state = state;
-            m.ended_at = Some(now_secs());
-            m.pid = None;
+        self.end_session(&id, state, status.code(), |m| {
             m.goes_on = goes_on;
-            m.waiting.clear();
-            m.asking.clear();
             if m.error.is_none() {
                 m.error = error;
             }
         });
-        self.emit(
-            &id,
-            RunEvent::Exited {
-                code: status.code(),
-                state,
-            },
-        );
-        self.live().remove(&id);
         card_result?;
         if self.get(&id).is_ok_and(|m| m.autopilot) {
             self.autopilot(&id).await;
@@ -654,18 +579,7 @@ impl Supervisor {
         settled.state = RunState::Stopped;
         let home = self.cfg.home.clone();
         let _ = tokio::task::spawn_blocking(move || settle_card(&settled, &home, false)).await;
-        self.update(id, |m| {
-            m.state = RunState::Stopped;
-            m.ended_at = Some(now_secs());
-        });
-        self.emit(
-            id,
-            RunEvent::Exited {
-                code: None,
-                state: RunState::Stopped,
-            },
-        );
-        self.live().remove(id);
+        self.end_session(id, RunState::Stopped, None, |_| {});
         Ok(true)
     }
 }

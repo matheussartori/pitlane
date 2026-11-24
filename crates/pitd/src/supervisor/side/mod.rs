@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use pit_core::Repo;
 use pit_core::accounts::{self, Choice, Routing};
 use pit_core::actions;
@@ -15,11 +15,9 @@ use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
-use tokio::io::BufReader;
 
 use crate::supervisor::control::{Release, end_group};
 use crate::supervisor::launch::{mode_for, read_only_args};
-use crate::supervisor::session::{AFTER_EXIT_READ, Lines, capture_stderr, stderr_tail};
 use crate::supervisor::{Supervisor, home_dir};
 
 mod analysis;
@@ -129,45 +127,13 @@ impl Supervisor {
         let mut cmd = self.side_command(&id, &side)?;
         let work = async {
             let first = runs::claude_user_line_with(&self.in_their_language(&side.prompt), &side.images);
-            let (mut child, stdin) = self.spawn_session(&id, &mut cmd, &first).await?;
-            if let Some(l) = self.live().get_mut(&id) {
-                l.stdin = stdin;
-                l.turn = true;
-            }
-            self.update(&id, |_| {});
-            let err_task = capture_stderr(child.stderr.take().context("no stderr")?, self.dir(&id).join("stderr.log"));
-            let mut raw = self.raw_log(&id)?;
-            let mut lines = Lines::new(BufReader::new(child.stdout.take().context("no stdout")?));
-            let mut last = None::<String>;
-            let mut ok = None::<bool>;
-            let pid = child.id();
-            // Read until the agent exits (not until the pipe closes: a child it left could hold
-            // that open), then what is left for a moment.
-            let mut status = None;
-            loop {
-                let line = tokio::select! {
-                    l = lines.next_line() => match l { Some(l) => l, None => break },
-                    st = child.wait(), if status.is_none() => { status = Some(st?); continue; }
-                    _ = tokio::time::sleep(AFTER_EXIT_READ), if status.is_some() => break,
-                };
-                let read = self.read_line(&id, &mut raw, &line).await;
-                if read.result {
-                    last = Some(line);
-                }
-                ok = read.done.or(ok);
-            }
-            let status = match status {
-                Some(s) => s,
-                None => child.wait().await?,
-            };
-            if let Some(l) = self.live().get_mut(&id) {
-                l.meta.pid = None;
-            }
-            if let Some(pid) = pid {
+            let (child, stopped_meanwhile) = self.spawn_session(&id, &mut cmd, &first).await?;
+            // A stop that came while it was starting found no process to signal: end it now.
+            if stopped_meanwhile && let Some(pid) = child.id() {
                 end_group(pid);
             }
-            let stderr = stderr_tail(err_task).await;
-            anyhow::Ok((last, ok, status, stderr))
+            let ended = self.read_to_end(&id, child).await?;
+            anyhow::Ok((ended.last, ended.ok, ended.status, ended.stderr))
         };
         let outcome = tokio::time::timeout(side.limit, work).await;
         let stopped = self.live()
@@ -214,16 +180,11 @@ impl Supervisor {
             }
         };
         let error = result.as_ref().err().map(|e| format!("{e:#}"));
-        self.update(&id, |m| {
-            m.state = state;
-            m.ended_at = Some(now_secs());
-            m.pid = None;
+        self.end_session(&id, state, code, |m| {
             if m.error.is_none() {
                 m.error = error;
             }
         });
-        self.emit(&id, RunEvent::Exited { code, state });
-        self.live().remove(&id);
         result
     }
 }
