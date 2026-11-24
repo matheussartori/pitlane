@@ -48,6 +48,9 @@ function keep(id: string, on: boolean) {
 }
 
 const live = (m: RunMeta) => isLive(m.state);
+/** A live session the person opened that answered and now waits for their next message: its
+ *  process is still there, but it is not working. */
+const idle = (m: RunMeta) => live(m) && m.waiting.length === 0 && (timelines[m.id] ?? []).at(-1)?.kind === "finished";
 const endedMs = (m: RunMeta) => (m.ended_at ?? m.started_at) * 1000;
 
 /** What the Terminal screen and the dock show: live sessions, ones you talked to, the one you
@@ -77,7 +80,7 @@ export const agentGroups = createRoot(() => createMemo<AgentGroup[]>(() => {
   return out;
 }));
 
-export const agentsWorking = () => agentSessions().filter(live).length;
+export const agentsWorking = () => agentSessions().filter((m) => live(m) && !idle(m)).length;
 export const agentsWanting = () => agentSessions().filter((m) => live(m) && m.waiting.length > 0).length;
 export const agentSelected = () => (selected() && agentSessions().some((m) => m.id === selected()!.id) ? selected() : null);
 /** Stop all: every session the daemon runs, and analyses still waiting for a slot. */
@@ -93,7 +96,7 @@ export async function stopAllAgents(): Promise<void> {
 
 function StopAll() {
   return (
-    <Show when={agentsWorking() > 0}>
+    <Show when={agentSessions().some(live)}>
       <button type="button" class="pane-btn ag-stop-all" aria-label={t("Stop all")} data-tip={t("Stop every agent Pitlane started")} onClick={() => void stopAllAgents()}>
         <Icon name="stop" small />
       </button>
@@ -200,7 +203,7 @@ export function look(m: RunMeta): Look {
   if (live(m) && m.waiting.length > 0) return { icon: "needs", word: t("Needs you"), s: "needs" };
   if (m.state === "verifying") return { icon: "verify", word: t("Checking"), s: "work" };
   // A session the person opened stays open between messages: answered, it waits for them.
-  if (live(m) && (timelines[m.id] ?? []).at(-1)?.kind === "finished") return { icon: "done", word: t("Waiting for you"), s: "done" };
+  if (idle(m)) return { icon: "done", word: t("Waiting for you"), s: "done" };
   if (live(m)) return { icon: "run", word: t("Working"), s: "work" };
   if (m.state === "done") return { icon: "done", word: t("Done"), s: "done" };
   if (m.state === "stopped") return { icon: "stop", word: t("Stopped"), s: "stopped" };
@@ -361,8 +364,14 @@ function SessionRow(props: { m: RunMeta }) {
           <span class="tt-sub">{lastLine(props.m)}</span>
         </span>
       </button>
-      <Show when={!live(props.m)}>
-        <button type="button" class="tt-close" aria-label={t("Close this session")} title={t("Close")} onClick={() => close(props.m.id)}>
+      <Show when={!live(props.m) || idle(props.m)}>
+        <button
+          type="button"
+          class="tt-close"
+          aria-label={live(props.m) ? t("Stop and close this session") : t("Close this session")}
+          title={live(props.m) ? t("Stop and close") : t("Close")}
+          onClick={() => void (live(props.m) ? stopAndClose(props.m.id) : close(props.m.id))}
+        >
           <Icon name="close" small />
         </button>
       </Show>
@@ -386,6 +395,19 @@ function SubRow(props: { m: RunMeta; s: Subagent }) {
 
 function close(id: string) {
   closeAll([id]);
+}
+
+/** A session waiting for your next message still has a process: closing it stops that first.
+ *  It stays in view until it has ended (nothing runs unseen), then the closed list hides it. */
+async function stopAndClose(id: string) {
+  try {
+    await api.runStop(id);
+  } catch (e) {
+    toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) });
+    return;
+  }
+  close(id);
+  void refreshAgents();
 }
 
 /** Takes ended sessions out of view (live ones only stop, never hide: nothing runs unseen). */

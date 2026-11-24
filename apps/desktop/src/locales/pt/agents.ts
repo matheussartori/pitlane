@@ -120,6 +120,8 @@ export default {
   "Agents": "Agentes",
   "{n} working": "{n} trabalhando",
   "Close this session": "Fechar esta sessão",
+  "Stop and close this session": "Parar e fechar esta sessão",
+  "Stop and close": "Parar e fechar",
   "Close ended": "Fechar encerradas",
   "Close every session that ended": "Fechar todas as sessões encerradas",
   "Close": "Fechar",
