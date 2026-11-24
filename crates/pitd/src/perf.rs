@@ -945,13 +945,19 @@ mod tests {
 
     #[test]
     fn cpu_comes_from_the_kernel_ticks() {
+        // Ticks come at 100 Hz per core: spin long enough for some to land. Another test sampling
+        // at the same time takes the interval for itself, so it is asked until one comes back.
         cpu_busy();
-        // Ticks come at 100 Hz per core: spin long enough for some to land.
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_millis(50) {
-            std::hint::spin_loop();
+        let mut got = None;
+        while got.is_none() && start.elapsed() < std::time::Duration::from_secs(2) {
+            let spin = std::time::Instant::now();
+            while spin.elapsed() < std::time::Duration::from_millis(50) {
+                std::hint::spin_loop();
+            }
+            got = cpu_busy();
         }
-        assert!(cpu_busy().is_some_and(|c| (0.0..=100.0).contains(&c)));
+        assert!(got.is_some_and(|c| (0.0..=100.0).contains(&c)), "{got:?}");
     }
 
     fn stat(pid: u32) -> String {

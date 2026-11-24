@@ -268,4 +268,10 @@ export default {
   "{cards} stayed in the Backlog": "{cards} ficaram no Backlog",
   "Run all works in {n} repositories: they share the {total} agents this Mac takes now. One with nothing ready lends its share to the others.": "O Run all trabalha em {n} repositórios: eles dividem os {total} agentes que este Mac aguenta agora. Um sem nada pronto empresta sua parte aos outros.",
   "{mine} of {total} agents": "{mine} de {total} agentes",
+  "Pause every card working here, as closing the app does: each ends its step and keeps its session, and its Run picks it up again": "Pausar todos os cards trabalhando aqui, como fechar o app faz: cada um termina o passo e guarda a sessão, e o Run dele retoma de onde parou",
+  "Pausing {n} card": "Pausando {n} card",
+  "Pausing {n} cards": "Pausando {n} cards",
+  "{n} card did not pause": "{n} card não pausou",
+  "{n} cards did not pause": "{n} cards não pausaram",
+  "Each ends its current step and goes back to wait; its Run picks up the same session.": "Cada um termina o passo atual e volta a esperar; o Run dele retoma a mesma sessão.",
 } as Record<string, string>;

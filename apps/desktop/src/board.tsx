@@ -187,6 +187,28 @@ export function BoardView(props: {
   /** Backlog cards a run may take: not held. */
   const takeable = () => backlog().filter(({ card }) => card.held == null);
   const fila = () => byColumn("queued").filter(({ card }) => !liveRun(card.id));
+  /** In progress's runs an agent still works: what Pause stops. */
+  const working = () => byColumn("progress").map(({ card }) => liveRun(card.id)).filter((r): r is RunMeta => !!r);
+  const [pausing, setPausing] = createSignal(false);
+  /** Pause: what closing the app does to this board. Run all stops first, so it starts nothing
+   *  again; then each run ends its step and its card goes back (to Queued under Run all, else the
+   *  Backlog) keeping its session, so the next Run picks up where it was. */
+  async function pauseAll() {
+    const runs = working();
+    if (runs.length === 0 || pausing()) return;
+    setPausing(true);
+    if (props.phase === "working" || props.phase === "analyzing" || props.phase === "asking") props.onStopAll();
+    const failed = (await Promise.allSettled(runs.map((r) => api.runStop(r.id)))).filter((x) => x.status === "rejected").length;
+    setPausing(false);
+    void refreshAgents();
+    props.onChanged();
+    if (failed > 0) return toast({ tone: "fail", title: plural(failed, "{n} card did not pause", "{n} cards did not pause") });
+    toast({
+      tone: "info",
+      title: plural(runs.length, "Pausing {n} card", "Pausing {n} cards"),
+      body: t("Each ends its current step and goes back to wait; its Run picks up the same session."),
+    });
+  }
 
   // ---- dragging a card: up or down its column, or to another column the rules allow
   // x0/y0: the pointer at the start; px/py: the pointer now; over: the column under it. While it
@@ -544,6 +566,21 @@ export function BoardView(props: {
                         onClick={() => setForgetting(remembered().map((c) => c.id))}
                       >
                         <Icon name="undo" small />
+                      </button>
+                    </Show>
+                    <Show when={col === "progress" && working().length > 0}>
+                      <button
+                        type="button"
+                        class="btn btn-ghost col-action"
+                        aria-busy={pausing()}
+                        disabled={pausing()}
+                        title={t("Pause every card working here, as closing the app does: each ends its step and keeps its session, and its Run picks it up again")}
+                        onClick={() => void pauseAll()}
+                      >
+                        <Show when={pausing()} fallback={<Icon name="pause" small />}>
+                          <Spinner />
+                        </Show>
+                        <span class="col-action-label">{t("Pause")}</span>
                       </button>
                     </Show>
                     <Show when={col === "landed" && props.repo && byColumn(col).some(({ card }) => !liveRun(card.id))}>
