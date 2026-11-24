@@ -148,6 +148,8 @@ pub struct Supervisor {
     records: Mutex<HashMap<String, (FileStamp, RunMeta)>>,
     /// Set once the daemon began to close: from then on nothing new starts.
     closing: std::sync::atomic::AtomicBool,
+    /// The turn to describe a card: one at a time, first asked first served.
+    describing: tokio::sync::Semaphore,
 }
 
 /// A file's date and size: when both are the same, it was not rewritten.
@@ -194,6 +196,7 @@ impl Supervisor {
             holders: Default::default(),
             records: Mutex::default(),
             closing: Default::default(),
+            describing: tokio::sync::Semaphore::new(1),
         })
     }
 
@@ -288,4 +291,16 @@ impl Supervisor {
 
 fn home_dir() -> PathBuf {
     pit_core::default_homes().0
+}
+
+/// Opens a repository as the daemon sees it: your home, and Pitlane's own at `pitlane_home`.
+pub(crate) fn open_repo(repo: &Path, pitlane_home: &Path) -> Result<pit_core::Repo> {
+    pit_core::Repo::open(repo, &home_dir(), pitlane_home)
+}
+
+impl Supervisor {
+    /// Opens a repository with this daemon's homes.
+    pub(crate) fn repo(&self, repo: &Path) -> Result<pit_core::Repo> {
+        open_repo(repo, &self.cfg.home)
+    }
 }

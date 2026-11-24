@@ -25,44 +25,7 @@ pub struct Settings {
     pub prefs: Prefs,
 }
 
-/// The app's own preferences (a repository's flow lives in its .pitlane/flow.toml).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Prefs {
-    /// "system", "light" or "dark".
-    pub theme: String,
-    /// System notifications, each when Pitlane is not in front.
-    pub notify_approvals: bool,
-    pub notify_runs: bool,
-    pub notify_terminals: bool,
-    /// Load VS Code in the background when a repository opens.
-    pub code_prewarm: bool,
-    /// Pitlane's own words: "system", "en" or "pt-BR".
-    pub ui_language: String,
-    /// What agents write in for you (questions, notes, replies): "system" or a language tag.
-    /// The daemon reads it from this file when it starts a session.
-    pub agent_language: String,
-    /// Run all: at most this many agents work at once.
-    pub max_agents: u32,
-    /// Run all: fewer agents while this Mac is loaded, back up when it has room.
-    pub adaptive_agents: bool,
-}
-
-impl Default for Prefs {
-    fn default() -> Self {
-        Self {
-            theme: "system".into(),
-            notify_approvals: true,
-            notify_runs: true,
-            notify_terminals: true,
-            code_prewarm: true,
-            ui_language: "system".into(),
-            agent_language: "system".into(),
-            max_agents: 3,
-            adaptive_agents: true,
-        }
-    }
-}
+pub use pit_core::prefs::Prefs;
 
 #[derive(Debug, Serialize)]
 pub struct Capacity {
@@ -134,7 +97,7 @@ fn free_memory_share() -> Option<f64> {
 }
 
 fn settings_path() -> PathBuf {
-    default_homes().1.join("desktop.json")
+    default_homes().1.join(pit_core::prefs::FILE)
 }
 
 fn load_settings() -> Settings {

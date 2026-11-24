@@ -7,7 +7,6 @@ use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use pit_core::Repo;
 use pit_core::accounts::{self, Choice};
 use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::time::now_secs;
@@ -17,7 +16,7 @@ use serde_json::Value;
 use super::card::{add_to_briefing, last_words, prepare, resume_message, set_card_state, settle_card, block_card};
 use super::control::{Release, end_group, signal};
 use super::launch::{claude_dir, session_saved};
-use super::{StartOpts, Supervisor, home_dir};
+use super::{StartOpts, Supervisor};
 
 impl Supervisor {
     /// Starts a run of `card` in `repo`. Returns at once; preparing the worktree and the agent's
@@ -30,7 +29,7 @@ impl Supervisor {
         opts: StartOpts,
     ) -> Result<RunMeta> {
         self.still_open()?;
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let c = cards::get(&r, card)?;
         if c.open_questions() > 0 {
             bail!(
@@ -319,11 +318,7 @@ impl Supervisor {
         });
         // Finished work is checked before anyone reviews it: the repository's proofs, then the judge.
         let blocked = self
-            .get(&id)?
-            .handoff
-            .as_ref()
-            .and_then(|h| h.get("status"))
-            .and_then(|s| s.as_str())
+            .get(&id)?.handoff_status()
             == Some("blocked");
         if state == RunState::Done && !blocked {
             self.verify(&id, card).await;
@@ -341,7 +336,7 @@ impl Supervisor {
         let home = self.cfg.home.clone();
         // Out of turns under Run all goes on in the same session: said on the run before it ends,
         // so nobody is told it stopped.
-        let goes_on = Repo::open(&settled.repo, &home_dir(), &home)
+        let goes_on = super::open_repo(&settled.repo, &home)
             .is_ok_and(|r| super::autopilot::goes_on(&settled, r.flow.run.max_turns));
         let card_result = tokio::task::spawn_blocking(move || settle_card(&settled, &home, true)).await?;
         // Said while the run is still live: once it leaves the list, nothing more is recorded.

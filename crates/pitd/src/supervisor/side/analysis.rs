@@ -6,7 +6,7 @@ impl Supervisor {
     /// Run all's analysis: for each card not analysed yet, a read-only Claude Code session in the
     /// repository returns questions and notes, written on the card. Three at a time.
     pub async fn analyze(self: &Arc<Self>, repo: PathBuf, ids: Vec<u32>) -> Result<Value> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         // Never the API key: analysis is not worth a paid token without a yes.
         let choice = self.side_choice(&r.root)?;
         // The repository's model for agents, else yours (the judge's model is for judging).
@@ -88,8 +88,21 @@ impl Supervisor {
     /// Claude's title and summary for a card just made (`title`) or whose spec changed (summary
     /// only). Always Sonnet, no tools, about a cent; written on the card when it is back, unless
     /// the spec changed meanwhile.
+    /// `describe` without making whoever asked wait: one card at a time, in the order asked, so
+    /// a burst of new cards (an agent adding twenty) is a queue of short calls and the last
+    /// rewrite of a card is the one its summary comes from.
+    pub fn describe_later(self: &Arc<Self>, repo: PathBuf, id: u32, title: bool) {
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            let Ok(_turn) = me.describing.acquire().await else { return };
+            if let Err(e) = me.describe(repo, id, title).await {
+                eprintln!("pitd: no summary for card #{id}: {e:#}");
+            }
+        });
+    }
+
     pub async fn describe(self: &Arc<Self>, repo: PathBuf, id: u32, title: bool) -> Result<Value> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let card = cards::get(&r, id)?;
         // Never the API key, like the analysis: a summary is not worth a paid token without a yes.
         let choice = self.side_choice(&r.root)?;
@@ -122,7 +135,7 @@ impl Supervisor {
 
     /// Claude's digest of report `id` (Sonnet, no tools, about a cent): saved on the report.
     pub async fn report_digest(self: &Arc<Self>, repo: PathBuf, id: String) -> Result<Value> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let report = pit_core::report::get(&self.cfg.home, &id)?;
         // Never the API key, like the card summaries.
         let choice = self.side_choice(&r.root)?;
@@ -188,7 +201,7 @@ impl Supervisor {
             prompt: prompt.to_owned(),
             limit: ANALYSIS_LIMIT,
             board: false,
-            images: Repo::open(repo, &home_dir(), &self.cfg.home)
+            images: self.repo(repo)
                 .map(|r| cards::image_bytes(&r, card))
                 .unwrap_or_default(),
             resume: false,

@@ -105,14 +105,7 @@ pub fn dir(pitlane_home: &Path) -> PathBuf {
 }
 
 fn all_sessions(pitlane_home: &Path, repo: &Path, since: u64) -> Vec<RunMeta> {
-    std::fs::read_dir(runs::runs_dir(pitlane_home))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| std::fs::read_to_string(e.path().join("meta.json")).ok())
-        .filter_map(|t| serde_json::from_str::<RunMeta>(&t).ok())
-        .filter(|m| m.repo == repo && m.started_at >= since)
-        .collect()
+    runs::records(pitlane_home, |m| m.repo == repo && m.started_at >= since)
 }
 
 fn files_of(repo: &Repo, lane: &str, base: Option<&str>) -> Vec<FileChange> {

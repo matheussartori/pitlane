@@ -19,6 +19,7 @@ pub fn card(repo: &Repo, cmd: CardCmd) -> Result<ExitCode> {
                 None => body.unwrap_or_default(),
             };
             let c = cards::add(repo, NewCard { title, body, tags, questions: Vec::new() })?;
+            pit_core::runs::Client::describe_if_up(&super::pitlane_home(), &repo.root, c.id);
             println!("{} #{} {}", paint(DONE, "✓"), c.id, c.title);
             println!("  {}", c.path.display());
         }

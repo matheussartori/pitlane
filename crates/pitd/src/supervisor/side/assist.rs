@@ -12,7 +12,7 @@ impl Supervisor {
     /// like any session, and the next message picks its session back up. Stopped by the
     /// person, or failed, the next one starts afresh.
     pub async fn assist(self: &Arc<Self>, repo: PathBuf, text: String) -> Result<()> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let last = self
             .sessions(Some(&r.root))?
             .into_iter()
@@ -77,7 +77,7 @@ impl Supervisor {
         if m.kind != SessionKind::Assist {
             bail!("the agent already finished this session; resume it to continue");
         }
-        let r = Repo::open(&m.repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&m.repo)?;
         // Its account: Claude Code saved the session in that account's directory.
         let config_dir = accounts::profile_dir(&m.account, &self.cfg.home);
         let side = assist_side(&r, m.account.clone(), config_dir, text.to_owned(), true);
@@ -113,7 +113,7 @@ impl Supervisor {
         if text.is_empty() {
             bail!("say what to pass on");
         }
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         if let Some(root) = assistant
             && root != r.root
         {

@@ -73,20 +73,8 @@ pub fn load_config(home: &Path) -> PerfConfig {
 
 /// "Agents at once" and "fewer while the Mac is loaded", from the desktop's Settings.
 fn desktop_limits(home: &Path) -> (u32, bool) {
-    let prefs = std::fs::read_to_string(home.join("desktop.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| v.get("prefs").cloned());
-    let max = prefs
-        .as_ref()
-        .and_then(|p| p.get("max_agents")?.as_u64())
-        .unwrap_or(3)
-        .clamp(1, 16) as u32;
-    let adaptive = prefs
-        .as_ref()
-        .and_then(|p| p.get("adaptive_agents")?.as_bool())
-        .unwrap_or(true);
-    (max, adaptive)
+    let prefs = pit_core::prefs::Prefs::load(home);
+    (prefs.max_agents.clamp(1, 16), prefs.adaptive_agents)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

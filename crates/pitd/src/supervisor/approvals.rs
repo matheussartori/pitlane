@@ -2,14 +2,13 @@
 
 
 use anyhow::{Context, Result};
-use pit_core::Repo;
 use pit_core::flow;
 use pit_core::time::now_secs;
 use pit_core::runs::{self, Approval, Decision, RunEvent, RunMeta};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use super::{Supervisor, home_dir};
+use super::Supervisor;
 
 impl Supervisor {
     /// The agent asks to use a tool no rule allows. Answers at once when a rule of this run or of
@@ -42,7 +41,7 @@ impl Supervisor {
             );
             return allow(&input);
         }
-        let repo_rules = Repo::open(&repo, &home_dir(), &self.cfg.home)
+        let repo_rules = self.repo(&repo)
             .map(|r| r.flow.run.allow)
             .unwrap_or_default();
         if run_rules

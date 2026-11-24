@@ -6,7 +6,6 @@ use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use pit_core::Repo;
 use pit_core::accounts::Choice;
 use pit_core::runs::{self, RunEvent};
 use serde_json::Value;
@@ -376,7 +375,7 @@ fn with_language(args: &[String], home: &Path) -> Vec<String> {
 
 /// The repository's permission mode for Claude Code (`[run] permission_mode`, `auto` by default).
 pub(super) fn mode_for(repo: &Path) -> String {
-    Repo::open(repo, &home_dir(), &pit_core::default_homes().1)
+    super::open_repo(repo, &pit_core::default_homes().1)
         .map(|r| r.flow.run.permission_mode)
         .unwrap_or_else(|_| "auto".into())
 }

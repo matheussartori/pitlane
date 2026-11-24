@@ -15,7 +15,7 @@ use pit_core::runs::{RunEvent, RunMeta, RunState, SessionKind};
 use super::card::set_card_state;
 use super::launch::{mode_for, read_only_args};
 use super::side::Side;
-use super::{Supervisor, home_dir};
+use super::Supervisor;
 
 /// The most of a lane's diff the judge is given, in bytes.
 const DIFF_BUDGET: usize = 200_000;
@@ -35,7 +35,7 @@ impl Supervisor {
             Err(_) => return,
         };
         let home = self.cfg.home.clone();
-        let Ok(r) = Repo::open(&meta.repo, &home_dir(), &home) else {
+        let Ok(r) = super::open_repo(&meta.repo, &home) else {
             return;
         };
         let cfg = r.flow.verify.clone();

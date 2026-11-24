@@ -207,10 +207,12 @@ pub(super) fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
         }
         "add_card" => {
             let title = str_arg("title").context("title is required")?;
-            card_json(&cards::add(
+            let card = cards::add(
                 &repo,
                 NewCard { title, body: str_arg("body").unwrap_or_default(), tags: tags().unwrap_or_default(), questions: questions()? },
-            )?)
+            )?;
+            pit_core::runs::Client::describe_if_up(&pit_core::default_homes().1, &repo.root, card.id);
+            card_json(&card)
         }
         "list_cards" => {
             let state = str_arg("state").map(|s| CardState::parse(&s)).transpose()?;
@@ -253,7 +255,13 @@ pub(super) fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
                 tags: tags(),
                 ..moved
             };
-            card_json(&cards::update(&repo, id, patch)?)
+            let before = cards::get(&repo, id)?.body;
+            let card = cards::update(&repo, id, patch)?;
+            // A new spec gets a new summary, as in the app.
+            if card.body.trim() != before.trim() {
+                pit_core::runs::Client::describe_if_up(&pit_core::default_homes().1, &repo.root, card.id);
+            }
+            card_json(&card)
         }
         "ask" => {
             let qs = questions()?;

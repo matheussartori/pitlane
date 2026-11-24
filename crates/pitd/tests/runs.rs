@@ -2121,3 +2121,34 @@ async fn old_records_are_deleted_and_the_list_follows_the_files() {
     record("recent", now - 2 * day, Some(now));
     assert_eq!(s.sessions(None).unwrap()[0].ended_at, Some(now));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_summary_asked_for_is_written_on_the_card_without_making_anyone_wait() {
+    let fx = fx();
+    let (first, second) = (card(&fx, "First"), card(&fx, "Second"));
+    // An agent that is signed in and answers every question with the same summary, slowly.
+    let fake = fx.fake.with_file_name("fake-describe");
+    fs::write(
+        &fake,
+        "#!/bin/sh\nif [ \"$1\" = auth ]; then echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'; exit 0; fi\nsleep 0.3\necho '{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"summary\":\"Does the thing.\"}}'\n",
+    )
+    .unwrap();
+    Command::new("chmod").arg("+x").arg(&fake).status().unwrap();
+    let s = Supervisor::new(Config { home: fx.home.clone(), claude_bin: fake.to_string_lossy().into_owned(), pit_bin: None });
+    let asked = std::time::Instant::now();
+    s.describe_later(fx.repo.clone(), first, false);
+    s.describe_later(fx.repo.clone(), second, false);
+    assert!(asked.elapsed() < Duration::from_millis(100), "asking waited for the answer");
+    let summary = |id: u32| {
+        let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+        cards::get(&r, id).unwrap().summary
+    };
+    for _ in 0..200 {
+        if summary(first).is_some() && summary(second).is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(summary(first).as_deref(), Some("Does the thing."));
+    assert_eq!(summary(second).as_deref(), Some("Does the thing."));
+}

@@ -12,7 +12,6 @@ use pit_core::flow::RUN_BASE_TOOLS;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
 use serde_json::Value;
 
-use super::home_dir;
 
 pub(super) struct Prepared {
     pub(super) branch: String,
@@ -100,7 +99,7 @@ pub(super) fn prepare(
     direct: bool,
     note: impl Fn(String),
 ) -> Result<Prepared> {
-    let r = Repo::open(repo, &home_dir(), home)?;
+    let r = super::open_repo(repo, home)?;
     let c = cards::get(&r, card)?;
     let into = into.filter(|b| !b.trim().is_empty());
     let branch = match (&c.lane, into) {
@@ -267,7 +266,7 @@ pub(super) fn prepare(
 
 /// Blocks the run's card, saying why, and when Pitlane tries it again by itself.
 pub(super) fn block_card(m: &RunMeta, reason: cards::BlockReason, detail: &str, home: &Path) -> Result<()> {
-    let r = Repo::open(&m.repo, &home_dir(), home)?;
+    let r = super::open_repo(&m.repo, home)?;
     let retries = cards::get(&r, m.card).map(|c| c.retries).unwrap_or_default();
     cards::update(
         &r,
@@ -303,7 +302,7 @@ pub(super) fn retry_policy(reason: cards::BlockReason, retries: u32, m: &RunMeta
 /// What a run that handed off part of the card asked you to look at (`check`), if it did.
 pub(super) fn check_of(m: &RunMeta) -> Option<NewQuestion> {
     let h = m.handoff.as_ref()?;
-    if h.get("status").and_then(Value::as_str) != Some("partial") {
+    if m.handoff_status() != Some("partial") {
         return None;
     }
     serde_json::from_value::<NewQuestion>(h.get("check")?.clone()).ok().filter(|q| !q.text.trim().is_empty()).map(NewQuestion::sound)
@@ -325,7 +324,7 @@ pub(super) fn short(text: &str) -> String {
 }
 
 pub(super) fn set_card_state(m: &RunMeta, state: CardState, home: &Path) -> Result<()> {
-    let r = Repo::open(&m.repo, &home_dir(), home)?;
+    let r = super::open_repo(&m.repo, home)?;
     cards::update(
         &r,
         m.card,
@@ -356,7 +355,7 @@ pub(super) fn resume_message(c: &cards::Card, prev: &RunMeta) -> String {
             q.decision.as_deref().or(q.answer.as_deref()).unwrap_or_default().trim()
         )
     }));
-    let asked = prev.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str) == Some("blocked");
+    let asked = prev.handoff_status() == Some("blocked");
     let checked = check_of(prev).is_some();
     let mut text = if asked {
         "You ended blocked on your questions; they are answered now, and you are resumed in the same session: carry on with the answers below. End with the handoff."
@@ -375,12 +374,8 @@ pub(super) fn resume_message(c: &cards::Card, prev: &RunMeta) -> String {
 
 /// Where the card goes when its run ends. `ran`: the agent got to start (it has a session).
 pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
-    let r = Repo::open(&m.repo, &home_dir(), home)?;
-    let status = m
-        .handoff
-        .as_ref()
-        .and_then(|h| h.get("status"))
-        .and_then(Value::as_str);
+    let r = super::open_repo(&m.repo, home)?;
+    let status = m.handoff_status();
     // The handoff stays on the card as a note: the next session starts from it.
     if let Some(h) = &m.handoff
         && let Some(summary) = h

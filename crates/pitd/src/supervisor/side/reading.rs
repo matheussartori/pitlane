@@ -8,7 +8,7 @@ impl Supervisor {
     /// resumes the agent's session with the answers). Something still open: the new questions go
     /// on the card, which keeps waiting for you. Returns at once; the reading goes on behind.
     pub fn recheck(self: &Arc<Self>, repo: PathBuf, id: u32) -> Result<bool> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let card = cards::get(&r, id)?;
         if !cards::wants_recheck(&card) {
             return Ok(false);
@@ -32,7 +32,7 @@ impl Supervisor {
     /// it into questions for you, and the card then waits on them like any other. When nothing you
     /// could answer would help, the card is run again once by itself, with what the reading noted.
     pub fn triage(self: &Arc<Self>, repo: &Path, id: u32) -> Result<bool> {
-        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(repo)?;
         let c = cards::get(&r, id)?;
         if !c.blocked.as_ref().is_some_and(|b| b.reason == cards::BlockReason::Stuck && b.checking.is_none()) {
             return Ok(false);

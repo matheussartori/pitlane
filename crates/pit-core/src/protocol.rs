@@ -42,7 +42,8 @@ pub enum Request {
     },
     /// Claude's short reading of a report, written on it.
     ReportDigest { repo: PathBuf, id: String },
-    /// Claude's summary of a card, and its title when `title`.
+    /// Asks for Claude's summary of a card, and its title when `title`. Answered at once: the
+    /// summary is written on the card when it is ready, one card at a time.
     Describe {
         repo: PathBuf,
         card: u32,
@@ -248,6 +249,8 @@ impl Request {
             | Self::Follow { .. }
             | Self::Approvals
             | Self::Perf
+            // A card an agent adds gets its summary too: one short call, queued one at a time.
+            | Self::Describe { .. }
             | Self::Consult { .. }
             | Self::Presence => true,
             Self::Start(_)
@@ -256,7 +259,6 @@ impl Request {
             | Self::Unblock { .. }
             | Self::Move { .. }
             | Self::ReportDigest { .. }
-            | Self::Describe { .. }
             | Self::Talk { .. }
             | Self::StopTalk { .. }
             | Self::Finish { .. }

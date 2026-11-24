@@ -29,7 +29,8 @@ pub struct Vscode {
 pub struct Running {
     pub port: u16,
     pub password: String,
-    pid: u32,
+    /// The server's process: a server started again is another one, even on the same port.
+    pub pid: u32,
 }
 
 pub fn dir(pitlane_home: &Path) -> PathBuf {

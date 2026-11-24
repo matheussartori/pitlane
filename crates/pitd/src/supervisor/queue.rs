@@ -23,7 +23,7 @@ impl Supervisor {
         message: Option<String>,
     ) -> Result<serde_json::Value> {
         let home = self.cfg.home.clone();
-        let r = Repo::open(&repo, &home_dir(), &home)?;
+        let r = super::open_repo(&repo, &home)?;
         let c = cards::get(&r, card)?;
         if c.state != CardState::Review {
             bail!("card #{card} is not in review (it is {})", c.state.as_str());
@@ -74,7 +74,7 @@ impl Supervisor {
                 let branch = c.lane.clone().context("this card has no lane to ship")?;
                 // Worked directly in its target: the work is already there.
                 if c.direct() {
-                    let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+                    let r = self.repo(&repo)?;
                     cards::update(
                         &r,
                         card,
@@ -107,7 +107,7 @@ impl Supervisor {
         branch: &str,
         to: Option<&str>,
     ) -> Result<pit_core::queue::ShipJob> {
-        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(repo)?;
         if !r.flow.flow.is_trunk(branch) {
             // The same lane in the project's related repositories goes with it, ahead of it, so a
             // stage (dev, main) always gets the whole change and never half of it.
@@ -152,7 +152,7 @@ impl Supervisor {
         let lane = c.lane.clone().context("this card has no lane to ship")?;
         let mut seen: Vec<PathBuf> = Vec::new();
         for l in related {
-            let Ok(rr) = Repo::open(&l.root, &home_dir(), &self.cfg.home) else {
+            let Ok(rr) = self.repo(&l.root) else {
                 continue;
             };
             // A repository listed twice (a worktree of it next to it) lands once.
@@ -180,7 +180,7 @@ impl Supervisor {
             )?;
         }
         // This repository's lane last, even with no commits of its own: its landing moves the card.
-        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(repo)?;
         if !self.in_line(&r.root, &lane) {
             self.enqueue(repo, &lane, c.target.as_deref())?;
         }
@@ -205,7 +205,7 @@ impl Supervisor {
         card: Option<(u32, PathBuf)>,
     ) -> Result<pit_core::queue::ShipJob> {
         use pit_core::queue::{JobState, ShipJob};
-        let r = Repo::open(repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(repo)?;
         if r.flow.flow.is_trunk(branch) {
             bail!("{branch} is a trunk branch; only lanes ship");
         }

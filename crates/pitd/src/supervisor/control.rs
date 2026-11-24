@@ -24,8 +24,6 @@ const STOP_GRACE: Duration = Duration::from_secs(10);
 const GROUP_KILL_AFTER: Duration = Duration::from_secs(2);
 
 impl Supervisor {
-    /// The Performance governor: samples the Mac every 2 s and pauses, resumes and throttles
-    /// the agents to fit the mode (see `perf`).
     /// Old session records are deleted once as the daemon starts and then once a day.
     pub fn start_housekeeping(self: &Arc<Self>) {
         let me = Arc::clone(self);
@@ -41,6 +39,8 @@ impl Supervisor {
         });
     }
 
+    /// The Performance governor: samples the Mac every 2 s and pauses, resumes and throttles
+    /// the agents to fit the mode (see `perf`).
     pub fn start_perf(self: &Arc<Self>) {
         self.perf.enable();
         let me = Arc::clone(self);
@@ -375,7 +375,6 @@ impl Drop for Release<'_> {
     }
 }
 
-/// Is that pid still a Claude Code process (and not a stranger who got the number)?
 /// Whether `pid` is still the agent of session `session`: its command line names that session
 /// (`--session-id` or `--resume`). After a reboot the number may belong to anything, your own
 /// Claude Code included, and its whole group would be ended.

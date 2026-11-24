@@ -139,14 +139,14 @@ pub fn mentioned(r: &Repo, text: &str) -> Vec<String> {
 
 /// Takes a related repository off flow.toml.
 pub fn remove(r: &Repo, rel: &str) -> Result<()> {
-    let at = if r.cwd_root.join(crate::flow::FLOW_PATH).exists() { &r.cwd_root } else { &r.root };
+    let at = r.flow_root();
     crate::flow::remove_project_repo(at, rel)
 }
 
 /// Records related repositories in flow.toml.
 pub fn add(r: &Repo, rels: &[String]) -> Result<()> {
     // Where this repository's flow.toml is read from: the worktree's own, else the main one's.
-    let at = if r.cwd_root.join(crate::flow::FLOW_PATH).exists() { &r.cwd_root } else { &r.root };
+    let at = r.flow_root();
     for rel in rels {
         crate::flow::add_project_repo(at, rel).with_context(|| format!("could not add {rel}"))?;
     }

@@ -9,13 +9,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use pit_core::Repo;
 use pit_core::cards::{self, BlockReason, CardPatch, CardState, Unblock};
 use pit_core::time::now_secs;
 use pit_core::runs::RunMeta;
 
 use super::verify::fix_request;
-use super::{StartOpts, Supervisor, home_dir};
+use super::{StartOpts, Supervisor};
 
 /// How often blocked cards due for another try are looked for.
 const TICK: Duration = Duration::from_secs(60);
@@ -26,7 +25,7 @@ impl Supervisor {
     /// Carries out what you chose for a blocked card (or what Pitlane chose, `auto`): the run it
     /// starts, if it starts one.
     pub fn unblock(self: &Arc<Self>, repo: PathBuf, id: u32, action: Unblock, auto: bool) -> Result<Option<RunMeta>> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let card = cards::get(&r, id)?;
         let Some(block) = card.blocked.clone().filter(|_| card.state == CardState::Blocked) else {
             bail!("card #{id} is not blocked");
@@ -126,7 +125,7 @@ impl Supervisor {
         repos.dedup();
         let now = now_secs();
         for repo in repos {
-            let Ok(r) = Repo::open(&repo, &home_dir(), &self.cfg.home) else { continue };
+            let Ok(r) = self.repo(&repo) else { continue };
             for c in cards::due(&r, now).unwrap_or_default() {
                 let reason = c.blocked.as_ref().map(|b| b.reason);
                 match self.unblock(r.root.clone(), c.id, Unblock::Retry, true) {

@@ -46,6 +46,18 @@ pub fn runs_dir(pitlane_home: &Path) -> PathBuf {
     pitlane_home.join("runs")
 }
 
+/// A session's record (`meta.json`) read from its folder; none when it has none yet or it cannot
+/// be read.
+pub fn record_in(dir: &Path) -> Option<RunMeta> {
+    serde_json::from_str(&std::fs::read_to_string(dir.join("meta.json")).ok()?).ok()
+}
+
+/// The sessions recorded under `pitlane_home` that `keep` keeps, in no order: what the app shows
+/// with no daemon up, and what a report is written from.
+pub fn records(pitlane_home: &Path, keep: impl Fn(&RunMeta) -> bool) -> Vec<RunMeta> {
+    std::fs::read_dir(runs_dir(pitlane_home)).into_iter().flatten().flatten().filter_map(|e| record_in(&e.path())).filter(keep).collect()
+}
+
 /// One run's folder, for a run id that came from outside (the app, the socket, the CLI):
 /// anything that is not a plain name is refused, so it never reads outside `runs/`.
 pub fn run_dir(pitlane_home: &Path, run: &str) -> Result<PathBuf> {
@@ -191,6 +203,11 @@ pub struct RunMeta {
 }
 
 impl RunMeta {
+    /// The handoff's `status` (`done`, `partial`, `blocked`), when the agent left one.
+    pub fn handoff_status(&self) -> Option<&str> {
+        self.handoff.as_ref()?.get("status")?.as_str()
+    }
+
     /// A session about to start: Claude Code, nothing run yet. The rest is set by whoever starts it.
     pub fn new(id: String, repo: PathBuf, card: u32, kind: SessionKind, started_at: u64) -> Self {
         Self { id, repo, card, kind, started_at, agent: "claude-code".into(), ..Default::default() }

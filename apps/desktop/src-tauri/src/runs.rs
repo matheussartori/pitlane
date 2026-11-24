@@ -16,14 +16,7 @@ use crate::{CmdResult, blocking, open};
 
 /// The sessions recorded on disk that `keep` keeps, newest first: what there is with no daemon up.
 fn runs_on_disk(keep: impl Fn(&RunMeta) -> bool) -> Vec<RunMeta> {
-    let mut all: Vec<RunMeta> = std::fs::read_dir(runs::runs_dir(&default_homes().1))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| std::fs::read_to_string(e.path().join("meta.json")).ok())
-        .filter_map(|t| serde_json::from_str::<RunMeta>(&t).ok())
-        .filter(keep)
-        .collect();
+    let mut all = runs::records(&default_homes().1, keep);
     all.sort_by_key(|m| std::cmp::Reverse(m.started_at));
     all
 }

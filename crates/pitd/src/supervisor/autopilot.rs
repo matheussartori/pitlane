@@ -3,13 +3,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use pit_core::Repo;
 use pit_core::actions;
 use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::runs::{RunEvent, RunMeta, RunState};
-use serde_json::Value;
 
-use super::{StartOpts, Supervisor, home_dir};
+use super::{StartOpts, Supervisor};
 use super::verify::fix_request;
 
 /// Times a run that ran out of turns goes on in the same session.
@@ -34,7 +32,7 @@ impl Supervisor {
     pub(super) async fn autopilot(self: &Arc<Self>, id: &str) {
         let Ok(m) = self.get(id) else { return };
         let home = self.cfg.home.clone();
-        let Ok(r) = Repo::open(&m.repo, &home_dir(), &home) else {
+        let Ok(r) = super::open_repo(&m.repo, &home) else {
             return;
         };
         let next = StartOpts {
@@ -93,10 +91,7 @@ impl Supervisor {
                 }
             }
             RunState::Done
-                if m.handoff
-                    .as_ref()
-                    .and_then(|h| h.get("status"))
-                    .and_then(Value::as_str)
+                if m.handoff_status()
                     != Some("blocked") =>
             {
                 let c = match cards::get(&r, m.card) {
@@ -191,7 +186,7 @@ impl Supervisor {
     /// it is not done. It goes back to the queue with what is left on it, where the batch (or
     /// the next one) works it again, instead of closing with part of its spec undone.
     pub(super) fn reopen_unfinished(&self, repo: &Path, card: u32) {
-        let Ok(r) = Repo::open(repo, &home_dir(), &self.cfg.home) else {
+        let Ok(r) = self.repo(repo) else {
             return;
         };
         let Some(last) = self.latest_run(&r.root, card) else {
@@ -248,7 +243,7 @@ impl Supervisor {
     pub(super) fn conflict_round(self: &Arc<Self>, job: &pit_core::queue::ShipJob, files: &[String]) {
         let Some(card) = job.card else { return };
         let board_repo = job.card_repo.clone().unwrap_or_else(|| job.repo.clone());
-        let Ok(r) = Repo::open(&board_repo, &home_dir(), &self.cfg.home) else {
+        let Ok(r) = self.repo(&board_repo) else {
             return;
         };
         let Some(last) = self.latest_run(&r.root, card) else {
@@ -282,7 +277,7 @@ impl Supervisor {
         }
         // In a related repository the merge happens in that repository's worktree.
         let place = match &job.card_repo {
-            Some(_) => Repo::open(&job.repo, &home_dir(), &self.cfg.home)
+            Some(_) => self.repo(&job.repo)
                 .and_then(|rr| actions::ensure_worktree(&rr, &job.branch))
                 .map(|w| format!(" (in `{}`, use `git -C` there)", w.display()))
                 .unwrap_or_default(),
@@ -317,9 +312,6 @@ impl Supervisor {
 fn unfinished(m: &RunMeta) -> bool {
     m.autopilot
         && m.state == RunState::Done
-        && m.handoff
-            .as_ref()
-            .and_then(|h| h.get("status"))
-            .and_then(Value::as_str)
+        && m.handoff_status()
             == Some("partial")
 }

@@ -13,7 +13,7 @@ impl Supervisor {
         instructions: String,
         into: Option<String>,
     ) -> Result<Value> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let cwd = match into.as_deref() {
             Some(t) if !r.flow.flow.is_trunk(t) => {
                 actions::ensure_worktree(&r, t).unwrap_or_else(|_| r.root.clone())

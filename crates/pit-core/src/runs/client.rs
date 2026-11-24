@@ -143,9 +143,19 @@ impl Client {
         self.request_as(&Request::ReportDigest { repo: repo.to_owned(), id: id.into() })
     }
 
-    /// Claude's summary of a card, and its title when `title`.
-    pub fn describe(&mut self, repo: &Path, card: u32, title: bool) -> Result<Value> {
-        self.request(&Request::Describe { repo: repo.to_owned(), card, title })
+    /// Asks for Claude's summary of a card, and its title when `title`. The daemon answers at
+    /// once and writes them on the card when they are ready.
+    pub fn describe(&mut self, repo: &Path, card: u32, title: bool) -> Result<()> {
+        self.request_as::<Done>(&Request::Describe { repo: repo.to_owned(), card, title }).map(drop)
+    }
+
+    /// Asks a daemon that is already up for the summary of a card made or rewritten outside the
+    /// app (`pit card add`, the MCP's `add_card`). Never starts a daemon for it, never waits long
+    /// and never fails: with no daemon the card simply has no summary until the app describes it.
+    pub fn describe_if_up(pitlane_home: &Path, repo: &Path, card: u32) {
+        if let Ok(mut c) = Self::connect(pitlane_home, None).and_then(|c| c.with_timeout(Some(Duration::from_secs(2)))) {
+            let _ = c.describe(repo, card, false);
+        }
     }
 
     /// Talks a card's question over with Claude.

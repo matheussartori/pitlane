@@ -20,7 +20,6 @@ type Rect = (f64, f64, f64, f64);
 ///
 /// No lock here is held while a webview is called: a call from another thread waits for the
 /// main thread, which may itself be waiting for that lock. Read the views with `views()`.
-
 #[derive(Default)]
 pub(crate) struct CodeView {
     views: Mutex<Vec<View>>,
@@ -41,6 +40,8 @@ pub(crate) struct CodeView {
 struct View {
     folder: String,
     label: String,
+    /// The code-server process its page was loaded from.
+    server: u32,
     ready: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -190,16 +191,19 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     let existing = {
         let mut views = state.views.lock().unwrap();
         views.iter().position(|v| v.folder == folder).map(|i| {
-            let v = views.remove(i);
-            let found = (v.label.clone(), v.ready.clone());
+            let mut v = views.remove(i);
+            let found = (v.label.clone(), v.ready.clone(), v.server != r.pid);
+            v.server = r.pid;
             views.insert(0, v);
             found
         })
     };
-    if let Some((label, ready)) = existing {
+    if let Some((label, ready, restarted)) = existing {
         if let Some(wv) = app.get_webview(&label) {
-            // A server started again since (a new port): load the folder from it.
-            if !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
+            // A server started again since: load the folder from it. Told by its process and not
+            // only by its port, which the new server may well get again while the page still
+            // talks to the one that is gone.
+            if restarted || !wv.url().is_ok_and(|u| u.port() == Some(r.port)) {
                 ready.store(false, std::sync::atomic::Ordering::SeqCst);
                 wv.navigate(url).map_err(e)?;
                 return Ok(false);
@@ -257,7 +261,7 @@ fn code_view(app: &tauri::AppHandle, r: &vscode::Running, folder: &str, size: (f
     window.add_child(builder, LogicalPosition::new(PARKED.0, PARKED.1), LogicalSize::new(size.0.max(CODE_VIEW_MIN.0), size.1.max(CODE_VIEW_MIN.1))).map_err(e)?;
     let dropped: Vec<View> = {
         let mut views = state.views.lock().unwrap();
-        views.insert(0, View { folder: folder.to_owned(), label, ready });
+        views.insert(0, View { folder: folder.to_owned(), label, server: r.pid, ready });
         let keep = views.len().min(CODE_VIEWS);
         views.split_off(keep)
     };

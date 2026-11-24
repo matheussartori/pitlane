@@ -10,7 +10,7 @@ use pit_core::cards::{self, NewQuestion};
 use pit_core::runs::RunEvent;
 use std::sync::atomic::Ordering;
 
-use super::{Supervisor, home_dir};
+use super::Supervisor;
 use crate::presence::Mode;
 
 const COSTLY: &str = "Do not take this call yourself: finish everything that does not depend on it, then end with \
@@ -26,7 +26,7 @@ impl Supervisor {
                 None => return "This run is not live any more.".into(),
             }
         };
-        let repo = match Repo::open(&root, &home_dir(), &self.cfg.home) {
+        let repo = match self.repo(&root) {
             Ok(r) => r,
             Err(e) => return format!("Pitlane could not open the repository: {e:#}. Go with your recommendation and note it."),
         };

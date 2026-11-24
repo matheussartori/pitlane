@@ -6,11 +6,7 @@ use std::process::Command;
 
 /// The language every session writes in for a person, as an English name ("Portuguese (Brazil)").
 pub fn agent_language(pitlane_home: &Path) -> String {
-    let chosen = std::fs::read_to_string(pitlane_home.join("desktop.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.get("prefs")?.get("agent_language")?.as_str().map(str::to_owned))
-        .filter(|s| !s.is_empty() && s != "system");
+    let chosen = Some(crate::prefs::Prefs::load(pitlane_home).agent_language).filter(|s| !s.is_empty() && s != "system");
     name(&chosen.unwrap_or_else(system_locale))
 }
 

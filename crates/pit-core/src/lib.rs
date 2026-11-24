@@ -14,6 +14,7 @@ pub mod language;
 pub mod git;
 pub mod lanes;
 pub mod plan;
+pub mod prefs;
 pub mod procs;
 pub mod protocol;
 pub mod queue;
@@ -61,7 +62,18 @@ pub struct Worktree {
     pub prunable: bool,
 }
 
+/// The folder whose `.pitlane/flow.toml` counts: the checkout you are in when it has one of its
+/// own (a lane trying out a change to the flow), the repository's main folder otherwise.
+fn flow_root_of<'a>(cwd_root: &'a Path, root: &'a Path) -> &'a Path {
+    if cwd_root.join(flow::FLOW_PATH).exists() { cwd_root } else { root }
+}
+
 impl Repo {
+    /// The folder whose `.pitlane/flow.toml` this repository's flow was read from.
+    pub fn flow_root(&self) -> &Path {
+        flow_root_of(&self.cwd_root, &self.root)
+    }
+
     /// Opens with the user's home and `$PITLANE_HOME` (default `~/.pitlane`).
     pub fn open_default(dir: &Path) -> Result<Self> {
         let (home, pitlane_home) = default_homes();
@@ -80,11 +92,7 @@ impl Repo {
             .find(|w| w.is_main)
             .map(|w| w.path.clone())
             .unwrap_or_else(|| cwd_root.clone());
-        let flow = if cwd_root.join(flow::FLOW_PATH).exists() {
-            FlowFile::load(&cwd_root)?
-        } else {
-            FlowFile::load(&root)?
-        };
+        let flow = FlowFile::load(flow_root_of(&cwd_root, &root))?;
         let name = root
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())

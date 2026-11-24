@@ -8,7 +8,7 @@ impl Supervisor {
     /// question too (its options become the question's). Without a message it answers the last
     /// one again (after a failure). Waits for the answer; returns the card.
     pub async fn talk(self: &Arc<Self>, repo: PathBuf, id: u32, question: u32, message: Option<String>) -> Result<Value> {
-        let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&repo)?;
         let card = match message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
             Some(m) => cards::say(&r, id, question, "you", m, None)?,
             None => cards::get(&r, id)?,

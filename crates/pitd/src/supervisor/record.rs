@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
-use pit_core::Repo;
 use pit_core::cards::{self, CardPatch, CardState};
 use pit_core::time::now_secs;
 use pit_core::runs::{self, RunEvent, RunMeta, RunState, SessionKind};
@@ -15,7 +14,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use super::control::{signal, still_agent};
-use super::{Live, Supervisor, home_dir};
+use super::{Live, Supervisor};
 
 /// Events a follower may fall behind by before it misses some.
 const EVENTS_BUFFER: usize = 1024;
@@ -68,7 +67,7 @@ impl Supervisor {
                     // the session it was going to resume is still the one (as `settle_card` keeps it).
                     let ran = m.pid.is_some() || m.state == RunState::Verifying;
                     let paused = if ran { Some(m.id.clone()) } else { m.resumed_from.clone() };
-                    let _ = Repo::open(&m.repo, &home_dir(), &self.cfg.home).and_then(|r| {
+                    let _ = self.repo(&m.repo).and_then(|r| {
                         cards::update(
                             &r,
                             m.card,
@@ -115,9 +114,7 @@ impl Supervisor {
                 seen.insert(name);
                 continue;
             }
-            if let Ok(t) = fs::read_to_string(&path)
-                && let Ok(m) = serde_json::from_str::<RunMeta>(&t)
-            {
+            if let Some(m) = runs::record_in(&e.path()) {
                 out.push(m.clone());
                 read.insert(name.clone(), (stamp, m));
                 seen.insert(name);

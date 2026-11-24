@@ -33,7 +33,7 @@ impl Supervisor {
         if !m.worktree.is_dir() {
             bail!("the run's worktree is gone, and its conversation lives there");
         }
-        let r = Repo::open(&m.repo, &home_dir(), &self.cfg.home)?;
+        let r = self.repo(&m.repo)?;
         let mut args = read_only_args(&mode_for(&r.root));
         // Like the run: Claude in Chrome on, to look at what it made. What no rule allows is
         // asked to you through Pitlane.
