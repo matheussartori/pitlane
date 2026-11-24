@@ -415,14 +415,20 @@ export interface AccountView {
     email: string | null;
     /** The plan as Claude Code names it (`max_20x`, `pro`). */
     plan?: string | null;
+    /** The plan as Claude Code shows it to people (`Ultra`, `Max`). */
+    plan_name?: string | null;
     org?: string | null;
     login_expires_at?: string | null;
     problem: string | null;
   };
   usage: { five_hour: number | null; seven_day: number | null } | null;
   here: boolean;
-  /** Every usage window its runs reported, percent used and when it resets (unix seconds, 0 unknown). */
-  windows?: { window: string; used: number; resets_at: number }[];
+  /** Every usage meter, percent used and when it resets (unix seconds, 0 unknown): what /usage
+   * shows (`session`, `weekly_all`, `weekly_scoped` with its model), or what runs last reported
+   * (`five_hour`, `seven_day…`) when Claude Code could not be asked. */
+  windows?: { window: string; model?: string | null; used: number; resets_at: number }[];
+  /** Whether `windows` is what /usage shows now. */
+  live?: boolean;
   /** Extra usage past the plan, as the last report put it. */
   overage?: { status: string; reason: string | null; using: boolean; at: number } | null;
 }

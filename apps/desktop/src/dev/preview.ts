@@ -154,12 +154,11 @@ export async function preview<T>(cmd: string, args?: Record<string, unknown>): P
     case "accounts_list":
       return {
         accounts: [
-          { id: "default", kind: "subscription", status: { logged_in: true, method: "claude.ai", email: "you@example.com", plan: "max_20x", org: "Your organization", login_expires_at: new Date(Date.now() + 26 * 864e5).toISOString(), problem: null },
-            usage: { five_hour: 14, seven_day: 27 }, here: true,
+          { id: "default", kind: "subscription", status: { logged_in: true, method: "claude.ai", email: "you@example.com", plan: "max_20x", plan_name: "Ultra", org: "Your organization", login_expires_at: new Date(Date.now() + 26 * 864e5).toISOString(), problem: null },
+            usage: { five_hour: null, seven_day: 27 }, here: true, live: true,
             windows: [
-              { window: "five_hour", used: 14, resets_at: now() + 2 * 3600 + 840 },
-              { window: "seven_day", used: 27, resets_at: now() + 3 * 86400 + 5000 },
-              { window: "seven_day_opus", used: 41, resets_at: now() + 3 * 86400 + 5000 },
+              { window: "weekly_all", used: 27, resets_at: now() + 3 * 86400 + 5000 },
+              { window: "weekly_scoped", model: "Fable", used: 41, resets_at: now() + 3 * 86400 + 5000 },
             ],
             overage: { status: "rejected", reason: "org_level_disabled", using: false, at: now() - 300 } },
           { id: "work", kind: "team", status: { logged_in: false, method: null, email: null, problem: null }, usage: null, here: false },

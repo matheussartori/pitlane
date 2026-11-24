@@ -51,15 +51,21 @@ struct AccountOut {
     usage: Option<Usage>,
     /// The account this repository uses.
     here: bool,
-    /// Every usage window its runs reported (5-hour, 7-day, per model…), with when it resets.
+    /// Every usage meter (5-hour, weekly, per model…), with when it resets: what /usage shows, or
+    /// when Claude Code could not be asked, what its runs last reported.
     windows: Vec<Window>,
+    /// Whether `windows` is what /usage shows now rather than a run's last report.
+    live: bool,
     /// Extra usage past the plan, as the last report on this account put it.
     overage: Option<Overage>,
 }
 
 #[derive(Debug, Serialize)]
 struct Window {
+    /// `session`, `weekly_all`, `weekly_scoped` from /usage; `five_hour`, `seven_day…` from a run.
     window: String,
+    /// The model a scoped weekly meter counts (`Fable`).
+    model: Option<String>,
     /// Percent used.
     used: f64,
     /// Unix seconds; 0 when not reported.
@@ -163,13 +169,30 @@ pub(crate) async fn accounts_list(path: String) -> CmdResult<AccountsOut> {
         let routing = Routing::load(&pitlane_home)?;
         let mine = routing.repo_account(&root, &home);
         let quota: HashMap<String, Vec<RunEvent>> = running().and_then(|mut c| c.quota().ok()).unwrap_or_default();
+        // Each account asked at once: its login, then its meters when it is signed in.
+        let asked: Vec<(AccountStatus, Option<accounts::LiveUsage>)> = std::thread::scope(|s| {
+            let jobs: Vec<_> = routing
+                .accounts
+                .iter()
+                .map(|a| {
+                    let pitlane_home = &pitlane_home;
+                    s.spawn(move || {
+                        let status = accounts::status(a, pitlane_home, "claude");
+                        let live = (status.logged_in && !a.kind.is_api_key()).then(|| accounts::live_usage(a, pitlane_home, "claude").ok()).flatten();
+                        (status, live)
+                    })
+                })
+                .collect();
+            jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+        });
         let accounts = routing
             .accounts
             .iter()
-            .map(|a| AccountOut {
+            .zip(asked)
+            .map(|(a, (status, live))| AccountOut {
                 id: a.id.clone(),
                 kind: a.kind,
-                status: accounts::status(a, &pitlane_home, "claude"),
+                status,
                 usage: quota.get(&a.id).map(|evs| {
                     let mut u = Usage::default();
                     for e in evs {
@@ -184,13 +207,20 @@ pub(crate) async fn accounts_list(path: String) -> CmdResult<AccountsOut> {
                     u
                 }),
                 here: a.id == mine,
-                windows: quota
+                live: live.is_some(),
+                windows: match &live {
+                    Some(l) => l
+                        .limits
+                        .iter()
+                        .map(|m| Window { window: m.kind.clone(), model: m.model.clone(), used: m.percent, resets_at: m.resets_at })
+                        .collect(),
+                    None => quota
                     .get(&a.id)
                     .map(|evs| {
                         let mut w: Vec<Window> = evs
                             .iter()
                             .filter_map(|e| match e {
-                                RunEvent::Quota { window, used, resets_at } => Some(Window { window: window.clone(), used: used * 100.0, resets_at: *resets_at }),
+                                RunEvent::Quota { window, used, resets_at } => Some(Window { window: window.clone(), model: None, used: used * 100.0, resets_at: *resets_at }),
                                 _ => None,
                             })
                             .collect();
@@ -200,7 +230,15 @@ pub(crate) async fn accounts_list(path: String) -> CmdResult<AccountsOut> {
                         w
                     })
                     .unwrap_or_default(),
-                overage: if a.kind.is_api_key() { None } else { overage_of(&pitlane_home, &a.id) },
+                },
+                overage: if a.kind.is_api_key() {
+                    None
+                } else {
+                    overage_of(&pitlane_home, &a.id).or_else(|| {
+                        let on = live.as_ref()?.extra_usage?;
+                        Some(Overage { status: if on { "allowed" } else { "rejected" }.into(), reason: None, using: false, at: 0 })
+                    })
+                },
             })
             .collect();
         Ok(AccountsOut {

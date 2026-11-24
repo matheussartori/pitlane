@@ -24,15 +24,34 @@ pub fn accounts(repo: &Repo) -> Result<ExitCode> {
         } else {
             paint(ACCENT, &format!("not signed in: pit account login {}", a.id))
         };
-        let usage = quota
-            .get(&a.id)
-            .map(|u| {
-                let f = |v: Option<f64>| v.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "?".into());
-                format!("5h {} 7d {}", f(u.five_hour), f(u.seven_day))
-            })
-            .unwrap_or_default();
+        // What /usage shows when Claude Code can be asked; else what its runs last reported.
+        let live = if st.logged_in { pit_core::accounts::live_usage(a, &pitlane_home, &claude).ok() } else { None };
+        let usage = match live {
+            Some(l) => l
+                .limits
+                .iter()
+                .map(|m| {
+                    let name = match (m.kind.as_str(), &m.model) {
+                        ("session", _) => "5h".to_owned(),
+                        ("weekly_all", _) => "week".to_owned(),
+                        (_, Some(model)) => format!("week {model}"),
+                        (k, None) => k.replace('_', " "),
+                    };
+                    format!("{name} {:.0}%", m.percent)
+                })
+                .collect::<Vec<_>>()
+                .join("  "),
+            None => quota
+                .get(&a.id)
+                .map(|u| {
+                    let f = |v: Option<f64>| v.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "?".into());
+                    format!("5h {} 7d {}", f(u.five_hour), f(u.seven_day))
+                })
+                .unwrap_or_default(),
+        };
+        let plan = st.plan_name.clone().unwrap_or_default();
         let here = if a.id == mine { paint(ACCENT, "this repo") } else { String::new() };
-        println!("{:<14} {:<13} {signed}  {}  {here}", a.id, format!("{:?}", a.kind).to_lowercase(), paint(MUTED, &usage));
+        println!("{:<14} {:<13} {plan:<6} {signed}  {}  {here}", a.id, format!("{:?}", a.kind).to_lowercase(), paint(MUTED, &usage));
     }
     println!("{}", paint(MUTED, &format!("route: {}", routing.route.run.prefer.join(" → "))));
     Ok(ExitCode::SUCCESS)

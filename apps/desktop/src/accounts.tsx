@@ -20,9 +20,12 @@ function routeLabel(entry: string, here: string | undefined): string {
   return t("{model} on {who}", { model: model || t("The default model"), who: who ?? "" });
 }
 
-/** A plan as people say it: `max_20x` → Max 20x. */
+/** A plan as people say it. The tiers kept their old names when the plans were renamed: Max 20x is
+ * Ultra, Max 5x is Max. */
 function planLabel(p: string | null | undefined): string | null {
   if (!p) return null;
+  if (p === "max_20x") return "Ultra";
+  if (p === "max_5x") return "Max";
   const m = /^([a-z]+)(?:_(\d+)x)?$/i.exec(p);
   if (!m) return p;
   const name = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase();
@@ -30,8 +33,10 @@ function planLabel(p: string | null | undefined): string | null {
 }
 
 /** A usage window as Claude Code's /usage names it: what it covers, then its span. */
-function windowLabel(w: string): { name: string; span: string } {
-  if (w === "five_hour") return { name: t("Current session"), span: t("5-hour window") };
+function windowLabel(w: string, model?: string | null): { name: string; span: string } {
+  if (w === "five_hour" || w === "session") return { name: t("Current session"), span: t("5-hour window") };
+  if (w === "weekly_all") return { name: t("This week"), span: t("all models") };
+  if (w === "weekly_scoped") return { name: t("This week"), span: model ? t("{model} only", { model }) : "" };
   const week = /^seven_day(?:_(.+))?$/.exec(w);
   if (week) {
     const rest = week[1];
@@ -58,8 +63,8 @@ function resetLabel(at: number, nowS: number): string {
   return t("Resets {day}, {time}", { day, time });
 }
 
-function UsageRow(props: { window: string; used: number; resets_at: number; at: number; now: number }) {
-  const label = () => windowLabel(props.window);
+function UsageRow(props: { window: string; model?: string | null; used: number; resets_at: number; at: number; now: number }) {
+  const label = () => windowLabel(props.window, props.model);
   const level = () => (props.used >= 95 ? "out" : props.used >= props.at ? "high" : undefined);
   return (
     <div class="usage-row" data-level={level()}>
@@ -159,7 +164,7 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                         <span class="account-title">
                           <b>{a.id}</b>
                           <span class="account-kind">{t(kindLabel[a.kind])}</span>
-                          <Show when={planLabel(a.status.plan)}>{(p) => <span class="account-plan">{p()}</span>}</Show>
+                          <Show when={a.status.plan_name ?? planLabel(a.status.plan)}>{(p) => <span class="account-plan">{p()}</span>}</Show>
                           <Show when={a.here}>
                             <span class="account-here">{t("This repository's account")}</span>
                           </Show>
@@ -204,7 +209,7 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
                   >
                     <div class="usage">
                       <For each={a.windows}>
-                        {(w) => <UsageRow window={w.window} used={w.used} resets_at={w.resets_at} at={w.window === "five_hour" ? ok(data)!.five_hour_at : ok(data)!.seven_day_at} now={nowS()} />}
+                        {(w) => <UsageRow window={w.window} model={w.model} used={w.used} resets_at={w.resets_at} at={w.window === "five_hour" || w.window === "session" ? ok(data)!.five_hour_at : ok(data)!.seven_day_at} now={nowS()} />}
                       </For>
                     </div>
                   </Show>
@@ -233,7 +238,11 @@ export function AccountsSheet(props: { repo: string; repoName: string; onChanged
               )}
             </For>
           </ul>
-          <p class="sheet-note usage-note">{t("Figures are what Claude Code reported during this account's last run, so they can trail what /usage shows by a few minutes.")}</p>
+          <p class="sheet-note usage-note">
+            {ok(data)?.accounts.some((a) => a.kind !== "api-key" && !a.live)
+              ? t("Where Claude Code could not be asked, figures are what it reported during that account's last run, so they can trail /usage by a few minutes.")
+              : t("Figures are what /usage shows, asked of Claude Code when this opened.")}
+          </p>
 
           <p class="accounts-rule">
             {t("Switching between your subscription accounts is always yours: here or")} <code>pit account use</code>.

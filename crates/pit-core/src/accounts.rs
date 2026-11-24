@@ -278,6 +278,9 @@ pub struct AccountStatus {
     /// The plan as the CLI names it (`max_20x`, `pro`), when it says.
     #[serde(default)]
     pub plan: Option<String>,
+    /// The plan as the CLI shows it to people (`Ultra`, `Max`), when it says.
+    #[serde(default)]
+    pub plan_name: Option<String>,
     /// The organization the login belongs to.
     #[serde(default)]
     pub org: Option<String>,
@@ -308,6 +311,7 @@ pub fn status(account: &Account, pitlane_home: &Path, claude_bin: &str) -> Accou
         Ok(None) => AccountStatus { problem: Some(format!("claude auth status took longer than {} seconds", STATUS_WITHIN.as_secs())), ..Default::default() },
         Ok(Some(out)) => match serde_json::from_slice::<serde_json::Value>(&out) {
             Ok(v) => AccountStatus {
+                plan_name: if v.get("loggedIn").and_then(|x| x.as_bool()).unwrap_or(false) { plan_name(account, pitlane_home, claude_bin) } else { None },
                 logged_in: v.get("loggedIn").and_then(|x| x.as_bool()).unwrap_or(false),
                 method: v.get("authMethod").and_then(|x| x.as_str()).filter(|m| *m != "none").map(str::to_owned),
                 email: v.get("email").and_then(|x| x.as_str()).map(str::to_owned),
@@ -320,6 +324,143 @@ pub fn status(account: &Account, pitlane_home: &Path, claude_bin: &str) -> Accou
         },
         Err(e) => AccountStatus { problem: Some(format!("could not run {claude_bin}: {e}")), ..Default::default() },
     }
+}
+
+fn claude_for(account: &Account, pitlane_home: &Path, claude_bin: &str) -> Command {
+    let mut cmd = Command::new(claude_bin);
+    if let Some(dir) = profile_dir(&account.id, pitlane_home) {
+        cmd.env("CLAUDE_CONFIG_DIR", dir);
+    }
+    cmd.env_remove("CLAUDECODE");
+    cmd
+}
+
+/// The plan's name as the CLI shows it (`Login method: Claude Ultra account` → `Ultra`): the JSON
+/// only carries the tier (`max_20x`), which the plans no longer go by.
+fn plan_name(account: &Account, pitlane_home: &Path, claude_bin: &str) -> Option<String> {
+    let mut cmd = claude_for(account, pitlane_home, claude_bin);
+    cmd.args(["auth", "status", "--text"]).stdin(Stdio::null()).stderr(Stdio::null());
+    let out = crate::procs::output_within(&mut cmd, STATUS_WITHIN).ok()??;
+    plan_name_in(&String::from_utf8_lossy(&out))
+}
+
+fn plan_name_in(text: &str) -> Option<String> {
+    let line = text.lines().find_map(|l| l.trim().strip_prefix("Login method:"))?.trim();
+    let name = line.strip_prefix("Claude ")?.strip_suffix(" account")?.trim();
+    (!name.is_empty() && name != "API").then(|| name.to_owned())
+}
+
+/// One usage meter as Claude Code's /usage shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Limit {
+    /// The server's meter kind: `session` (the 5-hour window), `weekly_all`, `weekly_scoped`…
+    pub kind: String,
+    /// Percent used, 0 to 100.
+    pub percent: f64,
+    /// Unix seconds; 0 when not said.
+    pub resets_at: u64,
+    /// The model a scoped meter counts (`Fable`), when it is one.
+    pub model: Option<String>,
+}
+
+/// What /usage would show for an account: its meters and whether extra usage is on.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LiveUsage {
+    pub limits: Vec<Limit>,
+    /// Whether extra usage past the plan is turned on, when said.
+    pub extra_usage: Option<bool>,
+}
+
+const USAGE_WITHIN: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The account's plan meters, asked of the official CLI with its `get_usage` control request: the
+/// CLI fetches them with its own login, Pitlane only reads the answer. No prompt is sent, so it
+/// costs no usage; hooks and MCP servers stay off so asking starts nothing else.
+pub fn live_usage(account: &Account, pitlane_home: &Path, claude_bin: &str) -> std::result::Result<LiveUsage, String> {
+    if account.kind.is_api_key() {
+        return Err("an API key has no plan limits".into());
+    }
+    let (reader, mut writer) = std::io::pipe().map_err(|e| e.to_string())?;
+    {
+        use std::io::Write as _;
+        let ask = r#"{"type":"control_request","request_id":"usage","request":{"subtype":"get_usage","skip_behaviors":true}}"#;
+        writeln!(writer, "{ask}").map_err(|e| e.to_string())?;
+    }
+    drop(writer);
+    let mut cmd = claude_for(account, pitlane_home, claude_bin);
+    cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--settings", r#"{"disableAllHooks":true}"#])
+        .current_dir(pitlane_home)
+        .stdin(reader)
+        .stderr(Stdio::null());
+    let out = match crate::procs::output_within(&mut cmd, USAGE_WITHIN) {
+        Ok(Some(out)) => out,
+        Ok(None) => return Err(format!("{claude_bin} took longer than {} seconds", USAGE_WITHIN.as_secs())),
+        Err(e) => return Err(format!("could not run {claude_bin}: {e}")),
+    };
+    String::from_utf8_lossy(&out)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "control_response" && v["response"]["request_id"] == "usage")
+        .ok_or_else(|| "Claude Code did not answer about usage".to_owned())
+        .and_then(|v| usage_in(&v["response"]))
+}
+
+fn usage_in(response: &serde_json::Value) -> std::result::Result<LiveUsage, String> {
+    if response["subtype"] != "success" {
+        return Err(response["error"].as_str().unwrap_or("Claude Code could not read usage").to_owned());
+    }
+    let r = &response["response"]["rate_limits"];
+    if r.is_null() {
+        return Err("no plan limits for this login".into());
+    }
+    let at = |v: &serde_json::Value| v.as_str().and_then(unix_of).unwrap_or(0);
+    let mut limits: Vec<Limit> = r["limits"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|l| {
+                    Some(Limit {
+                        kind: l["kind"].as_str()?.to_owned(),
+                        percent: l["percent"].as_f64()?,
+                        resets_at: at(&l["resets_at"]),
+                        model: l["scope"]["model"]["display_name"].as_str().map(str::to_owned),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Older answers carry only the named windows.
+    if limits.is_empty() {
+        for (key, kind) in [("five_hour", "session"), ("seven_day", "weekly_all")] {
+            if let Some(p) = r[key]["utilization"].as_f64() {
+                limits.push(Limit { kind: kind.into(), percent: p, resets_at: at(&r[key]["resets_at"]), model: None });
+            }
+        }
+    }
+    Ok(LiveUsage { limits, extra_usage: r["extra_usage"]["is_enabled"].as_bool() })
+}
+
+/// Unix seconds of an RFC 3339 time (`2026-11-27T15:00:00.268613+00:00`, `…Z`).
+fn unix_of(s: &str) -> Option<u64> {
+    let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d, h, mi, sec) = (n(0..4)?, n(5..7)?, n(8..10)?, n(11..13)?, n(14..16)?, n(17..19)?);
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * (mo + if mo > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    let rest = &s[19..];
+    let rest = rest.trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let offset = match rest.as_bytes().first() {
+        Some(b'+' | b'-') => {
+            let h: i64 = rest.get(1..3)?.parse().ok()?;
+            let m: i64 = rest.get(4..6)?.parse().ok()?;
+            (h * 3600 + m * 60) * if rest.starts_with('-') { -1 } else { 1 }
+        }
+        _ => 0,
+    };
+    u64::try_from(days * 86400 + h * 3600 + mi * 60 + sec - offset).ok()
 }
 
 /// Last usage seen on an account, percent of each window.
@@ -576,5 +717,35 @@ prefer = ["opus@repo", "sonnet@repo", "opus@api"]
         let r = Routing::load(&home).unwrap();
         assert_eq!(r.repos, vec![RepoChoice { path: "/x/repo".into(), account: "default".into() }]);
         assert!(set_repo_account(&home, Path::new("/x/repo"), "nope").is_err());
+    }
+
+    #[test]
+    fn reads_the_plan_name_the_cli_shows() {
+        assert_eq!(plan_name_in("Login method: Claude Ultra account\nOrganization: x\n").as_deref(), Some("Ultra"));
+        assert_eq!(plan_name_in("Login method: Claude Max account").as_deref(), Some("Max"));
+        assert_eq!(plan_name_in("Login method: Claude API account"), None);
+        assert_eq!(plan_name_in("Not logged in"), None);
+    }
+
+    #[test]
+    fn reads_every_meter_get_usage_reports() {
+        let answer = serde_json::json!({"subtype":"success","request_id":"usage","response":{"rate_limits":{
+            "five_hour":null,
+            "seven_day":{"utilization":60,"resets_at":"2026-11-27T15:00:00.268613+00:00"},
+            "extra_usage":{"is_enabled":false},
+            "limits":[
+                {"kind":"weekly_all","group":"weekly","percent":60,"resets_at":"2026-11-27T15:00:00.268613+00:00","scope":null},
+                {"kind":"weekly_scoped","group":"weekly","percent":32,"resets_at":"2026-11-27T15:00:00Z","scope":{"model":{"id":null,"display_name":"Fable"}}}
+            ]}}});
+        let u = usage_in(&answer).unwrap();
+        assert_eq!(u.extra_usage, Some(false));
+        assert_eq!(u.limits.len(), 2);
+        assert_eq!(u.limits[0], Limit { kind: "weekly_all".into(), percent: 60.0, resets_at: 1795791600, model: None });
+        assert_eq!(u.limits[1].model.as_deref(), Some("Fable"));
+        // Without the rows, the named windows still count.
+        let old = serde_json::json!({"subtype":"success","response":{"rate_limits":{"five_hour":{"utilization":14,"resets_at":"2026-11-24T18:00:00-03:00"}}}});
+        assert_eq!(usage_in(&old).unwrap().limits, vec![Limit { kind: "session".into(), percent: 14.0, resets_at: 1795554000, model: None }]);
+        assert!(usage_in(&serde_json::json!({"subtype":"success","response":{"rate_limits":null}})).is_err());
+        assert!(usage_in(&serde_json::json!({"subtype":"error","error":"nope"})).is_err());
     }
 }
