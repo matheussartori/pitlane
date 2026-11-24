@@ -195,7 +195,7 @@ export async function startAgents() {
 
 // ---------------------------------------------------------------- reading a session
 
-const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant" };
+const KIND: Record<string, string> = { run: "Run", analysis: "Analysis", judge: "Judge", finish: "Closing step", assist: "Assistant", aside: "Aside" };
 export function kindLabel(m: RunMeta): string {
   const k = tx(KIND[m.kind ?? "run"] ?? "Run", "kind");
   return m.kind === "run" || !m.kind ? ((m.round ?? 0) > 0 ? t("{kind} · round {n}", { kind: k, n: (m.round ?? 0) + 1 }) : k) : k;

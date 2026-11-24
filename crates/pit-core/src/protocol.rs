@@ -63,6 +63,9 @@ pub enum Request {
     Sessions { repo: Option<PathBuf> },
     Get { run: String },
     Say { run: String, text: String },
+    /// A question for a card's run that it never reads: a copy of its conversation answers it
+    /// on the side, in the run's log, while the run goes on. Answers with the aside's id.
+    Aside { run: String, text: String },
     /// What the Board's assistant was asked to pass on to a card's agent: the card's live run
     /// reads it after its current step; with no run working the card, it becomes a note on the
     /// card. From a session, only the repository's Board assistant may send it.
@@ -206,6 +209,7 @@ impl Request {
             Self::Sessions { .. } => "sessions",
             Self::Get { .. } => "get",
             Self::Say { .. } => "say",
+            Self::Aside { .. } => "aside",
             Self::Relay { .. } => "relay",
             Self::Tune { .. } => "tune",
             Self::Stop { .. } => "stop",
@@ -262,6 +266,7 @@ impl Request {
             | Self::Assist { .. }
             | Self::Resume { .. }
             | Self::Say { .. }
+            | Self::Aside { .. }
             | Self::Relay { .. }
             | Self::Tune { .. }
             | Self::Stop { .. }

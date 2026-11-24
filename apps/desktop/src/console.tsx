@@ -79,6 +79,15 @@ export function AgentConsole(props: {
   const live = () => isLive(m().state);
   // The Board assistant, once ended, picks its session back up when you write to it.
   const writable = () => live() || (m().kind === "assist" && !props.sub);
+  // A card's run at work is asked on the side by default: a copy of its conversation answers,
+  // and the run goes on as if nobody had asked. ⌘Enter tells the run itself.
+  const asksAside = () => live() && !props.sub && (m().kind ?? "run") === "run";
+  // Asides asked and not answered yet.
+  const asking = createMemo(() => {
+    const open = new Set<string>();
+    for (const e of props.events) if (e.kind === "aside") e.by === "you" ? open.add(e.session) : open.delete(e.session);
+    return open;
+  });
   const rel = createMemo(() => relTo(m().worktree));
 
   // One relative copy per event, so the log keeps its rows while the timeline grows.
@@ -228,14 +237,15 @@ export function AgentConsole(props: {
   // One message at a time (Enter twice sends once), and the box is cleared when it goes, so
   // what you type while it is on its way stays yours.
   let sending = false;
-  const send = async () => {
+  const send = async (toRun = false) => {
     const msgText = text().trim();
     if (!msgText || sending) return;
     if (command(msgText)) return;
     sending = true;
     setText("");
     try {
-      await api.runSay(m().id, msgText);
+      if (asksAside() && !toRun) await api.runAside(m().id, msgText);
+      else await api.runSay(m().id, msgText);
       props.onTalked?.();
     } catch (e) {
       // Not sent: the words come back, unless something new was typed meanwhile.
@@ -282,7 +292,7 @@ export function AgentConsole(props: {
       </Show>
       <div class="ag-log" ref={tail.ref} aria-live="polite">
         <For each={shown()} fallback={<div class="ag-line ag-muted">{live() ? t("Starting…") : t("Nothing recorded.")}</div>}>
-          {(e) => <Line e={e} m={m()} done={e.kind === "tool" ? results().get(e.id) : undefined} onSub={props.onSub} />}
+          {(e) => <Line e={e} m={m()} done={e.kind === "tool" ? results().get(e.id) : undefined} asking={e.kind === "aside" && asking().has(e.session)} onSub={props.onSub} />}
         </For>
         <Show when={working()}>
           <div class="cc-call cc-working">
@@ -339,7 +349,9 @@ export function AgentConsole(props: {
             live()
               ? props.sub
                 ? t("Message the agent that opened this subagent (Enter). Ctrl+C stops it")
-                : t("Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it")
+                : asksAside()
+                  ? t("Ask without stopping it (Enter) · tell the run itself (⌘Enter). Ctrl+C stops it")
+                  : t("Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it")
               : writable()
                 ? t("Ask something else; it picks this conversation back up (Enter)")
                 : t("This session ended ({state})", { state: props.ended.toLowerCase() })
@@ -359,7 +371,7 @@ export function AgentConsole(props: {
             } else if (list.length > 0 && e.key === "Escape") {
               e.preventDefault();
               setText("");
-            } else if (e.key === "Enter" && !e.isComposing) (e.preventDefault(), void send());
+            } else if (e.key === "Enter" && !e.isComposing) (e.preventDefault(), void send(e.metaKey || e.ctrlKey));
             // Escape with nothing typed belongs to the screen (the run goes back to the Board).
             if (!(e.key === "Escape" && !text())) e.stopPropagation();
             onKey(e);
@@ -476,7 +488,7 @@ function Sys(props: { glyph: string; tone?: "ok" | "fail" | "needs" | "ink"; chi
 }
 
 /** One event of a session, as Claude Code's terminal shows it. */
-function Line(props: { e: RunEvent; m: RunMeta; done?: Done; onSub: (id: string) => void }) {
+function Line(props: { e: RunEvent; m: RunMeta; done?: Done; asking?: boolean; onSub: (id: string) => void }) {
   const e = props.e;
   const live = () => isLive(props.m.state);
   switch (e.kind) {
@@ -528,6 +540,32 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Done; onSub: (id: string)
       return e.ok ? <div class="cc-result ag-muted">⎿  {e.detail}</div> : <Sys glyph="✕" tone="fail">{e.detail}</Sys>;
     case "shot":
       return <Shot run={props.m.id} file={e.file} />;
+    case "aside":
+      if (e.by === "failed") return <Sys glyph="×" tone="fail">{t("Not answered on the side: {why}", { why: e.text })}</Sys>;
+      if (e.by === "agent")
+        return (
+          <div class="cc-msg cc-aside">
+            <span class="cc-dot">◇</span>
+            <div class="cc-text">
+              <div class="cc-aside-tag">{t("Answered on the side; the run did not read this")}</div>
+              <Prose text={e.text.trim()} />
+            </div>
+          </div>
+        );
+      return (
+        <>
+          <div class="cc-call cc-said">
+            <span class="cc-glyph" aria-hidden="true">›</span>
+            <span>{e.text}</span>
+          </div>
+          <Show when={props.asking}>
+            <div class="cc-call cc-working">
+              <Spinner />
+              <span>{t("Answering on the side; the run goes on…")}</span>
+            </div>
+          </Show>
+        </>
+      );
     case "said":
       return (
         <div class="cc-call cc-said">

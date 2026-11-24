@@ -200,8 +200,12 @@ impl Supervisor {
     pub(super) fn side_command(&self, id: &str, side: &Side) -> Result<Command> {
         let mut cmd = stream_json(&self.cfg.claude_bin);
         let session = self.get(id)?.session_id;
-        cmd.args([if side.resume { "--resume" } else { "--session-id" }, &session])
-            .args(with_language(&refuse_peers(&side.args), &self.cfg.home));
+        match &side.fork {
+            // A copy under its own id, so the next message can pick the copy back up.
+            Some(from) => cmd.args(["--resume", from, "--fork-session", "--session-id", &session]),
+            None => cmd.args([if side.resume { "--resume" } else { "--session-id" }, &session]),
+        }
+        .args(with_language(&refuse_peers(&side.args), &self.cfg.home));
         // Whatever the session does not set comes from your Claude Code: model and effort.
         let set = side
             .args
@@ -414,7 +418,7 @@ const KEEP_OUT: &[&str] = &[
 /// classifier still judges each command. A command that needs more fails, unless the repository
 /// turns on `ask_unsandboxed`: then it asks you, marked as unsandboxed, and Pitlane's "always"
 /// rules never answer that question for you.
-fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
+pub(super) fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
     let home = home_dir();
     let at_home = |p: &str| home.join(p).to_string_lossy().into_owned();
     let tmp = std::env::temp_dir().to_string_lossy().into_owned();

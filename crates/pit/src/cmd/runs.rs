@@ -185,6 +185,11 @@ fn print_event(e: &RunEvent) {
         RunEvent::ToolDone { .. } | RunEvent::Quota { .. } => {}
         RunEvent::Shot { file, .. } => println!("    {} {}", paint(MUTED, "screenshot"), paint(MUTED, file)),
         RunEvent::Said { text } => println!("{} {}", paint(ACCENT, "you:"), plain(text)),
+        RunEvent::Aside { by, text, .. } => match by.as_str() {
+            "you" => println!("{} {}", paint(ACCENT, "you, on the side:"), plain(text)),
+            "agent" => println!("{} {}", paint(ACCENT, "aside:"), plain(text)),
+            _ => println!("{} {}", paint(ACCENT, "aside failed:"), plain(text)),
+        },
         RunEvent::Tuned { model, effort } => println!(
             "{}",
             paint(MUTED, &[model.as_ref().map(|m| format!("model {m}")), effort.as_ref().map(|e| format!("effort {e}"))].into_iter().flatten().collect::<Vec<_>>().join(", "))

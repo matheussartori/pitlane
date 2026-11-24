@@ -178,6 +178,11 @@ impl Client {
         self.request_as::<Done>(&Request::Say { run: run.into(), text }).map(drop)
     }
 
+    /// Asks a card's run something on the side; returns the aside session's id.
+    pub fn aside(&mut self, run: &str, text: String) -> Result<String> {
+        self.request_as::<RunReply>(&Request::Aside { run: run.into(), text }).map(|r| r.run.id)
+    }
+
     /// `/model` and `/effort` for a live session.
     pub fn tune(&mut self, run: &str, model: Option<String>, effort: Option<String>) -> Result<()> {
         self.request_as::<Done>(&Request::Tune { run: run.into(), model, effort }).map(drop)

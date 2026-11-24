@@ -192,6 +192,7 @@ impl Supervisor {
                 .map(|r| cards::image_bytes(&r, card))
                 .unwrap_or_default(),
             resume: false,
+            fork: None,
         };
         let stdout = self
             .side_session(side)

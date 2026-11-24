@@ -197,6 +197,19 @@ impl Supervisor {
         let _ = l.tx.send((i, ev));
     }
 
+    /// Like `emit`, and kept in its timeline when the session has ended meanwhile (an aside's
+    /// answer to a run that finished while it answered).
+    pub(super) fn record(&self, id: &str, ev: RunEvent) {
+        if self.live().contains_key(id) {
+            return self.emit(id, ev);
+        }
+        if let Ok(line) = serde_json::to_string(&ev)
+            && let Ok(mut f) = fs::OpenOptions::new().append(true).open(self.dir(id).join("timeline.jsonl"))
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+
     pub fn read_timeline(&self, id: &str, from: usize) -> Vec<(usize, RunEvent)> {
         fs::read_to_string(self.dir(id).join("timeline.jsonl"))
             .unwrap_or_default()

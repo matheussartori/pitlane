@@ -23,6 +23,7 @@ use crate::supervisor::session::{AFTER_EXIT_READ, capture_stderr, stderr_tail};
 use crate::supervisor::{Supervisor, home_dir};
 
 mod analysis;
+mod aside;
 mod assist;
 mod finish;
 mod reading;
@@ -64,6 +65,9 @@ pub(super) struct Side {
     pub(super) images: Vec<(&'static str, Vec<u8>)>,
     /// Picks the run's Claude Code session back up (`--resume`) instead of starting it.
     pub(super) resume: bool,
+    /// Starts as a copy of this Claude Code session (`--resume <it> --fork-session`): it knows
+    /// all that session did and said, and nothing it does reaches that session.
+    pub(super) fork: Option<String>,
 }
 
 impl Supervisor {
@@ -81,6 +85,12 @@ impl Supervisor {
     /// like a run, so the app shows it live and people can write to it while it works. Returns
     /// the last `result` line it printed.
     pub(super) async fn side_session(&self, side: Side) -> Result<String> {
+        let id = self.open_side(&side)?;
+        self.drive_side(id, side).await
+    }
+
+    /// Records a side session about to start and returns its id.
+    pub(super) fn open_side(&self, side: &Side) -> Result<String> {
         let now = now_secs();
         let tag = match side.kind {
             SessionKind::Analysis => "analysis",
@@ -88,6 +98,7 @@ impl Supervisor {
             SessionKind::Run => "run",
             SessionKind::Finish => "finish",
             SessionKind::Assist => "assist",
+            SessionKind::Aside => "aside",
         };
         let id = format!(
             "{}-{tag}-{now}-{}",
@@ -110,7 +121,7 @@ impl Supervisor {
         if side.kind == SessionKind::Assist {
             self.emit(&id, RunEvent::Said { text: side.prompt.clone() });
         }
-        self.drive_side(id, side).await
+        Ok(id)
     }
 
     /// Runs a recorded side session's Claude Code to its end and records how it ended.

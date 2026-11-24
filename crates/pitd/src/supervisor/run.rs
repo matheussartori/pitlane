@@ -54,6 +54,9 @@ impl Supervisor {
         let claim = (r.root.clone(), card);
         let _claim = Release(&self.starting, claim);
         let mut opts = opts;
+        // A card in Run all's queue stays Run all's when you start it by hand: a partial handoff
+        // puts it back in the queue for what is left, instead of in Review with nothing to do.
+        opts.autopilot |= c.state == CardState::Queued;
         let mut resume = resume;
         // A card stopped mid-work picks its session up where it was left: the agent keeps all it
         // did and said. Unless the person starts over, or the session is gone.

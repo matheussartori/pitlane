@@ -21,6 +21,14 @@ use tempfile::TempDir;
 /// FAKE_MODE=turns-once runs out of turns the first time in a worktree, then finishes.
 /// FAKE_MODE=partial hands off one stage of a larger card, with what is left.
 const FAKE: &str = r#"#!/bin/bash
+# An aside, a copy of a run's session: one question on stdin, one answer.
+if [[ " $* " == *" --fork-session "* ]]; then
+  echo "$*" > "$PWD/.aside-args"
+  IFS= read -r line; echo "$line" > "$PWD/.aside-prompt"
+  echo '{"type":"system","subtype":"init","session_id":"aside-1","model":"fake-model"}'
+  echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":10,"total_cost_usd":0.01,"usage":{},"result":"On stage 2 of 3."}'
+  exit 0
+fi
 # The judge, a side session: one prompt line on stdin, one result. FAKE_VERDICT picks the verdict.
 if [[ " $* " == *" --permission-prompts none "* ]]; then
   IFS= read -r line; echo "$line" > "$PWD/.judge-prompt"
@@ -246,6 +254,7 @@ async fn a_run_from_start_to_review_with_a_note_on_the_way() {
             RunEvent::Tool { .. } => "tool",
             RunEvent::ToolDone { .. } => "tool-done",
             RunEvent::Said { .. } => "said",
+            RunEvent::Aside { .. } => "aside",
             RunEvent::Shot { .. } => "shot",
             RunEvent::Tuned { .. } => "tuned",
             RunEvent::Quota { .. } => "quota",
@@ -1928,4 +1937,72 @@ async fn the_board_assistant_ends_after_answering_and_a_message_picks_it_back_up
     assert!(tl.iter().enumerate().all(|(i, (n, _))| i == *n));
     let said: Vec<&str> = tl.iter().filter_map(|(_, e)| match e { RunEvent::Said { text } => Some(text.as_str()), _ => None }).collect();
     assert_eq!(said, ["Make cards from this list.", "And one more.", "A third one."]);
+}
+
+/// A question to a working run goes to a copy of its conversation, which answers it in the run's
+/// log while the run goes on: the run never reads it, and a follow-up hears the earlier answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_question_to_a_working_run_is_answered_on_the_side() {
+    let fx = fx();
+    let id = card(&fx, "Props in stages");
+    let s = fake_in(&fx, "slow");
+    let run = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    for _ in 0..200 {
+        if s.read_timeline(&run.id, 0).iter().any(|(_, e)| matches!(e, RunEvent::Quota { .. })) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let asides = |s: &Arc<Supervisor>| -> Vec<(String, String)> {
+        s.read_timeline(&run.id, 0)
+            .into_iter()
+            .filter_map(|(_, e)| match e { RunEvent::Aside { by, text, .. } => Some((by, text)), _ => None })
+            .collect()
+    };
+    let first = s.aside(&run.id, "Where are you?").await.unwrap();
+    let m = ends_within(&s, &first, 20).await;
+    assert_eq!(m.state, RunState::Done, "{:?}", m.error);
+    assert_eq!((m.kind, m.parent.as_deref()), (pit_core::runs::SessionKind::Aside, Some(run.id.as_str())));
+    for _ in 0..100 {
+        if asides(&s).len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(asides(&s), [("you".to_owned(), "Where are you?".to_owned()), ("agent".to_owned(), "On stage 2 of 3.".to_owned())]);
+    let wt = s.get(&run.id).unwrap().worktree;
+    let args = fs::read_to_string(wt.join(".aside-args")).unwrap();
+    assert!(args.contains("--resume sess-1 --fork-session --session-id"), "{args}");
+    assert!(args.contains("--disallowedTools Edit,Write,NotebookEdit"), "{args}");
+
+    // A follow-up is told what was asked before.
+    let second = s.aside(&run.id, "And then?").await.unwrap();
+    ends_within(&s, &second, 20).await;
+    let prompt = fs::read_to_string(wt.join(".aside-prompt")).unwrap();
+    assert!(prompt.contains("Where are you?") && prompt.contains("On stage 2 of 3.") && prompt.contains("And then?"), "{prompt}");
+
+    // The run never heard any of it, and is still at work.
+    assert!(s.get(&run.id).unwrap().state.is_live());
+    assert!(!s.read_timeline(&run.id, 0).iter().any(|(_, e)| matches!(e, RunEvent::Said { .. })));
+    s.stop(&run.id).unwrap();
+    wait_end(&s, &run.id).await;
+}
+
+/// A card in Run all's queue started by hand stays Run all's, so a partial handoff puts it back
+/// in the queue instead of leaving it in Review with nothing to do.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_card_started_by_hand_stays_in_run_all() {
+    let fx = fx();
+    let id = card(&fx, "Queued by Run all");
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    cards::update(&r, id, CardPatch { state: Some(CardState::Queued), ..Default::default() }).unwrap();
+    let s = sup(&fx);
+    let m = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    assert!(m.autopilot);
+    wait_end(&s, &m.id).await;
+
+    let other = card(&fx, "Started from Ready");
+    let m = s.start(fx.repo.clone(), other, None, Default::default()).unwrap();
+    assert!(!m.autopilot);
+    wait_end(&s, &m.id).await;
 }

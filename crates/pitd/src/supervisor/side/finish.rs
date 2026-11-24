@@ -54,6 +54,7 @@ impl Supervisor {
             board: false,
             images: Vec::new(),
             resume: false,
+            fork: None,
         };
         let id_hint = now_secs();
         let out = self.side_session(side).await;

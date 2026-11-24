@@ -186,6 +186,7 @@ fn assist_side(r: &Repo, account: String, config_dir: Option<PathBuf>, text: Str
         board: true,
         images: Vec::new(),
         resume,
+        fork: None,
     }
 }
 

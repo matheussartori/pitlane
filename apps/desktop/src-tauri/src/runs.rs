@@ -86,6 +86,13 @@ pub(crate) async fn run_say(run: String, text: String) -> CmdResult<()> {
     blocking(move || daemon()?.say(&run, text)).await
 }
 
+/// A question for a card's run, answered on the side by a copy of its conversation; the run
+/// never reads it. Returns the aside's id.
+#[tauri::command]
+pub(crate) async fn run_aside(run: String, text: String) -> CmdResult<String> {
+    blocking(move || daemon()?.aside(&run, text)).await
+}
+
 /// `/model` and `/effort` for a live session.
 #[tauri::command]
 pub(crate) async fn run_tune(run: String, model: Option<String>, effort: Option<String>) -> CmdResult<()> {

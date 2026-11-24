@@ -211,6 +211,7 @@ impl Supervisor {
             board: false,
             images: Vec::new(),
             resume: false,
+            fork: None,
         };
         match self.side_session(side).await {
             Ok(stdout) => match pit_core::verify::read_judge(&stdout) {

@@ -60,6 +60,7 @@ impl Supervisor {
             board: false,
             images: cards::image_bytes(&r, &card),
             resume: false,
+            fork: None,
         };
         let stdout = self
             .side_session(side)

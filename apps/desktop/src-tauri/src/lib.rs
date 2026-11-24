@@ -134,6 +134,7 @@ pub fn run() {
             runs::run_start,
             runs::run_resume,
             runs::run_say,
+            runs::run_aside,
             runs::run_tune,
             runs::run_stop,
             runs::runs_stop_all,

@@ -43,6 +43,9 @@ pub enum RunEvent {
     },
     /// A message from the person, sent while the agent works.
     Said { text: String },
+    /// A question asked on the side (`by` is `you`), and what the aside session `session`
+    /// answered (`agent`) or why it could not (`failed`). The run itself never read it.
+    Aside { session: String, by: String, text: String },
     /// The model or effort changed while the session lives (`/model`, `/effort`).
     Tuned {
         #[serde(default, skip_serializing_if = "Option::is_none")]

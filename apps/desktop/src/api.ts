@@ -407,7 +407,7 @@ export interface RelatedLane {
   worktree: string;
 }
 
-export type SessionKind = "run" | "analysis" | "judge" | "finish" | "assist";
+export type SessionKind = "run" | "analysis" | "judge" | "finish" | "assist" | "aside";
 
 export interface Quota {
   /** The account the meters are about: this repository's. */
@@ -470,6 +470,8 @@ export type RunEvent =
   | { kind: "tool-done"; id: string; ok: boolean; detail: string; parent?: string; lines?: number }
   | { kind: "shot"; tool: string; file: string; parent?: string }
   | { kind: "said"; text: string }
+  /** Asked on the side (`you`), and what the aside session answered (`agent`) or why not (`failed`). */
+  | { kind: "aside"; session: string; by: "you" | "agent" | "failed"; text: string }
   | { kind: "tuned"; model?: string; effort?: string }
   | { kind: "quota"; window: string; used: number; resets_at: number }
   | { kind: "finished"; ok: boolean; cost_usd: number; duration_ms: number; turns: number; tokens: Tokens; handoff: Handoff | null; denied: string[] }
@@ -854,6 +856,8 @@ export const api = {
   accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),
   runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
+  /** Asks a card's run on the side: a copy of its conversation answers; the run never reads it. */
+  runAside: (run: string, text: string) => invoke<string>("run_aside", { run, text }),
   /** `/model` and `/effort` while the session lives. */
   runTune: (run: string, tune: { model?: string; effort?: string }) => invoke<void>("run_tune", { run, model: tune.model ?? null, effort: tune.effort ?? null }),
   runStop: (run: string) => invoke<void>("run_stop", { run }),

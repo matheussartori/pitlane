@@ -210,6 +210,10 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
             sup.message(run_arg(&run)?, &text).await?;
             ok()
         }
+        Request::Aside { run, text } => {
+            let id = sup.aside(run_arg(&run)?, &text).await?;
+            reply(RunReply { run: sup.get(&id)? })
+        }
         Request::Tune { run, model, effort } => {
             sup.tune(run_arg(&run)?, model.as_deref(), effort.as_deref()).await?;
             ok()

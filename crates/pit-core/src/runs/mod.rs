@@ -202,6 +202,9 @@ pub enum SessionKind {
     Finish,
     /// The Board's assistant: turns what the person says into cards.
     Assist,
+    /// A question to a card's run, answered on the side by a copy of its conversation while
+    /// the run goes on untouched (its `parent`).
+    Aside,
 }
 
 fn default_account() -> String {

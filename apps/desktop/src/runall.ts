@@ -338,7 +338,7 @@ export function createRunAll(shell: Shell) {
     const total = await api.capacity().then((c) => c.agents, () => room() || 3);
     setRoom(total);
     const parts = list.map((x) => `${x.name} ${shareOf(x, total)}`).join(" · ");
-    const over = list.filter((x) => x !== b && x.runs.filter((r) => isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge").length > shareOf(x, total));
+    const over = list.filter((x) => x !== b && x.runs.filter((r) => isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge" && r.kind !== "aside").length > shareOf(x, total));
     toast(
       {
         tone: "info",
@@ -430,7 +430,7 @@ export function createRunAll(shell: Shell) {
     } catch {
       /* no governor to ask: count the batches' own */
     }
-    return batches().reduce((n, x) => n + x.runs.filter((r) => isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge").length, 0);
+    return batches().reduce((n, x) => n + x.runs.filter((r) => isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge" && r.kind !== "aside").length, 0);
   }
 
   /** Advance passes, every repository's, one at a time: each counts the agents on the Mac
@@ -496,7 +496,7 @@ export function createRunAll(shell: Shell) {
       if (!alive(b, token)) return;
       const share = shareOf(b, total);
       const others = () => workingBatches().filter((x) => x !== b && x.hungry);
-      const mine = () => busy.filter((id) => b.runs.some((r) => r.card === id && isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge")).length + started.length;
+      const mine = () => busy.filter((id) => b.runs.some((r) => r.card === id && isLive(r.state) && r.kind !== "analysis" && r.kind !== "judge" && r.kind !== "aside")).length + started.length;
       let wanting = false;
       for (const [i, id] of ready.entries()) {
         if (!alive(b, token)) return;

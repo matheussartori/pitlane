@@ -1241,6 +1241,9 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 /* What you said, as Claude Code shows your prompt: on a step lighter, the › in accent. */
 .cc-said { margin-block: var(--space-xs); padding: var(--space-3xs) var(--space-xs) var(--space-3xs) 0; border-radius: var(--radius-sm); background: var(--color-paper-2); color: var(--color-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cc-said .cc-glyph { color: var(--color-accent-text); text-align: center; }
+/* An answer from the side (an aside): the agent's words, marked as never read by the run. */
+.cc-aside .cc-dot { color: var(--color-muted); }
+.cc-aside-tag { color: var(--color-muted); font-size: var(--text-xs); margin-bottom: var(--space-3xs); }
 .cc-working { margin-top: var(--space-xs); align-items: center; color: var(--color-muted); }
 .cc-working .spinner { justify-self: start; }
 .cc-dot[data-s="ok"] { color: var(--color-done); }
