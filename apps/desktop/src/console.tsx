@@ -9,6 +9,7 @@ import { Spinner, toast, tailFollower } from "./ui";
 import { ImageViewer } from "./viewer";
 import { ApprovalBlock } from "./approvals";
 import { Icon } from "./icons";
+import { Dictate } from "./dictate";
 import { Prose } from "./prose";
 import { money, msg } from "./format";
 import { highlight, langOf } from "./highlight";
@@ -530,6 +531,9 @@ export function AgentConsole(props: {
             onKey(e);
           }}
         />
+        <Show when={writable()}>
+          <Dictate field={() => input} value={text} onChange={(v) => ((recall = null), setText(v))} />
+        </Show>
       </div>
       <div class="ag-status" data-off={live() ? undefined : ""}>
         <button type="button" class="ag-chip ag-chip-model" disabled={!live()} title={live() ? t("Switch the model (/model)") : (m().reason ?? undefined)} onClick={() => ask("model")}>

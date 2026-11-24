@@ -940,6 +940,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .note-input::placeholder { color: var(--color-muted); }
 .note-compose-bar { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-2xs) var(--space-xs) var(--space-xs); }
 .note-compose-bar .dictate { height: 26px; padding-inline: var(--space-2xs); font-size: var(--text-xs); color: var(--color-muted); }
+.ag-input .dictate { height: 26px; padding-inline: var(--space-2xs); font-size: var(--text-xs); color: var(--color-muted); } /* the run's composer: compact, beside the field */
 .note-keys { margin-inline-start: auto; font: var(--weight-regular) var(--text-xs)/1 var(--font-mono); color: var(--color-muted); opacity: 0; transition: opacity var(--dur-short) var(--ease-out); }
 .note-compose[data-filled] .note-keys { opacity: 1; }
 .note-compose-bar .btn-primary { height: 26px; padding-inline: var(--space-xs); font-size: var(--text-xs); }
