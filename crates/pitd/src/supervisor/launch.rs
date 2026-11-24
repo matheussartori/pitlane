@@ -392,40 +392,43 @@ pub(super) fn read_only_args(mode: &str) -> Vec<String> {
 
 /// Playwright's MCP server, pinned, headless and with a throwaway profile: the agent's browser
 /// when the repository turns it on. Its tools are `mcp__browser__*`.
-/// Where package managers and build tools keep what they download, under your home: a sandboxed
-/// `cargo build` or `npm install` writes there.
-const CACHES: &[&str] = &[".cargo", ".rustup", ".npm", ".pnpm-store", "Library/pnpm", ".yarn", ".bun", ".deno", ".cache", "Library/Caches", "go", ".gradle", ".m2", ".nuget", ".gem", ".pyenv", ".local/share/virtualenvs"];
+/// What stays read-only in your home: where a write becomes code that runs as you later, outside
+/// the sandbox (shell startup, git, launch agents, binaries on the PATH, Claude Code and the other
+/// agents' CLIs' settings), or a login someone could take over.
+const KEEP_OUT: &[&str] = &[
+    ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".zsh", ".oh-my-zsh", ".bashrc", ".bash_profile", ".bash_login", ".profile", ".config/fish",
+    ".ssh", ".gnupg", ".aws", ".kube", ".docker/config.json", ".netrc", ".npmrc", ".config/gh",
+    ".gitconfig", ".config/git", "**/.git/hooks", "**/.git/config",
+    ".claude", ".claude.json", ".local/bin", ".cargo/bin",
+    "Library/LaunchAgents", "Library/Keychains", "Library/Preferences",
+    ".codex/config.toml", ".codex/AGENTS.md", ".codex/rules", ".gemini/config", ".gemini/antigravity-cli/settings.json",
+];
 
-/// Where the other agents' CLIs an agent may call keep their sessions, logs and refreshed logins:
-/// Codex (`codex exec`) and Antigravity (`agy -p`).
-const AGENT_CLIS: &[&str] = &[".codex", ".gemini", "Library/Application Support/antigravity", "Library/Logs/Antigravity", "Library/HTTPStorages/com.google.antigravity"];
-
-/// What an agent downloads through a browser (Claude in Chrome, say) lands in Downloads, and it
-/// moves it from there into the worktree.
-const DOWNLOADS: &str = "Downloads";
-
-/// Their settings, instructions and MCP servers stay read-only: the next time you run them, outside
-/// the sandbox, they would act on what an agent wrote there.
-const AGENT_CLI_CONFIG: &[&str] = &[".codex/config.toml", ".codex/AGENTS.md", ".codex/rules", ".gemini/config", ".gemini/antigravity-cli/settings.json"];
-
-/// Claude Code's sandbox for a run: its commands write to the worktree (and the lanes beside it,
-/// given with --add-dir), the git repository behind them (a commit writes there), the package
-/// caches, Downloads, the other agents' CLIs and the repository's `[run] write`, but not to git's hooks or
-/// config, which would run as you outside the sandbox. They reach any host on the network and no
-/// local socket, so nothing the agent runs can answer its own approvals through Pitlane's daemon;
-/// they may listen on localhost and ask macOS to check certificates (Go and Rust tools such as
-/// `agy` and `codex` verify TLS through it). A command that needs more fails, unless the
-/// repository turns on `ask_unsandboxed`: then it asks you, marked as unsandboxed, and Pitlane's
-/// "always" rules never answer that question for you.
+/// Claude Code's sandbox for a run. Its commands write anywhere in your home and the temporary
+/// folders but `KEEP_OUT`, Pitlane's own files (only the worktrees under `~/.pitlane/wt`) and the
+/// hooks and config of the run's git repository, plus the repository's `[run] write`. They reach
+/// any host on the network and no local socket, so nothing the agent runs can answer its own
+/// approvals through Pitlane's daemon; they may listen on localhost and ask macOS to check
+/// certificates (Go and Rust tools such as `agy` and `codex` verify TLS through it). Auto mode's
+/// classifier still judges each command. A command that needs more fails, unless the repository
+/// turns on `ask_unsandboxed`: then it asks you, marked as unsandboxed, and Pitlane's "always"
+/// rules never answer that question for you.
 fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
     let home = home_dir();
     let at_home = |p: &str| home.join(p).to_string_lossy().into_owned();
-    let mut write: Vec<String> = CACHES.iter().chain(AGENT_CLIS).chain([&DOWNLOADS]).map(|c| at_home(c)).collect();
+    let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+    let mut write: Vec<String> = vec![at_home(""), "/private/tmp".into(), tmp];
     write.extend(extra.iter().map(|p| match p.strip_prefix("~/") {
         Some(rest) => at_home(rest),
         None => p.clone(),
     }));
-    let mut deny: Vec<String> = AGENT_CLI_CONFIG.iter().map(|c| at_home(c)).collect();
+    let mut deny: Vec<String> = KEEP_OUT.iter().map(|c| at_home(c)).collect();
+    let pitlane = home.join(".pitlane");
+    let mut ours: Vec<PathBuf> = ["boards", "runs", "profiles", "index", "reports", "zsh"].iter().map(|n| pitlane.join(n)).collect();
+    ours.extend(fs::read_dir(&pitlane).into_iter().flatten().flatten().map(|e| e.path()));
+    ours.sort();
+    ours.dedup();
+    deny.extend(ours.iter().filter(|p| p.file_name().is_some_and(|n| n != "wt")).map(|p| p.to_string_lossy().into_owned()));
     for wt in std::iter::once(worktree).chain(related) {
         let git = pit_core::git::Git::new(wt);
         if let Ok(common) = git.run(&["rev-parse", "--path-format=absolute", "--git-common-dir"]) {
@@ -491,7 +494,7 @@ mod your_claude_tests {
         assert_eq!(s["sandbox"]["allowUnsandboxedCommands"], false);
         assert!(s.get("permissions").is_none());
         let write = s["sandbox"]["filesystem"]["allowWrite"].as_array().unwrap();
-        for p in [".mytool", ".codex", ".gemini", "Downloads"] {
+        for p in [".mytool", ""] {
             assert!(write.iter().any(|w| w == &Value::from(home_dir().join(p).to_string_lossy().into_owned())), "{p}");
         }
         let asks = Value::Object(sandbox_settings(&wt, std::iter::empty(), &[], true));
