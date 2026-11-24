@@ -7,6 +7,7 @@ import { Dictate } from "./dictate";
 import { attachImages, imagesIn } from "./images";
 import { Linked } from "./links";
 import { refreshAgents } from "./store/agents";
+import { analyseCards, analysing, stopAnalysing } from "./store/analysis";
 import { MiniTrack } from "./track";
 import { ForgetSheet, deleteCard, hasMemory, unblockCard } from "./cardactions";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
@@ -410,15 +411,37 @@ export function BoardView(props: {
   const remembered = () => backlog().map(({ card }) => card).filter(hasMemory);
   const [forgetting, setForgetting] = createSignal<number[] | null>(null);
 
-  // Backlog's head: Analyse (Claude reads the ideas, asks once). Queued's head: the run itself.
+  // Backlog's head: Analyse (Claude reads the cards not read yet, asks once, nothing starts), on
+  // its own whatever Run all does; while Run all reads its cards, its own stop and answers.
+  // Queued's head: the run itself.
+  const reading = () => analysing(props.repo);
+  /** Cards Claude reads now, by itself or for Run all joining them. */
+  const isReading = (id: number) => reading().includes(id) || props.joining.includes(id);
+  const toRead = () => unanalysed().filter(({ card }) => !isReading(card.id));
+  const batchReads = () => props.phase === "analyzing" || props.phase === "asking";
   const analyseLabel = () =>
-    props.phase === "analyzing" ? t("Stop analysing") : props.phase === "asking" ? t("Answer to go on") : t("Analyse {n}", { n: unanalysed().length });
+    props.phase === "analyzing"
+      ? t("Stop analysing")
+      : props.phase === "asking"
+        ? t("Answer to go on")
+        : reading().length > 0
+          ? t("Analysing {n}", { n: reading().length })
+          : t("Analyse {n}", { n: toRead().length });
   const analyseAction = () => {
     if (props.phase === "analyzing") return props.onStopAll();
     if (props.phase === "asking") return props.onQuestions();
-    if (props.phase === "idle") props.onAnalyse(unanalysed().map(({ card }) => card.id));
+    if (!props.repo) return;
+    if (reading().length > 0) return void stopAnalysing(props.repo);
+    void analyseCards(props.repo, toRead().map(({ card }) => card.id), props.onChanged);
   };
-  const showAnalyse = () => props.phase === "analyzing" || props.phase === "asking" || (props.phase === "idle" && unanalysed().length > 0);
+  const analyseBusy = () => props.phase === "analyzing" || (!batchReads() && reading().length > 0);
+  const showAnalyse = () => batchReads() || reading().length > 0 || toRead().length > 0;
+  /** One card, from its tile or its sheet. */
+  const analyseOne = (id: number) => {
+    if (!props.repo) return;
+    if (reading().includes(id)) return void stopAnalysing(props.repo, [id]);
+    if (!isReading(id)) void analyseCards(props.repo, [id], props.onChanged);
+  };
 
   const runLabel = () =>
     props.phase === "finishing"
@@ -512,11 +535,15 @@ export function BoardView(props: {
                       <button
                         type="button"
                         class="btn btn-ghost col-action"
-                        aria-busy={props.phase === "analyzing"}
-                        title={props.phase === "analyzing" ? t("Stops the analysis; nothing starts") : t("Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine. Nothing starts")}
+                        aria-busy={analyseBusy()}
+                        title={
+                          analyseBusy()
+                            ? t("Stops the analysis; nothing starts")
+                            : t("Claude reads each card not analysed yet: what it needs to know (asked one at a time), notes, and which cards must land first or share an engine. Nothing starts")
+                        }
                         onClick={analyseAction}
                       >
-                        <Show when={props.phase === "analyzing"} fallback={<Icon name={props.phase === "asking" ? "needs" : "search"} small />}>
+                        <Show when={analyseBusy()} fallback={<Icon name={props.phase === "asking" ? "needs" : "search"} small />}>
                           <Spinner />
                         </Show>
                         <span class="col-action-label">{analyseLabel()}</span>
@@ -653,9 +680,55 @@ export function BoardView(props: {
                               )}
                             </Show>
                             <Show when={p.column === "backlog" || p.column === "queued"}>
-                              <span class="card-analysis" data-on={card.analyzed ? "" : undefined} title={card.analyzed ? t("Analysed {at}", { at: card.analyzed }) : t("Not analysed: Run all reads it first")}>
-                                {card.analyzed ? t("Analysed") : t("Not analysed")}
-                              </span>
+                              <Show
+                                when={!card.analyzed && !liveRun(card.id) && props.repo}
+                                fallback={
+                                  <span class="card-analysis" data-on={card.analyzed ? "" : undefined} title={card.analyzed ? t("Analysed {at}", { at: card.analyzed }) : t("Not analysed: Run all reads it first")}>
+                                    {card.analyzed ? t("Analysed") : t("Not analysed")}
+                                  </span>
+                                }
+                              >
+                                <Show
+                                  when={isReading(card.id)}
+                                  fallback={
+                                    <button
+                                      type="button"
+                                      class="card-analysis card-analyse"
+                                      title={t("Claude reads this card: what it needs to know (asked one at a time), notes, and which cards must land first. Nothing starts")}
+                                      onPointerDown={(e) => e.stopPropagation()}
+                                      onKeyDown={(e) => e.stopPropagation()}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        analyseOne(card.id);
+                                      }}
+                                    >
+                                      <span class="card-analyse-idle">{t("Not analysed")}</span>
+                                      <span class="card-analyse-go">
+                                        <Icon name="search" small />
+                                        {t("Analyse")}
+                                      </span>
+                                    </button>
+                                  }
+                                >
+                                  <button
+                                    type="button"
+                                    class="card-analysis card-analyse"
+                                    data-busy=""
+                                    disabled={!reading().includes(card.id)}
+                                    title={reading().includes(card.id) ? t("Claude is reading this card. Click to stop") : t("Claude reads it to join the batch")}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      analyseOne(card.id);
+                                    }}
+                                  >
+                                    <Spinner />
+                                    <span class="card-analyse-idle">{t("Analysing")}</span>
+                                    <span class="card-analyse-go">{t("Stop")}</span>
+                                  </button>
+                                </Show>
+                              </Show>
                             </Show>
                             <Show when={(card.notes?.length ?? 0) > 0}>
                               <span class="card-notes" title={plural(card.notes!.length, "{n} note", "{n} notes")}>

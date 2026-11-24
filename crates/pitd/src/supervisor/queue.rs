@@ -164,6 +164,14 @@ impl Supervisor {
         related: &[pit_core::related::RelatedLane],
     ) -> Result<()> {
         let lane = c.lane.clone().context("this card has no lane to ship")?;
+        // A card lands only in the lane its run was given, never in a stage (dev, main): those
+        // get it when a person ships that lane.
+        let here = self.repo(repo)?;
+        match c.target.as_deref() {
+            None => bail!("card #{} has no target branch: it lands only in a lane, never in a stage; ship {lane} from Lanes", c.id),
+            Some(t) if here.flow.flow.is_trunk(t) => bail!("card #{} targets {t}, a stage: a card never lands there by itself; ship {lane} from Lanes", c.id),
+            _ => {}
+        }
         let mut seen: Vec<PathBuf> = Vec::new();
         for l in related {
             let Ok(rr) = self.repo(&l.root) else {

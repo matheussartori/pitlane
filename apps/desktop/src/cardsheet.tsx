@@ -13,13 +13,16 @@ import { plural, t } from "./i18n";
 import { age, clock, elapsed, money, msg } from "./format";
 import { MiniTrack } from "./track";
 import { ForgetSheet, deleteCard, hasMemory, unblockCard } from "./cardactions";
+import { analyseCards, analysing, stopAnalysing } from "./store/analysis";
 
 /**
  * Run all's questions, one at a time, each with its card as context and Claude to talk it over
  * with. Once all are answered nothing starts by itself: every decision of the batch shows, each
  * can change or be talked over again, and Start runs them.
  */
-export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: () => void; onDone: () => void; onStop: () => void }) {
+/** `onStop` is Run all's; without it the questions come from cards analysed on their own, and
+ *  nothing starts once they are answered. */
+export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: () => void; onDone: () => void; onStop?: () => void }) {
   const open = () => openQuestions(props.cards);
   // The count at the start, so "2 of 5" holds while answers land.
   const total = open().length;
@@ -49,7 +52,7 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 
   return (
     <Sheet
-      title={review() && open().length === 0 ? t("All decided") : t("Before the run")}
+      title={review() && open().length === 0 ? t("All decided") : props.onStop ? t("Before the run") : t("Claude's questions")}
       onClose={props.onDone}
       foot={
         <>
@@ -67,9 +70,13 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
               {t("Question {i} of {total}", { i: Math.min(total, total - open().length + 1), total })}
             </span>
           </Show>
-          <button type="button" class="btn btn-ghost" onClick={props.onStop} disabled={busy()}>
-            {t("Stop Run all")}
-          </button>
+          <Show when={props.onStop}>
+            {(stop) => (
+              <button type="button" class="btn btn-ghost" onClick={stop()} disabled={busy()}>
+                {t("Stop Run all")}
+              </button>
+            )}
+          </Show>
           <Show when={!review() && decisions() > 0}>
             <button type="button" class="btn btn-ghost" onClick={() => setReview(true)} disabled={busy()}>
               {t("Review decisions")}
@@ -83,7 +90,13 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
           <Show
             when={review() && open().length === 0}
             fallback={
-              <button type="button" class="btn" onClick={props.onDone} disabled={busy()} title={t("Cards with open questions wait; the rest start now")}>
+              <button
+                type="button"
+                class="btn"
+                onClick={props.onDone}
+                disabled={busy()}
+                title={props.onStop ? t("Cards with open questions wait; the rest start now") : t("They stay on the cards, and in the Inbox")}
+              >
                 {t("Answer later")}
               </button>
             }
@@ -95,8 +108,10 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
               disabled={thinking()}
               title={thinking() ? t("Claude is still answering on one of these cards") : undefined}
             >
-              <Icon name="play" small />
-              {t("Start")}
+              <Show when={props.onStop} fallback={t("Done")}>
+                <Icon name="play" small />
+                {t("Start")}
+              </Show>
             </button>
           </Show>
         </>
@@ -107,7 +122,9 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
         fallback={
           <div class="ask-review">
             <p class="caption">
-              {t("Go back to any of them before the cards start: choose again, or talk it over with Claude (\u201cand if we did it like this?\u201d).")}
+              {props.onStop
+                ? t("Go back to any of them before the cards start: choose again, or talk it over with Claude (\u201cand if we did it like this?\u201d).")
+                : t("Go back to any of them before a run: choose again, or talk it over with Claude (\u201cand if we did it like this?\u201d).")}
             </p>
             <For each={decided()}>
               {(c) => (
@@ -471,6 +488,25 @@ export function CardSheet(props: {
               <h3 class="cs-label">
                 {t("Notes")} <span class="count">{notes().length}</span>
               </h3>
+              <Show when={!props.card.analyzed && props.card.state !== "done" && !live()}>
+                <Show
+                  when={analysing(props.repo).includes(props.card.id)}
+                  fallback={
+                    <button
+                      type="button"
+                      class="btn btn-ghost cs-forget"
+                      onClick={() => void analyseCards(props.repo, [props.card.id], props.onChanged)}
+                      title={t("Claude reads this card: what it needs to know (asked one at a time), notes, and which cards must land first. Nothing starts")}
+                    >
+                      <Icon name="search" small /> {t("Analyse")}
+                    </button>
+                  }
+                >
+                  <button type="button" class="btn btn-ghost cs-forget" aria-busy="true" onClick={() => void stopAnalysing(props.repo, [props.card.id])} title={t("Claude is reading this card. Click to stop")}>
+                    <Spinner /> {t("Analysing")}
+                  </button>
+                </Show>
+              </Show>
               <Show when={hasMemory(props.card)}>
                 <button type="button" class="btn btn-ghost cs-forget" disabled={!!live()} onClick={() => setForgetOne(true)} title={t("Forget Claude's notes, its open questions and the analysis, to analyse this card again")}>
                   <Icon name="undo" small /> {t("Forget")}

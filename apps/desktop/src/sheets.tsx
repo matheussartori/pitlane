@@ -406,10 +406,14 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
 
 // ---------------------------------------------------------------- Run all
 
+/** The Into choice that makes a new lane (git branch names never hold a colon). */
+const NEW_LANE = ":new";
+
 /**
- * Before Run all starts: where the work lands. A lane per card, branched from the target when it
- * is a lane and merged back into it once approved; or every card directly in the target's
- * worktree, one at a time.
+ * Before Run all starts: the lane the work lands in, never a stage (dev, main): those get it when
+ * you ship that lane from Lanes. A lane per card, branched from the target and merged back into it
+ * once its checks pass; or every card directly in the target's worktree, one at a time. With no
+ * lane yet, one is made here from a freshly fetched origin.
  */
 export function RunAllSheet(props: {
   repo: string;
@@ -423,9 +427,14 @@ export function RunAllSheet(props: {
   onStart: (c: RunAllChoice) => void;
   onClose: () => void;
 }) {
-  const lanes = () => props.yard.filter((l) => l.local && l.branch !== props.production && l.branch !== props.integration);
-  const first = () => (props.selected && lanes().some((l) => l.branch === props.selected) ? props.selected : "");
+  const lanes = () => props.yard.filter((l) => l.local && l.branch !== props.production && l.branch !== props.integration && l.branch !== props.base);
+  const first = () => (props.selected && lanes().some((l) => l.branch === props.selected) ? props.selected : (lanes()[0]?.branch ?? NEW_LANE));
   const [into, setInto] = createSignal<string>(first());
+  const [newName, setNewName] = createSignal("");
+  const [creating, setCreating] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const making = () => into() === NEW_LANE;
+  const stage = (b: string) => b === props.production || b === props.integration || b === props.base;
   const [direct, setDirect] = createSignal(false);
   const [instructions, setInstructions] = createSignal("");
   // Sibling repositories the analysis found the code in: kept unless taken off here.
@@ -438,19 +447,40 @@ export function RunAllSheet(props: {
     }
   }
   let notesRef: HTMLTextAreaElement | undefined;
-  const trunk = () => into() === props.production || into() === props.integration;
-  const target = () => into() || null;
+  let newRef: HTMLInputElement | undefined;
+  const target = () => (making() ? newName().trim() : into()) || null;
+  const nameProblem = () => {
+    const n = newName().trim();
+    if (!making() || !n) return null;
+    if (stage(n)) return t("{name} is a stage: cards never land there from the Board. Name a lane.", { name: n });
+    if (props.yard.some((l) => l.branch === n)) return t("{name} already exists: pick it in the list.", { name: n });
+    return null;
+  };
   const help = () => {
     const to = target();
-    if (!to)
-      return t("Each card gets a lane of its own from a freshly fetched origin/{base}, then {stages} through the merge queue.", {
-        base: props.base,
-        stages: [props.integration, props.production].filter(Boolean).join(t(" and ")),
-      });
-    if (direct()) return t("Every card is worked in {to}’s own worktree, one at a time, committing there. Nothing is pushed.", { to });
-    if (trunk()) return t("Each card gets a lane from a freshly fetched origin/{base}; once its checks pass (after fix rounds if the judge asks), it ships straight into {to} on its own.", { base: props.base, to });
-    return t("Each card gets a lane branched from {to}; once its checks pass (after fix rounds if the judge asks), it is merged into {to} on this machine by itself (nothing pushed). Cards that build on others start once those landed.", { to });
+    if (nameProblem()) return null;
+    if (!to) return t("Name the lane the cards land in. dev and main get the work only when you ship that lane from Lanes.");
+    const made = making() ? t("{to} is made first from a freshly fetched origin/{base}. ", { to, base: props.base }) : "";
+    if (direct()) return made + t("Every card is worked in {to}’s own worktree, one at a time, committing there. Nothing is pushed.", { to });
+    return made + t("Each card gets a lane branched from {to}; once its checks pass (after fix rounds if the judge asks), it is merged into {to} on this machine by itself (nothing pushed). Cards that build on others start once those landed.", { to });
   };
+  async function start() {
+    const to = target();
+    if (!to || nameProblem() || creating()) return;
+    setError(null);
+    if (making()) {
+      setCreating(true);
+      try {
+        await api.newLane(props.repo, to);
+      } catch (e) {
+        setError(msg(e));
+        return;
+      } finally {
+        setCreating(false);
+      }
+    }
+    props.onStart({ into: to, direct: direct(), instructions: instructions().trim() });
+  }
 
   return (
     <Sheet
@@ -462,8 +492,18 @@ export function RunAllSheet(props: {
           <button type="button" class="btn btn-ghost" onClick={props.onClose}>
             {t("Cancel")}
           </button>
-          <button type="button" class="btn btn-primary" onClick={() => props.onStart({ into: target(), direct: direct() && !!target(), instructions: instructions().trim() })}>
-            <Icon name="play" small /> {t("Start")}
+          <button
+            type="button"
+            class="btn btn-primary"
+            disabled={!target() || !!nameProblem() || creating()}
+            aria-busy={creating()}
+            title={!target() ? t("Name the lane the cards land in") : undefined}
+            onClick={() => void start()}
+          >
+            <Show when={creating()} fallback={<Icon name="play" small />}>
+              <Spinner />
+            </Show>
+            {creating() ? t("Creating {name}", { name: target() ?? "" }) : t("Start")}
           </button>
         </>
       }
@@ -472,13 +512,45 @@ export function RunAllSheet(props: {
         <label class="field-label" for="run-all-into">
           {t("Into")}
         </label>
-        <select id="run-all-into" class="select input-mono" value={into()} onChange={(e) => setInto(e.currentTarget.value)}>
-          <option value="">{t("The flow")} ({[props.integration, props.production].filter(Boolean).join(" → ")})</option>
+        <select
+          id="run-all-into"
+          class="select input-mono"
+          value={into()}
+          onChange={(e) => {
+            setInto(e.currentTarget.value);
+            setError(null);
+            if (making()) queueMicrotask(() => newRef?.focus());
+          }}
+        >
           <For each={lanes()}>{(l) => <option value={l.branch}>{l.branch}</option>}</For>
-          <Show when={props.integration}>{(i) => <option value={i()}>{t("{name} only", { name: i() })}</option>}</Show>
-          <option value={props.production}>{t("{name} directly", { name: props.production })}</option>
+          <option value={NEW_LANE}>{t("New lane…")}</option>
         </select>
       </div>
+      <Show when={making()}>
+        <div class="field">
+          <label class="field-label" for="run-all-new">
+            {t("New lane")}
+          </label>
+          <input
+            id="run-all-new"
+            ref={(el) => (newRef = el)}
+            class="input input-mono"
+            placeholder={t("e.g. feat/sprint-24")}
+            autocomplete="off"
+            spellcheck={false}
+            value={newName()}
+            onInput={(e) => {
+              setNewName(e.currentTarget.value);
+              setError(null);
+            }}
+            onKeyDown={(e) => e.key === "Enter" && void start()}
+          />
+          <Show when={nameProblem()}>{(p) => <span class="field-help" data-tone="fail">{p()}</span>}</Show>
+        </div>
+      </Show>
+      <Show when={error()}>
+        <ErrorLine>{error()}</ErrorLine>
+      </Show>
       <Show when={target()}>
         <div class="field">
           <span class="field-label">{t("How")}</span>
@@ -492,7 +564,7 @@ export function RunAllSheet(props: {
           </div>
         </div>
       </Show>
-      <p class="field-help">{help()}</p>
+      <Show when={help()}>{(h) => <p class="field-help">{h()}</p>}</Show>
       <Show when={(repos() ?? []).length > 0}>
         <div class="field">
           <span class="field-label">{t("Also works in")}</span>
@@ -510,11 +582,6 @@ export function RunAllSheet(props: {
           </ul>
           <span class="field-help">{t("Each card gets the same branch in these repositories too, and lands there the same way. Found by the analysis; kept in .pitlane/flow.toml.")}</span>
         </div>
-      </Show>
-      <Show when={direct() && trunk()}>
-        <ErrorLine>
-          {t("Agents will commit straight into {name} in its checkout. Make sure nothing of yours is uncommitted there.", { name: target() ?? "" })}
-        </ErrorLine>
       </Show>
       <div class="field">
         <span class="field-label-row">

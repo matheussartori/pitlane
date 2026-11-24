@@ -58,4 +58,12 @@ export default {
   "{n} agents": "{n} agentes",
   "Where it went": "Para onde foi",
   "Overview": "Resumo",
+  "New lane…": "Nova lane…",
+  "Creating {name}": "Criando {name}",
+  "e.g. feat/sprint-24": "ex.: feat/sprint-24",
+  "Name the lane the cards land in": "Dê nome à lane onde os cards entram",
+  "Name the lane the cards land in. dev and main get the work only when you ship that lane from Lanes.": "Dê nome à lane onde os cards entram. dev e main só recebem o trabalho quando você entrega essa lane em Lanes.",
+  "{name} is a stage: cards never land there from the Board. Name a lane.": "{name} é um estágio: cards nunca entram nele pelo Board. Dê nome a uma lane.",
+  "{name} already exists: pick it in the list.": "{name} já existe: escolha na lista.",
+  "{to} is made first from a freshly fetched origin/{base}. ": "{to} é criada antes, a partir de origin/{base} recém-buscado. ",
 } as Record<string, string>;

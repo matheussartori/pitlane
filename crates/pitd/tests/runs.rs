@@ -179,6 +179,13 @@ fn card_state(fx: &Fx, id: u32) -> (CardState, usize) {
     (c.state, c.open_questions())
 }
 
+/// The lane Run all lands this card in (a card never lands in a stage by itself): made from main.
+fn aim(fx: &Fx, id: u32, lane: &str) {
+    git(&fx.repo, &["branch", lane, "main"]);
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    cards::update(&r, id, CardPatch { target: Some(Some(lane.into())), ..Default::default() }).unwrap();
+}
+
 fn sup(fx: &Fx) -> Arc<Supervisor> {
     Supervisor::new(Config {
         home: fx.home.clone(),
@@ -1271,6 +1278,7 @@ async fn run_all_fixes_and_lands_on_its_own() {
         );
     fs::write(fx.repo.join(".pitlane/flow.toml"), flow).unwrap();
     let id = card(&fx, "Refuse SVG avatars");
+    aim(&fx, id, "epic");
     git(&fx.repo, &["switch", "-q", "feat/x"]);
     fs::write(
         fx.repo.join("validate.ts"),
@@ -1292,12 +1300,12 @@ async fn run_all_fixes_and_lands_on_its_own() {
     let mut state = CardState::Running;
     for _ in 0..600 {
         state = card_state(&fx, id).0;
-        if state == CardState::InDev || state == CardState::Blocked {
+        if state == CardState::Done || state == CardState::Blocked {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(state, CardState::InDev, "landed without anyone approving");
+    assert_eq!(state, CardState::Done, "landed without anyone approving");
     let runs = s.list(None).unwrap();
     let rounds: Vec<u32> = runs
         .iter()
@@ -1328,10 +1336,10 @@ async fn run_all_fixes_and_lands_on_its_own() {
     let merged = Command::new("git")
         .arg("-C")
         .arg(&fx.repo)
-        .args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"])
+        .args(["merge-base", "--is-ancestor", "feat/x", "epic"])
         .status()
         .unwrap();
-    assert!(merged.success(), "feat/x is in origin/dev");
+    assert!(merged.success(), "feat/x is in epic");
 }
 
 /// A large card whose run closed one stage: what it did lands, but the card is not done. On the
@@ -1359,6 +1367,7 @@ async fn run_all_does_not_close_a_card_that_says_more_is_needed() {
     git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
     git(&fx.repo, &["fetch", "-q", "origin"]);
     let id = card(&fx, "Maps and props, in stages");
+    aim(&fx, id, "epic");
     git(&fx.repo, &["switch", "-q", "feat/x"]);
     fs::write(fx.repo.join("stage-1.md"), "measured\n").unwrap();
     git(&fx.repo, &["add", "stage-1.md"]);
@@ -1402,7 +1411,7 @@ async fn run_all_does_not_close_a_card_that_says_more_is_needed() {
     let merged = Command::new("git")
         .arg("-C")
         .arg(&fx.repo)
-        .args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"])
+        .args(["merge-base", "--is-ancestor", "feat/x", "epic"])
         .status()
         .unwrap();
     assert!(merged.success(), "the stage it finished landed");
@@ -2147,6 +2156,7 @@ async fn run_all_lands_a_stage_then_waits_for_the_look_it_asked_for() {
     git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
     git(&fx.repo, &["fetch", "-q", "origin"]);
     let id = card(&fx, "Maps and props, in stages");
+    aim(&fx, id, "epic");
     git(&fx.repo, &["switch", "-q", "feat/x"]);
     fs::write(fx.repo.join("stage-1.md"), "measured\n").unwrap();
     git(&fx.repo, &["add", "stage-1.md"]);
@@ -2171,7 +2181,7 @@ async fn run_all_lands_a_stage_then_waits_for_the_look_it_asked_for() {
     assert_eq!(c.blocked.as_ref().map(|b| b.reason), Some(cards::BlockReason::Check), "{:?}", c.notes.last());
     assert_eq!((c.open_questions(), c.paused.as_deref()), (1, Some(run.id.as_str())));
     git(&fx.repo, &["fetch", "-q", "origin"]);
-    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
+    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "epic"]).status().unwrap();
     assert!(merged.success(), "the stage it finished landed");
 
     cards::answer(&r, id, c.questions[0].id, "0").unwrap();

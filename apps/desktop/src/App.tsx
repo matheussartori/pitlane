@@ -20,6 +20,7 @@ import { TerminalScreen, openTerminal, startTerminals, terminalAt, terminalsWant
 import { st as termFold, toggleFold } from "./terminals/model";
 import { AgentDock } from "./agents";
 import { agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./store/agents";
+import { setAnalysisAsker } from "./store/analysis";
 import { PreviewScreen } from "./preview";
 import { CodeScreen, prewarmCode, rethemeCode, setCodePlaces } from "./code";
 import { codeRoot, openInCode, resetCodeRoot } from "./store/code";
@@ -44,7 +45,8 @@ export type SheetState =
   | { kind: "new-card" }
   | { kind: "accounts" }
   | { kind: "project" }
-  | { kind: "questions" }
+  /** `cards`: questions from cards analysed on their own (not Run all's). */
+  | { kind: "questions"; cards?: number[] }
   | { kind: "run-all"; ids: number[] }
   | null;
 
@@ -239,6 +241,16 @@ export default function App() {
 
   // Run all: its session, its steps and the effects that keep it going live in runall.ts.
   const { plan, phase, queue, joining, analyse, analyseInto, analysed, startDev, finishBatch, stopRunAll } = createRunAll({ sheet, setSheet, setTab, switchTo, nameOf: (path) => settings().repos.find((r) => r.path === path)?.name });
+
+  // Cards analysed on their own: their questions come up once the cards are read again, at once
+  // when you are in that repository with nothing else open, else from the toast's Answer.
+  setAnalysisAsker({
+    auto: (path, ids) => {
+      if (path !== repo() || sheet()) return;
+      void loadCards().then(() => path === repo() && !sheet() && setSheet({ kind: "questions", cards: ids }));
+    },
+    open: (path, ids) => void Promise.resolve(path === repo() ? loadCards() : switchTo(path)).then(() => setSheet({ kind: "questions", cards: ids })),
+  });
 
   async function switchTo(path: string) {
     setMenu(false);
@@ -1021,16 +1033,33 @@ export default function App() {
           </Show>
           <Show when={sheet()?.kind === "questions" && repo()}>
             {(path) => (
-              <QuestionsSheet
-                repo={path()}
-                cards={(cards() ?? []).filter((c) => queue().includes(c.id))}
-                onChanged={() => void loadCards()}
-                onDone={() => {
-                  setSheet(null);
-                  if (phase() === "asking") analysed();
-                }}
-                onStop={stopRunAll}
-              />
+              <Show
+                when={(() => {
+                  const s = sheet();
+                  return s?.kind === "questions" ? s.cards : undefined;
+                })()}
+                fallback={
+                  <QuestionsSheet
+                    repo={path()}
+                    cards={(cards() ?? []).filter((c) => queue().includes(c.id))}
+                    onChanged={() => void loadCards()}
+                    onDone={() => {
+                      setSheet(null);
+                      if (phase() === "asking") analysed();
+                    }}
+                    onStop={stopRunAll}
+                  />
+                }
+              >
+                {(ids) => (
+                  <QuestionsSheet
+                    repo={path()}
+                    cards={(cards() ?? []).filter((c) => ids().includes(c.id))}
+                    onChanged={() => void loadCards()}
+                    onDone={() => setSheet(null)}
+                  />
+                )}
+              </Show>
             )}
           </Show>
           <Show when={sheet()?.kind === "project" && repo()}>

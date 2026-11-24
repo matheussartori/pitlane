@@ -1151,6 +1151,18 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .project-context { min-height: 280px; resize: vertical; line-height: 1.5; padding-block: var(--space-xs); font-size: var(--text-sm); }
 .card-analysis { display: inline-flex; align-items: center; gap: var(--space-3xs); font-size: var(--text-xs); color: var(--color-muted); }
 .card-analysis[data-on] { color: var(--color-done); }
+/* Not analysed, on a card: a quiet tag that turns into Analyse while the card is yours (hover,
+   focus); while Claude reads it, a spinner that offers Stop the same way. */
+.card-analyse { position: relative; border: 0; background: none; font: inherit; font-size: var(--text-xs); line-height: inherit; padding: 1px var(--space-3xs); margin-inline: calc(-1 * var(--space-3xs)); border-radius: var(--radius-sm); cursor: pointer; }
+.card-analyse .card-analyse-go { display: none; align-items: center; gap: var(--space-3xs); }
+.card:hover .card-analyse:not([data-busy]) .card-analyse-idle, .card:focus-within .card-analyse:not([data-busy]) .card-analyse-idle, .card-analyse:hover .card-analyse-idle, .card-analyse:focus-visible .card-analyse-idle { display: none; }
+.card:hover .card-analyse:not([data-busy]) .card-analyse-go, .card:focus-within .card-analyse:not([data-busy]) .card-analyse-go, .card-analyse:not(:disabled):hover .card-analyse-go, .card-analyse:not(:disabled):focus-visible .card-analyse-go { display: inline-flex; }
+.card-analyse:not([data-busy]):is(:hover, :focus-visible), .card:hover .card-analyse:not([data-busy]) { color: var(--color-accent-text); }
+.card-analyse:not(:disabled):hover { background: var(--color-accent-wash); }
+.card-analyse[data-busy] { color: var(--color-run); cursor: default; }
+.card-analyse[data-busy]:not(:disabled) { cursor: pointer; }
+.card-analyse[data-busy]:not(:disabled):hover .card-analyse-idle, .card-analyse[data-busy]:focus-visible .card-analyse-idle { display: none; }
+.card-analyse[data-busy] .spinner { width: 10px; height: 10px; }
 .ag-asks { display: grid; gap: var(--space-xs); margin-top: var(--space-sm); font-family: var(--font-body); }
 .ag-dock-head { display: flex; align-items: center; gap: var(--space-xs); height: 36px; padding-inline: var(--gutter) var(--space-sm); }
 .ag-dock-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
@@ -1698,3 +1710,4 @@ dialog.viewer:focus { outline: none; }
 @keyframes viewer-hint { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes viewer-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .viewer-hint, .viewer-note { animation: none; } }
+.field-help[data-tone="fail"] { color: var(--color-fail); }
