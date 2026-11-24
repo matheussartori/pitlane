@@ -24,7 +24,7 @@ use pit_core::protocol::{
 use pit_core::runs::{self, RunEvent};
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -104,7 +104,7 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
         None => true,
     };
     let (read, mut write) = stream.into_split();
-    let mut lines = BufReader::new(read).lines();
+    let mut lines = Requests::new(BufReader::new(read));
     while let Some(line) = lines.next_line().await? {
         let req: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
@@ -177,6 +177,45 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
         send(&mut write, &answer).await?;
     }
     Ok(())
+}
+
+/// The longest request a connection may send: far past any card with its images named by path,
+/// short of one line taking the daemon's memory.
+const MAX_REQUEST: usize = 32 << 20;
+
+/// A connection's requests, one per line, none longer than `MAX_REQUEST`.
+struct Requests<R> {
+    reader: R,
+    line: Vec<u8>,
+}
+
+impl<R: tokio::io::AsyncBufRead + Unpin> Requests<R> {
+    fn new(reader: R) -> Self {
+        Self { reader, line: Vec::new() }
+    }
+
+    /// The next line, or none when the other side hung up. Safe to drop mid-read (a `select!`):
+    /// what was read of an unfinished line stays for the next call. A line past the limit is an
+    /// error, which ends the connection.
+    async fn next_line(&mut self) -> std::io::Result<Option<String>> {
+        loop {
+            let room = (MAX_REQUEST + 1).saturating_sub(self.line.len()) as u64;
+            let n = (&mut self.reader).take(room).read_until(b'\n', &mut self.line).await?;
+            if self.line.last() == Some(&b'\n') {
+                let mut line = std::mem::take(&mut self.line);
+                line.pop();
+                return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+            }
+            if self.line.len() > MAX_REQUEST {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("a request longer than {} MB", MAX_REQUEST >> 20)));
+            }
+            if n == 0 {
+                // The end of the input: what is left is a last line without its newline.
+                let line = std::mem::take(&mut self.line);
+                return Ok((!line.is_empty()).then(|| String::from_utf8_lossy(&line).into_owned()));
+            }
+        }
+    }
 }
 
 async fn send(w: &mut tokio::net::unix::OwnedWriteHalf, v: &Value) -> Result<()> {

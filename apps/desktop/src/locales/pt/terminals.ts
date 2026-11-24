@@ -1,4 +1,5 @@
 export default {
+  "VS Code did not open in a minute.": "O VS Code não abriu em um minuto.",
   "⌘-click to open in Code": "⌘-clique para abrir no Code",
   "the shell exited with {code}": "o shell saiu com {code}",
   "line {n}": "linha {n}",

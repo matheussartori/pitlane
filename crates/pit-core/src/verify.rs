@@ -116,7 +116,50 @@ pub struct FileStat {
     pub removed: u32,
 }
 
-/// What a lane changes against production: per-file counts and the patch.
+/// The commit a lane's own work is counted from, the same for every screen that shows it (the
+/// run, Review, a report): where it parts from the branch it started from (Run all's Into, which
+/// holds other cards' work, merged in or not), else from production. Once the lane has landed
+/// there nothing parts any more, and the answer is the commit the lane was created on, so what
+/// the card changed still reads after it shipped.
+pub fn lane_base(repo: &Repo, branch: &str, head: &str) -> Result<String> {
+    let from = repo
+        .git
+        .config_get(&format!("branch.{branch}.pitFrom"))?
+        .and_then(|f| repo.git.rev_parse(&format!("refs/heads/{f}")).ok().flatten());
+    let parted = match from {
+        Some(from) => repo.git.run(&["merge-base", &from, head])?,
+        None => {
+            let prod = Target::resolve(repo, &repo.flow.flow.production)?.context("production branch not found")?;
+            repo.git.run(&["merge-base", &prod.sha, head])?
+        }
+    };
+    if parted != head {
+        return Ok(parted);
+    }
+    let created = repo
+        .git
+        .config_get(&format!("branch.{branch}.pitBase"))?
+        .filter(|b| !b.is_empty())
+        .and_then(|b| repo.git.rev_parse(&b).ok().flatten())
+        .filter(|b| repo.git.is_ancestor(b, head).unwrap_or(false));
+    Ok(created.unwrap_or(parted))
+}
+
+/// Lines added and removed per file in `range` (`base..head`); a binary file counts as 0 and 0.
+pub fn numstat(repo: &Repo, range: &str) -> Result<Vec<FileStat>> {
+    Ok(repo
+        .git
+        .lines(&["diff", "--numstat", range])?
+        .into_iter()
+        .filter_map(|l| {
+            let mut f = l.splitn(3, '\t');
+            let (a, r, p) = (f.next()?, f.next()?, f.next()?);
+            Some(FileStat { path: p.to_owned(), added: a.parse().unwrap_or(0), removed: r.parse().unwrap_or(0) })
+        })
+        .collect())
+}
+
+/// What a lane changes against where it started: per-file counts and the patch.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LaneDiff {
     pub base: String,
@@ -132,31 +175,10 @@ pub fn lane_diff(repo: &Repo, branch: &str, limit_bytes: usize, from: Option<&st
     let head = repo.git.rev_parse(&format!("refs/heads/{branch}"))?.with_context(|| format!("no local branch {branch}"))?;
     let base = match from {
         Some(f) => repo.git.rev_parse(f)?.with_context(|| format!("no commit {f}"))?,
-        // Where the lane parts from the branch it started from (Run all's Into, which holds other
-        // cards' work, merged in or not), else where it parts from production.
-        None => match repo
-            .git
-            .config_get(&format!("branch.{branch}.pitFrom"))?
-            .and_then(|f| repo.git.rev_parse(&format!("refs/heads/{f}")).ok().flatten())
-        {
-            Some(from) => repo.git.run(&["merge-base", &from, &head])?,
-            None => {
-                let prod = Target::resolve(repo, &repo.flow.flow.production)?.context("production branch not found")?;
-                repo.git.run(&["merge-base", &prod.sha, &head])?
-            }
-        },
+        None => lane_base(repo, branch, &head)?,
     };
     let range = format!("{base}..{head}");
-    let files = repo
-        .git
-        .lines(&["diff", "--numstat", &range])?
-        .into_iter()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            let (a, r, p) = (f.next()?, f.next()?, f.next()?);
-            Some(FileStat { path: p.to_owned(), added: a.parse().unwrap_or(0), removed: r.parse().unwrap_or(0) })
-        })
-        .collect();
+    let files = numstat(repo, &range)?;
     // The a/ and b/ prefixes spelled out: the patch is parsed, and `diff.noprefix` or
     // `diff.mnemonicPrefix` in someone's git config would change them.
     let (patch, truncated) =
@@ -309,18 +331,8 @@ pub fn judge_prompt(card: &Card, project_decisions: &str, diff: &LaneDiff, proof
 
 /// Reads the judge's `--output-format json` answer.
 pub fn read_judge(stdout: &str) -> Result<(Judgement, Option<f64>, Option<u64>)> {
-    let v: Value = stdout
-        .lines()
-        .rev()
-        .find_map(|l| serde_json::from_str::<Value>(l).ok().filter(|v| v.get("type").and_then(Value::as_str) == Some("result")))
-        .or_else(|| serde_json::from_str(stdout).ok())
-        .context("the judge gave no result")?;
-    if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        anyhow::bail!("the judge stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
-    }
-    let j: Judgement = serde_json::from_value(v.get("structured_output").cloned().context("the judge gave no verdict")?)
-        .context("the judge's verdict does not match the schema")?;
-    Ok((j, v.get("total_cost_usd").and_then(Value::as_f64), v.get("duration_ms").and_then(Value::as_u64)))
+    let a = crate::runs::answer::structured(stdout, "judge")?;
+    Ok((a.output, a.cost_usd, a.duration_ms))
 }
 
 #[cfg(test)]

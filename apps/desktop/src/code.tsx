@@ -2,7 +2,7 @@
 // worktree. Files opened elsewhere in Pitlane (a terminal path, Review, a run) open here at their line.
 import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
-import { api, onVscodePlace, onVscodeReady, vscode, type Lane } from "./api";
+import { api, onVscodePlace, onVscodeReady, onVscodeStuck, vscode, type Lane } from "./api";
 import { loadCards, repo, yard } from "./store/repo";
 import { t } from "./i18n";
 import { prefs } from "./prefs";
@@ -290,6 +290,12 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     let offReady: (() => void) | null = null;
     let offPlace: (() => void) | null = null;
     void onVscodeReady((folder) => folder === root() && setState("ready")).then((off) => (alive ? (offReady = off) : off()));
+    let offStuck: (() => void) | null = null;
+    void onVscodeStuck((folder) => {
+      if (folder !== root() || state() !== "starting") return;
+      setWhy(t("VS Code did not open in a minute."));
+      setState("failed");
+    }).then((off) => (alive ? (offStuck = off) : off()));
     // The picker inside VS Code chose another folder.
     void onVscodePlace((r) => setRootSig(r)).then((off) => (alive ? (offPlace = off) : off()));
     const onRequest = () => void openPending();
@@ -297,6 +303,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     onCleanup(() => {
       alive = false;
       offReady?.();
+      offStuck?.();
       offPlace?.();
       ro.disconnect();
       mo.disconnect();

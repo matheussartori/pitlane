@@ -12,7 +12,7 @@ AI coding-agent orchestrator: terminal + editor + kanban in one local desktop ap
 - Agents are launched through their official, unmodified CLIs (`claude -p` stream-json). Pitlane never reads, copies, stores or proxies login tokens, and never uses subscription OAuth through an SDK.
 - No automatic switching between accounts of the same provider. Automatic fallback only across models, providers, or to an API key (which always asks first).
 - V1 is Claude Code only. Codex (`codex app-server`) and other agents are V2; don't add them unasked.
-- Branch flow per repo comes from `.pitlane/flow.toml`; new branches start from a freshly fetched `origin/main`. Merges go through the queue by git plumbing, never touching checkouts.
+- Branch flow per repo comes from `.pitlane/flow.toml`; new branches start from a freshly fetched `origin/main`. Merges go through the queue by git plumbing, never touching checkouts. One exception, decided on purpose: Run all's "A lane per card" into a lane lands each card by a local merge in that lane's worktree, without a push (`land_local`).
 - Nothing Pitlane starts is invisible or unstoppable, and nothing runs after the app closes.
 - Local-first: no login, telemetry opt-in. Pitlane writes nothing into a repo except `.pitlane/flow.toml`; boards, runs and worktrees live in `~/.pitlane/`.
 

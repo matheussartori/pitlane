@@ -116,20 +116,20 @@ fn all_sessions(pitlane_home: &Path, repo: &Path, since: u64) -> Vec<RunMeta> {
 }
 
 fn files_of(repo: &Repo, lane: &str, base: Option<&str>) -> Vec<FileChange> {
-    let base = base
-        .map(str::to_owned)
-        .or_else(|| repo.git.run(&["config", "--get", &format!("branch.{lane}.pitBase")]).ok().map(|s| s.trim().to_owned()))
-        .filter(|b| !b.is_empty());
-    let Some(base) = base else { return Vec::new() };
-    repo.git
-        .run(&["diff", "--numstat", &format!("{base}..{lane}")])
+    // The same base the run and Review count from, unless one is given (a card worked directly
+    // in a branch: the commit its run started on).
+    let Ok(Some(head)) = repo.git.rev_parse(&format!("refs/heads/{lane}")) else { return Vec::new() };
+    let base = match base.filter(|b| !b.is_empty()) {
+        Some(b) => b.to_owned(),
+        None => match crate::verify::lane_base(repo, lane, &head) {
+            Ok(b) => b,
+            Err(_) => return Vec::new(),
+        },
+    };
+    crate::verify::numstat(repo, &format!("{base}..{head}"))
         .unwrap_or_default()
-        .lines()
-        .filter_map(|l| {
-            let mut p = l.splitn(3, '\t');
-            let (a, r, path) = (p.next()?, p.next()?, p.next()?);
-            Some(FileChange { path: path.to_owned(), added: a.parse().unwrap_or(0), removed: r.parse().unwrap_or(0) })
-        })
+        .into_iter()
+        .map(|f| FileChange { path: f.path, added: f.added.into(), removed: f.removed.into() })
         .collect()
 }
 
@@ -364,14 +364,7 @@ pub fn digest_prompt(r: &Report) -> String {
 
 /// Reads `claude -p --output-format json` for a digest.
 pub fn read_digest(stdout: &str) -> Result<Digest> {
-    let v: serde_json::Value = serde_json::from_str(stdout.trim())
-        .ok()
-        .or_else(|| stdout.lines().rev().find_map(|l| serde_json::from_str(l).ok()))
-        .ok_or_else(|| anyhow::anyhow!("the digest gave no result"))?;
-    if v.get("is_error").and_then(serde_json::Value::as_bool).unwrap_or(false) {
-        anyhow::bail!("the digest stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
-    }
-    let mut d: Digest = serde_json::from_value(v.get("structured_output").cloned().ok_or_else(|| anyhow::anyhow!("the digest returned nothing"))?)?;
+    let mut d: Digest = crate::runs::answer::structured(stdout, "digest")?.output;
     let tidy = |s: &str, n: usize| s.trim().trim_start_matches(['-', '•', '*', ' ']).chars().take(n).collect::<String>();
     d.headline = tidy(&d.headline, 240);
     d.points = d.points.iter().map(|s| tidy(s, 200)).filter(|s| !s.is_empty()).take(6).collect();

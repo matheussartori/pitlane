@@ -14,7 +14,7 @@ pub fn serve_approver(run: String) -> Result<()> {
     let waits = Waits::default();
     let stdin = std::io::stdin();
     let mut lines = stdin.lock();
-    while let Some(line) = read_message(&mut lines)? {
+    while let Some(line) = read_message(&mut lines, &mut || send(&out, too_long()))? {
         let msg = match serde_json::from_str::<Value>(&line) {
             Ok(m) => m,
             Err(e) => {

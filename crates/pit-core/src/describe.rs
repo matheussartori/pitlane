@@ -2,7 +2,7 @@
 //! person's title and spec together, and a short summary the board shows instead of the spec.
 //! Always Sonnet, with no tools: it reads only what it is given.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -55,15 +55,7 @@ pub struct Description {
 
 /// Reads `claude -p --output-format json`.
 pub fn read(stdout: &str) -> Result<Description> {
-    let v: Value = serde_json::from_str(stdout.trim())
-        .ok()
-        .or_else(|| stdout.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()))
-        .context("the description gave no result")?;
-    if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        anyhow::bail!("the description stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
-    }
-    let mut d: Description = serde_json::from_value(v.get("structured_output").cloned().context("the description returned nothing")?)
-        .context("the description does not match the schema")?;
+    let mut d: Description = crate::runs::answer::structured(stdout, "description")?.output;
     d.title = d.title.map(|t| t.trim().trim_end_matches('.').trim_matches('"').chars().take(120).collect());
     d.summary = d.summary.trim().chars().take(400).collect();
     Ok(d)

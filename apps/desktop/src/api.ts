@@ -567,6 +567,11 @@ export async function onVscodeReady(cb: (folder: string) => void): Promise<() =>
   if (!inTauri) return () => {};
   return listen<{ folder: string }>("vscode-ready", (e) => cb(e.payload.folder));
 }
+/** VS Code did not draw the folder in the time it is given. */
+export async function onVscodeStuck(cb: (folder: string) => void): Promise<() => void> {
+  if (!inTauri) return () => {};
+  return listen<{ folder: string }>("vscode-stuck", (e) => cb(e.payload.folder));
+}
 
 
 /** Terminal output and exits. Nothing in the browser preview. */

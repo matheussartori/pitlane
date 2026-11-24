@@ -254,6 +254,26 @@ fn ship_reports_conflicts_and_changes_nothing() {
 }
 
 #[test]
+fn what_a_lane_changed_still_reads_after_it_shipped() {
+    let fx = Fx::new();
+    let repo = fx.repo();
+    let r = actions::new_lane(&repo, "feat/kept", NewOptions { fetch: true, setup: false }).unwrap();
+    fs::write(r.path.join("k.txt"), "k\n").unwrap();
+    git(&r.path, &["add", "-A"]);
+    git(&r.path, &["commit", "--quiet", "-m", "k"]);
+    let before = pit_core::verify::lane_diff(&repo, "feat/kept", 1 << 20, None).unwrap();
+    assert_eq!(before.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["k.txt"]);
+    // main moves on, then the lane lands in it: nothing parts from production any more.
+    fx.write("other.txt", "o\n");
+    fx.commit("other work");
+    fx.sh(&["merge", "--quiet", "--no-ff", "feat/kept", "-m", "land"]);
+    fx.sh(&["push", "--quiet", "origin", "main"]);
+    let after = pit_core::verify::lane_diff(&repo, "feat/kept", 1 << 20, None).unwrap();
+    assert_eq!(after.files, before.files, "counted from the commit the lane was created on");
+    assert_eq!(after.base, r.base_sha);
+}
+
+#[test]
 fn new_lane_gets_a_worktree_from_origin_main() {
     let fx = Fx::new();
     fx.write(".env", "SECRET=1\n");

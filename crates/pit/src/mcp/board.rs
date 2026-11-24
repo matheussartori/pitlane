@@ -6,7 +6,14 @@ pub fn serve(dir: PathBuf) -> Result<()> {
     let stdin = std::io::stdin();
     let mut lines = stdin.lock();
     let mut out = std::io::stdout().lock();
-    while let Some(line) = read_message(&mut lines)? {
+    let mut skipped = 0usize;
+    loop {
+        let line = read_message(&mut lines, &mut || skipped += 1)?;
+        for _ in 0..std::mem::take(&mut skipped) {
+            writeln!(out, "{}", too_long())?;
+            out.flush()?;
+        }
+        let Some(line) = line else { break };
         let reply = match serde_json::from_str::<Value>(&line) {
             // A batch (an array) is not something these servers take: said, not dropped silently.
             Ok(msg) if msg.is_array() => Some(error(Value::Null, -32600, "batches are not supported; send one message per line")),

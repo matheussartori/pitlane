@@ -167,6 +167,11 @@ fn watch_ready(wv: tauri::Webview, ready: Arc<std::sync::atomic::AtomicBool>, fo
             });
             std::thread::sleep(READY_POLL);
         }
+        // It never drew: say so, so the tab offers to try again instead of waiting for good.
+        if !ready.load(std::sync::atomic::Ordering::SeqCst) {
+            eprintln!("pitlane: VS Code did not draw on {folder} in {} s", READY_GIVE_UP.as_secs());
+            let _ = wv.app_handle().emit("vscode-stuck", CodeReady { folder });
+        }
     });
 }
 

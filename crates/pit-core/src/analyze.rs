@@ -83,11 +83,7 @@ pub fn prompt(repo: &Repo, card: &Card, batch: &[Card]) -> String {
 
 /// The run's briefing without its closing line about the handoff: spec, decisions, notes.
 fn card_context(repo: &Repo, card: &Card) -> String {
-    let mut p = crate::runs::briefing(repo, card);
-    if let Some(i) = p.rfind("\nWhen you finish, end with the handoff.") {
-        p.truncate(i);
-    }
-    p
+    crate::runs::card_context(repo, card)
 }
 
 pub const RECHECK_RULES: &str = "You are Pitlane's analyst. You do not change anything. The session working this \
@@ -228,18 +224,8 @@ pub fn read(stdout: &str) -> Result<(Analysis, Option<f64>)> {
 }
 
 fn structured<T: serde::de::DeserializeOwned>(stdout: &str, what: &str) -> Result<(T, Option<f64>)> {
-    let v: Value = stdout
-        .lines()
-        .rev()
-        .find_map(|l| serde_json::from_str::<Value>(l).ok().filter(|v| v.get("type").and_then(Value::as_str) == Some("result")))
-        .or_else(|| serde_json::from_str(stdout).ok())
-        .with_context(|| format!("the {what} gave no result"))?;
-    if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        anyhow::bail!("the {what} stopped with an error: {}", v.get("result").map(|r| r.to_string()).unwrap_or_default());
-    }
-    let a: T = serde_json::from_value(v.get("structured_output").cloned().with_context(|| format!("the {what} returned nothing"))?)
-        .with_context(|| format!("the {what} does not match the schema"))?;
-    Ok((a, v.get("total_cost_usd").and_then(Value::as_f64)))
+    let a = crate::runs::answer::structured(stdout, what)?;
+    Ok((a.output, a.cost_usd))
 }
 
 /// Writes the analysis on the card: its notes, its questions, and the mark that it was analysed.

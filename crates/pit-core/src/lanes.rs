@@ -278,8 +278,9 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
     inputs.extend(remote_refs.into_values().filter(|r| !local_names.contains(&r.branch)));
     inputs.sort_by(|a, b| a.branch.cmp(&b.branch));
 
-    let mut lanes = Vec::new();
-    for inp in inputs {
+    // Each lane is a handful of git questions that depend on no other lane: asked a few lanes at
+    // a time, so a repository with dozens of lanes reads in the time of its slowest few.
+    let one = |inp: Input| -> Result<Lane> {
         let Input { branch, sha, subject, date, local, upstream, upstream_gone } = inp;
         let idle_days = now.saturating_sub(date) / 86_400;
         let same_name = format!("{remote}/{branch}");
@@ -359,8 +360,8 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
             Status::InProgress
         };
 
-        lanes.push(Lane {
-            number: lanes.len() + 1,
+        Ok(Lane {
+            number: 0,
             branch,
             sha,
             subject,
@@ -379,7 +380,28 @@ pub fn yard(repo: &Repo, opts: YardOptions) -> Result<Yard> {
             integration_commits,
             idle_days,
             status,
-        });
+        })
+    };
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let read: Vec<std::sync::Mutex<Option<Result<Lane>>>> = inputs.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let inputs: Vec<std::sync::Mutex<Option<Input>>> = inputs.into_iter().map(|i| std::sync::Mutex::new(Some(i))).collect();
+    let workers = std::thread::available_parallelism().map_or(4, usize::from).min(8).min(inputs.len().max(1));
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(inp) = inputs.get(i).and_then(|slot| slot.lock().unwrap().take()) else { break };
+                    *read[i].lock().unwrap() = Some(one(inp));
+                }
+            });
+        }
+    });
+    let mut lanes = Vec::with_capacity(read.len());
+    for slot in read {
+        let mut lane = slot.into_inner().unwrap().context("a lane was not read")??;
+        lane.number = lanes.len() + 1;
+        lanes.push(lane);
     }
 
     let only_in_integration = match &integ {

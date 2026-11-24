@@ -4,14 +4,15 @@ use std::process::ExitCode;
 
 use anyhow::{Result, bail};
 use pit_core::Repo;
-use pit_core::actions::{self, LocalUpdate, NewOptions};
+use pit_core::actions::{self, NewOptions};
 use pit_core::cards::{self, CardPatch};
 use pit_core::lanes::{self, YardOptions};
+use pit_core::queue::JobState;
 use pit_core::trash;
 
-use super::print_json;
+use super::{daemon, pitlane_home, print_json};
 use super::yard::print_yard;
-use crate::term::{ACCENT, DONE, FAIL, MUTED, confirm, paint, shell_quote, short};
+use crate::term::{ACCENT, DONE, FAIL, MUTED, confirm, paint, plain, shell_quote, short};
 
 pub fn init(repo: &Repo, force: bool) -> Result<ExitCode> {
     let r = actions::init(repo, force)?;
@@ -109,15 +110,47 @@ pub fn ship(repo: &Repo, branch: Option<String>, to: Option<&str>, yes: bool, fe
         println!("nothing shipped");
         return Ok(ExitCode::FAILURE);
     }
-    let r = actions::execute_ship(repo, &plan)?;
-    println!("{} {} is in {} ({})", paint(DONE, "✓"), branch, r.target, short(&r.merge_sha));
-    match r.local {
-        LocalUpdate::Updated => println!("  local {} updated", r.target),
-        LocalUpdate::LeftBehind(p) => println!("  local {} has changes in {}; pull there when ready", r.target, p.display()),
-        LocalUpdate::Diverged => println!("  {} local {} has commits {remote} lacks; left as is", paint(ACCENT, "!"), r.target),
-        LocalUpdate::NoLocalBranch => {}
+    // Through the merge queue, like every other landing: one merge at a time per repository, by
+    // plumbing, with the card moved along. What was shown above is the plan; the queue plans
+    // again when the lane's turn comes.
+    let mut d = daemon()?;
+    let job = d.enqueue(&repo.root, branch.clone(), to.map(str::to_owned))?;
+    if pit_core::queue::paused(&pitlane_home()) {
+        println!("{} the queue is paused: {branch} is in line for {} ({}) and ships when it resumes", paint(ACCENT, "!"), job.target, job.id);
+        return Ok(ExitCode::FAILURE);
     }
-    Ok(ExitCode::SUCCESS)
+    let mut said_shipping = false;
+    loop {
+        let Some(j) = d.queue(Some(&repo.root))?.into_iter().find(|j| j.id == job.id) else {
+            bail!("{} left the queue before it shipped", job.id);
+        };
+        match j.state {
+            JobState::Queued => {}
+            JobState::Shipping if !said_shipping => {
+                said_shipping = true;
+                println!("  shipping…");
+            }
+            JobState::Shipping => {}
+            JobState::Done => {
+                println!("{} {} is in {} ({})", paint(DONE, "✓"), branch, j.target, short(j.merge_sha.as_deref().unwrap_or_default()));
+                return Ok(ExitCode::SUCCESS);
+            }
+            JobState::Conflict => {
+                println!("{} {} conflicts with {remote}/{}: {}", paint(FAIL, "✕"), branch, j.target, plain(&j.conflicts.join(", ")));
+                println!("  nothing changed.");
+                return Ok(ExitCode::FAILURE);
+            }
+            JobState::Failed => {
+                println!("{} {} did not ship: {}", paint(FAIL, "✕"), branch, plain(j.error.as_deref().unwrap_or("no reason given")));
+                return Ok(ExitCode::FAILURE);
+            }
+            JobState::Removed => {
+                println!("{} {} was taken out of the queue; nothing shipped", paint(ACCENT, "!"), branch);
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
 }
 
 /// Bring back a branch a previous clean deleted.

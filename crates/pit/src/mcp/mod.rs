@@ -32,8 +32,9 @@ pub use board::*;
 const MAX_MESSAGE: u64 = 8 << 20;
 
 /// The next non-empty line, or `None` at the end of input. A line past `MAX_MESSAGE` is skipped
-/// whole, and bytes that are not UTF-8 are replaced rather than ending the server.
-fn read_message(input: &mut impl BufRead) -> Result<Option<String>> {
+/// whole and `too_long` is told, so the client hears an error instead of waiting on a request
+/// that was never read. Bytes that are not UTF-8 are replaced rather than ending the server.
+fn read_message(input: &mut impl BufRead, too_long: &mut dyn FnMut()) -> Result<Option<String>> {
     loop {
         let mut buf = Vec::new();
         let n = (&mut *input).take(MAX_MESSAGE).read_until(b'\n', &mut buf)?;
@@ -46,6 +47,7 @@ fn read_message(input: &mut impl BufRead) -> Result<Option<String>> {
             while (&mut *input).take(MAX_MESSAGE).read_until(b'\n', &mut rest)? > 0 && rest.last() != Some(&b'\n') {
                 rest.clear();
             }
+            too_long();
             continue;
         }
         let line = String::from_utf8_lossy(&buf).trim().to_owned();
@@ -69,6 +71,11 @@ fn initialize(params: &Value, name: &str, instructions: Option<&str>) -> Value {
         out["instructions"] = json!(i);
     }
     out
+}
+
+/// What a client hears about a message that was too long to read (its id went unread with it).
+fn too_long() -> Value {
+    error(Value::Null, -32600, &format!("the message is longer than {} MB and was not read", MAX_MESSAGE >> 20))
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {

@@ -70,6 +70,14 @@ one finding per note. End every run with the structured handoff.";
 
 /// The first message of a run: the card, its decisions and the repository's decisions file.
 pub fn briefing(repo: &Repo, card: &Card) -> String {
+    let mut b = card_context(repo, card);
+    b.push_str("\nWhen you finish, end with the handoff.\n");
+    b
+}
+
+/// What a session reads about a card (its spec, its decisions, its notes, the project's
+/// decisions), without the run's closing line: for the sessions that only read it (the analyst).
+pub fn card_context(repo: &Repo, card: &Card) -> String {
     let mut b = format!("# Card #{}: {}\n\n", card.id, card.title);
     if card.body.trim().is_empty() {
         b.push_str("(No spec beyond the title. Keep the change small and say what you assumed.)\n");
@@ -115,6 +123,5 @@ pub fn briefing(repo: &Repo, card: &Card) -> String {
         b.push_str(d.trim());
         b.push('\n');
     }
-    b.push_str("\nWhen you finish, end with the handoff.\n");
     b
 }
