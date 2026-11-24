@@ -852,7 +852,7 @@ export const api = {
   enqueue: (path: string, branch: string, to?: string) => invoke<ShipJob>("queue_add", { path, branch, to: to ?? null }),
   dequeue: (id: string) => invoke<void>("queue_remove", { id }),
   cardReview: (path: string, card: number, action: "approve" | "changes" | "discard", message?: string) =>
-    invoke<{ run?: RunMeta; shipped_to?: string; state?: string }>("card_review", { path, card, action, message: message ?? null }),
+    invoke<{ run?: RunMeta; shipped_to?: string; state?: string; done?: boolean; lane?: string }>("card_review", { path, card, action, message: message ?? null }),
   accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),
   runResume: (run: string, message?: string) => invoke<RunMeta>("run_resume", { run, message: message ?? null }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),

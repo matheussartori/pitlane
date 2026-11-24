@@ -205,4 +205,10 @@ export default {
   "Suggestions": "Sugestões",
   "Make a card from this suggestion": "Criar um card com esta sugestão",
   "Details": "Detalhes",
+  "#{id} is done": "#{id} está concluído",
+  "Its run had no target branch, so nothing was merged; {lane} waits in Lanes.": "A run dele não tinha branch de destino, então nada foi mesclado; {lane} espera em Lanes.",
+  "Merges {lane} into {to}, the branch its run was given, and finishes the card": "Mescla {lane} em {to}, o branch de destino da run, e conclui o card",
+  "Its run was given no target branch: the card is finished and its lane waits in Lanes. Nothing is merged into {stages}.": "A run dele não recebeu branch de destino: o card é concluído e a lane espera em Lanes. Nada é mesclado em {stages}.",
+  " or ": " ou ",
+  "Approve": "Aprovar",
 } as Record<string, string>;

@@ -60,7 +60,10 @@ pub fn review(repo: &Repo, card: u32) -> Result<ExitCode> {
 
 pub fn approve(repo: &Repo, card: u32) -> Result<ExitCode> {
     let v = daemon()?.review(&repo.root, card, ReviewAction::Approve, None)?;
-    println!("{} #{card} is in the merge queue for {} (pit queue)", paint(DONE, "✓"), v["shipped_to"].as_str().unwrap_or("its next stage"));
+    match v["shipped_to"].as_str() {
+        Some(to) => println!("{} #{card} is in the merge queue for {to} (pit queue)", paint(DONE, "✓")),
+        None => println!("{} #{card} is done; its run had no target branch, so nothing was merged and {} waits in pit yard", paint(DONE, "✓"), v["lane"].as_str().unwrap_or("its lane")),
+    }
     Ok(ExitCode::SUCCESS)
 }
 

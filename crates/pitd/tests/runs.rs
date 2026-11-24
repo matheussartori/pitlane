@@ -1176,25 +1176,63 @@ async fn proofs_and_a_judge_then_your_review() {
         "{over:#}"
     );
 
-    // Approve: the lane joins the merge queue, ships into dev, and the card follows.
+    // Approve with no target branch: the card is done and nothing is merged, least of all into
+    // a stage (dev, main).
     git(&fx.repo, &["fetch", "-q", "origin"]);
     s.start_queue();
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
     let ok = s
         .review(fx.repo.clone(), id, ReviewAction::Approve, None)
         .await
         .unwrap();
-    assert_eq!(ok["shipped_to"], "dev");
+    assert_eq!(ok["done"], true, "{ok}");
+    assert!(ok["shipped_to"].is_null(), "{ok}");
+    assert_eq!(card_state(&fx, id).0, CardState::Done);
+    assert!(s.queue_list(Some(&r.root)).iter().all(|j| !j.state.is_open()), "nothing in line");
+    let ancestor = |of: &str| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&fx.repo)
+            .args(["merge-base", "--is-ancestor", "feat/x", of])
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(!ancestor("origin/dev"), "feat/x stays out of dev");
+
+    // A target that is a stage is never shipped into either.
+    let back = |target: &str| {
+        cards::update(
+            &r,
+            id,
+            CardPatch {
+                state: Some(CardState::Review),
+                target: Some(Some(target.into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    };
+    back("dev");
+    let ok = s.review(fx.repo.clone(), id, ReviewAction::Approve, None).await.unwrap();
+    assert_eq!(ok["done"], true, "{ok}");
+    assert!(!ancestor("origin/dev"), "feat/x stays out of dev");
+
+    // With the branch its run was given (a lane of this machine), the lane lands in it, and only
+    // in it.
+    git(&fx.repo, &["branch", "epic", "main"]);
+    back("epic");
+    let ok = s
+        .review(fx.repo.clone(), id, ReviewAction::Approve, None)
+        .await
+        .unwrap();
+    assert_eq!(ok["shipped_to"], "epic", "{ok}");
     let job = ok["job"]["id"].as_str().unwrap().to_owned();
     wait_job(&s, &job).await;
-    assert_eq!(card_state(&fx, id).0, CardState::InDev);
+    assert_eq!(card_state(&fx, id).0, CardState::Done);
     git(&fx.repo, &["fetch", "-q", "origin"]);
-    let merged = Command::new("git")
-        .arg("-C")
-        .arg(&fx.repo)
-        .args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"])
-        .status()
-        .unwrap();
-    assert!(merged.success(), "feat/x is in origin/dev");
+    assert!(ancestor("epic"), "feat/x is in epic");
+    assert!(!ancestor("origin/dev"), "feat/x stays out of dev");
     assert!(
         s.review(fx.repo.clone(), id, ReviewAction::Discard, None)
             .await

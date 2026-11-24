@@ -823,6 +823,7 @@ export default function App() {
                       run={lastRun(card())}
                       now={now()}
                       integration={yard()?.integration ?? null}
+                      production={yard()?.production ?? null}
                       onBack={() => setTab("board")}
                       onOpenRun={openRun}
                       onOpenFile={(branch, file) => codeFile(branch, file)}

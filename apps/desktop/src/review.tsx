@@ -319,6 +319,7 @@ export function ReviewScreen(props: {
   run: RunMeta | undefined;
   now: number;
   integration: string | null;
+  production: string | null;
   onBack: () => void;
   onChanged: () => void;
   onOpenRun: (id: string) => void;
@@ -389,14 +390,22 @@ export function ReviewScreen(props: {
     return [note().trim(), mine.length ? `On the diff:\n${mine.join("\n")}` : "", lines.length ? `From the review:\n${lines.join("\n")}` : ""].filter(Boolean).join("\n\n");
   };
 
+  /** Where approving ships the card: the branch its run was given, never a stage (dev, main). */
+  const shipTo = () => {
+    const to = props.card?.target;
+    return to && to !== props.card?.lane && to !== props.integration && to !== props.production ? to : null;
+  };
+
   async function act(action: "approve" | "changes" | "discard") {
     const c = props.card;
     if (!c || busy()) return;
     setBusy(action);
     try {
       const r = await api.cardReview(props.repo, c.id, action, action === "changes" ? message() : undefined);
-      if (action === "approve")
-        toast({ tone: "done", title: t("#{id} is in line for {to}", { id: c.id, to: r.shipped_to ?? t("its next stage") }), body: t("The merge queue ships it next; the card moves when it lands.") });
+      if (action === "approve" && r.done)
+        toast({ tone: "done", title: t("#{id} is done", { id: c.id }), body: t("Its run had no target branch, so nothing was merged; {lane} waits in Lanes.", { lane: r.lane ?? c.lane ?? "" }) });
+      else if (action === "approve")
+        toast({ tone: "done", title: t("#{id} is in line for {to}", { id: c.id, to: r.shipped_to ?? shipTo() ?? "" }), body: t("The merge queue ships it next; the card moves when it lands.") });
       if (action === "discard") toast({ tone: "done", title: t("#{id} is ready again", { id: c.id }), body: t("Its lane stays as it is.") });
       props.onChanged();
       if (action === "changes") setLineNotes([]);
@@ -454,12 +463,13 @@ export function ReviewScreen(props: {
                   class={needsChanges() ? "btn" : "btn btn-primary"}
                   disabled={!!busy()}
                   aria-busy={busy() === "approve"}
+                  title={shipTo() ? t("Merges {lane} into {to}, the branch its run was given, and finishes the card", { lane: props.card?.lane ?? "", to: shipTo()! }) : t("Its run was given no target branch: the card is finished and its lane waits in Lanes. Nothing is merged into {stages}.", { stages: [props.integration, props.production].filter(Boolean).join(t(" or ")) })}
                   onClick={() => void act("approve")}
                 >
                   <Show when={busy() === "approve"} fallback={<Icon name="ship" small />}>
                     <Spinner />
                   </Show>
-                  {t("Approve, ship to {to}", { to: props.integration ?? "main" })}
+                  {shipTo() ? t("Approve, ship to {to}", { to: shipTo()! }) : t("Approve")}
                 </button>
               </Show>
             </Show>

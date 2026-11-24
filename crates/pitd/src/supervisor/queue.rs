@@ -85,6 +85,20 @@ impl Supervisor {
                     )?;
                     return Ok(serde_json::json!({ "card": card, "landed_in": branch }));
                 }
+                // A card ships only into the branch its run was given, never into a stage (dev,
+                // main): with none, or a stage, approving finishes the card and its lane waits
+                // in Lanes for whoever ships it on purpose.
+                let Some(target) = c.target.clone().filter(|t| !r.flow.flow.is_trunk(t)) else {
+                    cards::update(
+                        &r,
+                        card,
+                        CardPatch {
+                            state: Some(CardState::Done),
+                            ..Default::default()
+                        },
+                    )?;
+                    return Ok(serde_json::json!({ "card": card, "done": true, "lane": branch }));
+                };
                 // The related repositories' lanes go first; the card moves when this one lands.
                 let related = last.as_ref().map(|l| l.related.clone()).unwrap_or_default();
                 self.land_card(&repo, &c, &related)?;
@@ -92,7 +106,7 @@ impl Supervisor {
                     .queue_list(Some(&r.root))
                     .into_iter()
                     .find(|j| j.repo == r.root && j.branch == branch && j.state.is_open());
-                let to = job.as_ref().map(|j| j.target.clone()).or_else(|| c.target.clone());
+                let to = job.as_ref().map(|j| j.target.clone()).unwrap_or(target);
                 Ok(serde_json::json!({ "card": card, "job": job, "shipped_to": to }))
             }
         }
