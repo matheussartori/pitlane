@@ -25,7 +25,7 @@ const stateView: Record<PerfAgent["state"], { chip: string; icon: IconName; labe
   waiting: { chip: "queued", icon: "queued", label: "Waiting for room" },
   starting: { chip: "queued", icon: "queued", label: "Starting" },
 };
-const pausedBy = { you: "by you", mode: "by the mode", memory: "for memory" } as const;
+const pausedBy = { you: "by you", mode: "by the mode", memory: "for memory", heat: "for heat" } as const;
 
 export function PerformanceView(props: { onOpen: (id: string) => void }) {
   // A store, reconciled by id: the figures change every two seconds, and each row takes its new
@@ -99,6 +99,7 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
       if (v != null && levelOf(p, v) === "critical") parts.push(t("{part} is too hot ({v}).", { part: partName(p), v: celsius(v) }));
     }
     if (s.tight) parts.push(s.critical ? t("Memory is critical: fewer agents until it eases.") : t("Memory is tight: one fewer agent until it eases."));
+    if (s.hot) parts.push(s.hot_critical ? t("The Mac is overheating: one agent until it cools.") : t("The Mac is too warm: one fewer agent until it cools."));
     return parts.join(" ");
   };
 
@@ -413,17 +414,22 @@ function TempTile(props: { temps: NonNullable<PerfSnapshot["temps"]> }) {
           : thermalView.nominal;
   // The bar runs from a cold Mac (30 °C) to the leading part's critical limit.
   const fill = () => Math.min(1, Math.max(0.02, (worst().v - 30) / (TEMP_LIMITS[worst().part].critical - 30)));
+  // Apple silicon runs its dies near 100 °C under load by design; whether the Mac is actually
+  // being slowed down is macOS's thermal pressure, which is also what the governor acts on.
+  const slowing = () => props.temps.thermal === "serious" || props.temps.thermal === "critical";
   const note = () => {
     const w = parts().filter((p) => p.level !== "ok").sort((a, b) => rank[b.level] - rank[a.level])[0];
     if (w?.level === "critical")
       return w.part === "battery"
         ? t("The battery is past {n}: unplug it or give it air; heat this high wears it for good.", { n: celsius(TEMP_LIMITS.battery.critical) })
-        : t("{part} is at its limit: macOS is slowing the Mac down. Fewer agents or Light will cool it.", { part: partName(w.part) });
+        : slowing()
+          ? t("{part} is at its limit and macOS is slowing the Mac down: Pitlane runs fewer agents until it cools.", { part: partName(w.part) })
+          : t("{part} is at the top of its range: macOS slows the Mac down if it stays there.", { part: partName(w.part) });
     if (w?.level === "high")
       return w.part === "battery"
         ? t("The battery runs warm: fine for a while, but it ages faster above {n}.", { n: celsius(TEMP_LIMITS.battery.high) })
         : t("{part} runs hot but within limits: normal under heavy load.", { part: partName(w.part) });
-    if (props.temps.thermal === "serious" || props.temps.thermal === "critical") return t("macOS says the Mac is too warm and is slowing it down.");
+    if (slowing()) return t("macOS says the Mac is too warm and is slowing it down: Pitlane runs fewer agents until it cools.");
     return t("Within limits.");
   };
   return (
@@ -768,6 +774,8 @@ function eventText(e: PerfEvent): string {
       return t("Paused {card}: the mode lets {n} at once", { card, n: plural(n, "{n} card", "{n} cards") });
     case "paused_memory":
       return t("Paused {card}: memory is tight ({n}% free)", { card, n });
+    case "paused_heat":
+      return n ? t("Paused {card}: the Mac is overheating") : t("Paused {card}: the Mac is too warm");
     case "resumed":
       return t("Resumed {card} after {t}", { card, t: n < 60 ? t("{n} s", { n }) : t("{n} min", { n: Math.round(n / 60) }) });
     case "paused_you":

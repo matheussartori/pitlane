@@ -704,7 +704,7 @@ export interface PerfAgent {
   started_at: number;
   pid: number | null;
   state: PerfAgentState;
-  paused_by: "you" | "mode" | "memory" | null;
+  paused_by: "you" | "mode" | "memory" | "heat" | null;
   paused_since: number | null;
   /** Bytes, as Activity Monitor counts them, for the whole process tree. */
   mem: number;
@@ -722,7 +722,7 @@ export interface PerfSample {
 }
 export interface PerfEvent {
   t: number;
-  kind: "full" | "light" | "away" | "back" | "paused_mode" | "paused_memory" | "resumed" | "paused_you" | "resumed_you";
+  kind: "full" | "light" | "away" | "back" | "paused_mode" | "paused_memory" | "paused_heat" | "resumed" | "paused_you" | "resumed_you";
   card?: number;
   title?: string;
   n?: number;
@@ -737,8 +737,12 @@ export interface PerfSnapshot {
   max?: number;
   adaptive?: boolean;
   idle_secs?: number;
+  /** Memory is tight or critical: the governor runs fewer cards. */
   tight?: boolean;
   critical?: boolean;
+  /** macOS's thermal pressure is serious (hot) or critical: fewer cards until it cools. */
+  hot?: boolean;
+  hot_critical?: boolean;
   background?: boolean;
   awake?: boolean;
   system?: {
