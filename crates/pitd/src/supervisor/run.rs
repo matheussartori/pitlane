@@ -114,6 +114,9 @@ impl Supervisor {
             ..RunMeta::new(id.clone(), r.root.clone(), card, SessionKind::Run, now)
         };
         self.register(meta.clone())?;
+        if let (true, Some(_), Some(text)) = (opts.said, &resume, &opts.message) {
+            self.emit(&id, RunEvent::Said { text: text.clone() });
+        }
         let me = Arc::clone(self);
         let run = id.clone();
         tokio::spawn(async move {

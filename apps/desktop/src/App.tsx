@@ -17,6 +17,7 @@ import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalAt, terminalsWanting } from "./terminals";
+import { st as termFold, toggleFold } from "./terminals/model";
 import { AgentDock } from "./agents";
 import { agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./store/agents";
 import { PreviewScreen } from "./preview";
@@ -89,6 +90,9 @@ export default function App() {
       /* private window: the choice simply is not remembered */
     }
   };
+  // On the Terminal screen, which has no Tower, ⌘\ and the rail's button fold its sidebar instead.
+  const sideFolds = () => tab() === "terminal";
+  const toggleSide = () => (sideFolds() ? toggleFold() : toggleTower());
   const towerHere = () => towerOpen() && !["lanes", "terminal", "code", "preview", "settings"].includes(tab());
   const setTab = (t: Tab) => {
     setTabSignal(t);
@@ -412,7 +416,7 @@ export default function App() {
       if ((runs() ?? []).some((r) => isLive(r.state))) once("runs", loadRuns);
       if (jobs().some(isOpenJob)) once("queue", loadQueue);
     }, 4000);
-    const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower, terminalIn });
+    const onKey = shortcuts({ tab, setTab, sheet, setSheet, selected, setMenu, toggleTower: toggleSide, terminalIn });
     // ⌘P everywhere (Warp's key), ⌘K too except on the Terminal, where it clears the screen. Taken
     // while capturing, so no field that keeps its keys (an agent's prompt, a terminal) hides it.
     const onPaletteKey = (e: KeyboardEvent) => {
@@ -539,7 +543,9 @@ export default function App() {
       );
     }
     out.push(
-      { id: "a-tower", group: t("Actions"), icon: "tower", title: towerOpen() ? t("Fold the Tower") : t("Open the Tower"), keys: "⌘\\", run: toggleTower },
+      sideFolds()
+        ? { id: "a-tower", group: t("Actions"), icon: termFold.fold ? "side-open" : "side-close", title: termFold.fold ? t("Show the sidebar") : t("Hide the sidebar"), keys: "⌘\\", run: toggleSide }
+        : { id: "a-tower", group: t("Actions"), icon: "tower", title: towerOpen() ? t("Fold the Tower") : t("Open the Tower"), keys: "⌘\\", run: toggleTower },
       { id: "a-settings", group: t("Actions"), icon: "settings", title: t("Settings"), keys: "⌘,", run: go("settings") },
     );
     const mode = presence();
@@ -755,7 +761,12 @@ export default function App() {
               </button>
             )}
           </Show>
-          <RailItem icon="tower" label={towerOpen() ? "Hide the Tower" : "Show the Tower"} keys="⌘\" current={towerOpen()} onClick={toggleTower} />
+          <Show
+            when={sideFolds()}
+            fallback={<RailItem icon="tower" label={towerOpen() ? "Hide the Tower" : "Show the Tower"} keys="⌘\" current={towerOpen()} onClick={toggleTower} />}
+          >
+            <RailItem icon={termFold.fold ? "side-open" : "side-close"} label={termFold.fold ? "Show the sidebar" : "Hide the sidebar"} keys="⌘\" current={!termFold.fold} onClick={toggleSide} />
+          </Show>
           <RailItem icon="settings" label="Settings" keys="⌘," current={tab() === "settings"} onClick={() => setTab("settings")} />
         </div>
       </nav>

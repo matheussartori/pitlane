@@ -36,6 +36,9 @@ const paths: Record<string, () => JSX.Element> = {
   up: () => <path d="M7 14l5-5 5 5" />,
   "tabs-top": () => (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>),
   "tabs-side": () => (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>),
+  // The side list folding away and coming back (a panel with its edge and an arrow).
+  "side-close": () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9 4.5v15M16 9.5L13.5 12l2.5 2.5" /></>),
+  "side-open": () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9 4.5v15M13.5 9.5L16 12l-2.5 2.5" /></>),
   code: () => <path d="M9 7l-5 5 5 5M15 7l5 5-5 5" />,
   inbox: () => (<><path d="M4 13l2.4-7.2A1 1 0 0 1 7.35 5h9.3a1 1 0 0 1 .95.8L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z" /><path d="M4 13h4.5l1 2h5l1-2H20" /></>),
   board: () => (<><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9.5 4.5v15M14.5 4.5v15" /></>),

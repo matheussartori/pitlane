@@ -66,7 +66,7 @@ export function installTips() {
     tip.textContent = text;
     tip.dataset.on = "";
     const r = el.getBoundingClientRect();
-    const side = el.classList.contains("navrail-item");
+    const side = el.classList.contains("navrail-item") || el.classList.contains("rail-btn");
     if (side) tip.dataset.side = "";
     else delete tip.dataset.side;
     const w = tip.offsetWidth;

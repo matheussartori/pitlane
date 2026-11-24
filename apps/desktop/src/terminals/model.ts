@@ -215,7 +215,7 @@ type Render = "smooth" | "gpu";
 /** The terminal's text size until you change it: Warp's. */
 export const DEFAULT_FONT = 13;
 
-export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face; render: Render }>({ tabs: [], active: null, side: "left", font: DEFAULT_FONT, face: "hack", render: "smooth" });
+export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; fold: boolean; font: number; face: Face; render: Render }>({ tabs: [], active: null, side: "left", fold: false, font: DEFAULT_FONT, face: "hack", render: "smooth" });
 const [meta, setMeta] = createStore<Record<number, Meta>>({});
 export { meta };
 export const [screenOn, setScreenOn] = createSignal(false);
@@ -228,6 +228,7 @@ interface Saved {
   tabs: Tab[];
   active: number | null;
   side: "left" | "top";
+  fold?: boolean; // the side list folded to a rail of marks
   font: number;
   font13?: boolean; // saved since 13px became the size (Warp's): before it, 14 was only the default
   face?: Face;
@@ -241,7 +242,7 @@ export function save() {
     const tabs = unwrap(st.tabs);
     const places: Saved["places"] = {};
     for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label, run: meta[id]!.run };
-    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, font13: true, face: st.face, face2: st.face, render: st.render, places } satisfies Saved));
+    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, fold: st.fold, font: st.font, font13: true, face: st.face, face2: st.face, render: st.render, places } satisfies Saved));
   } catch {
     /* no storage: the layout lives for this window */
   }
@@ -386,6 +387,12 @@ export function setTerminalFace(face: Face) {
       }
     }
   });
+  save();
+}
+/** Folds the side list to a rail of marks, or opens it again (⌘\ on the Terminal screen). */
+export function toggleFold(fold = !st.fold) {
+  if (st.side === "top" && fold) setSt("side", "left");
+  setSt("fold", fold);
   save();
 }
 export function setTerminalSide(side: "left" | "top") {
@@ -683,7 +690,7 @@ export async function startTerminals() {
   if (saved?.render === "gpu") setSt("render", "gpu");
   // Measure cells with the real face, never a fallback: a late font leaves gaps between letters.
   await Promise.all(["normal", "bold"].map((w) => document.fonts.load(`${w} ${DEFAULT_FONT}px ${faceCss(st.face)}`))).catch(() => {});
-  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || (!saved.font13 && saved.font <= 14) ? DEFAULT_FONT : saved.font)) }); // 12, 13 and 14 were defaults once: they move to today's
+  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", fold: saved.fold === true, font: Math.min(20, Math.max(9, !saved.font || (!saved.font13 && saved.font <= 14) ? DEFAULT_FONT : saved.font)) }); // 12, 13 and 14 were defaults once: they move to today's
   let existing: TermInfo[] = [];
   try {
     existing = await terms.list();

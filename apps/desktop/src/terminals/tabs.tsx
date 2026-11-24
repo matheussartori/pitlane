@@ -3,7 +3,7 @@ import { Show, createSignal } from "solid-js";
 import { agentSelected } from "../store/agents";
 import { t } from "../i18n";
 import { tilde } from "../format";
-import { Icon } from "../icons";
+import { Icon, type IconName } from "../icons";
 import { closeTab, type Meta, meta, panesOf, selectTab, setTab, st, type Status, type Tab } from "./model";
 import { drag, startDrag } from "./drag";
 
@@ -23,6 +23,34 @@ export const STATUS: Record<Exclude<Status, "idle">, { icon: string; word: strin
   busy: { icon: "run", word: "Working" },
   exited: { icon: "fail", word: "Exited" },
 };
+
+/** A tab's icon: an agent's session continued here, a lane's worktree, or a shell. */
+function tabIcon(tab: Tab): IconName {
+  const m = meta[tab.focus];
+  return m?.run ? "spark" : tab.name || !m?.cwd.includes("/wt/") ? "term" : "branch";
+}
+
+/** A tab in the folded sidebar: its icon and a dot for its status; the rest shows on hover. */
+export function TabMark(props: { tab: Tab; index: number }) {
+  const m = () => meta[props.tab.focus];
+  const name = () => props.tab.name || m()?.label || t("terminal");
+  const status = () => statusOf(props.tab);
+  const active = () => st.active === props.tab.id && !agentSelected();
+  const tip = () => {
+    const where = m() ? (m()!.title && m()!.title !== name() ? m()!.title : tilde(m()!.cwd)) : "";
+    const s = status().s;
+    const word = s === "idle" ? "" : t(STATUS[s].word);
+    return [name(), where, [word, props.index < 9 ? `⌘${props.index + 1}` : ""].filter(Boolean).join(" · ")].filter(Boolean).join("\n");
+  };
+  return (
+    <button type="button" role="tab" class="rail-btn" aria-selected={active()} data-active={active() ? "" : undefined} data-tip={tip()} aria-label={name()} onClick={() => selectTab(props.tab.id)}>
+      <Icon name={tabIcon(props.tab)} small />
+      <Show when={status().s !== "idle"}>
+        <span class="rail-badge" data-s={status().s} />
+      </Show>
+    </button>
+  );
+}
 
 export function TabRow(props: { tab: Tab; index: number }) {
   const [editing, setEditing] = createSignal(false);
@@ -79,7 +107,7 @@ export function TabRow(props: { tab: Tab; index: number }) {
           onClick={() => selectTab(props.tab.id)}
           onDblClick={() => setEditing(true)}
         >
-          <Icon name={focusMeta()?.run ? "spark" : props.tab.name || !focusMeta()?.cwd.includes("/wt/") ? "term" : "branch"} small />
+          <Icon name={tabIcon(props.tab)} small />
           <span class="tt-text">
             <span class="tt-name">{name()}</span>
             <Show when={st.side === "left" && sub()}>

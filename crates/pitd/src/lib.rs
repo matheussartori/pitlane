@@ -287,7 +287,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
             let prev = sup.get(run_arg(&run)?)?;
             let message = message.filter(|m| !m.trim().is_empty());
             // Written to while stopped: it goes on as it was going (a Run all card stays Run all's).
-            let opts = supervisor::StartOpts { message, autopilot: prev.autopilot, ..Default::default() };
+            let opts = supervisor::StartOpts { said: message.is_some(), message, autopilot: prev.autopilot, ..Default::default() };
             reply(RunReply { run: sup.start(prev.repo.clone(), prev.card, Some(prev.id), opts)? })
         }
         Request::List { repo } => reply(RunsReply { runs: sup.list(repo.as_deref())? }),

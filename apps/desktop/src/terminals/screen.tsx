@@ -1,16 +1,28 @@
 // The Terminal screen: the agents and the tab list beside the stage that shows the active tab.
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import type { Lane } from "../api";
-import { AgentList, AgentPane } from "../agents";
+import { AgentList, AgentPane, AgentRail } from "../agents";
 import { agentGroups, agentSelected } from "../store/agents";
 import { t } from "../i18n";
 import { Icon } from "../icons";
 import { dismissable } from "../ui";
-import { Grip } from "../layout";
-import { activeTab, AGENTS_H, closePane, DEFAULT_FONT, equal, focusPane, fontSize, jumpToWanting, live, meta, neighbour, openTerminal, panesOf, resizeFocused, resumeInTerminal, save, screenOn, seen, selectTab, setRoots, setScreenOn, setSt, setTab, type Side, SIDE_W, split, st } from "./model";
+import { Grip, type Size } from "../layout";
+import { activeTab, AGENTS_H, closePane, DEFAULT_FONT, equal, focusPane, fontSize, jumpToWanting, live, meta, neighbour, openTerminal, panesOf, resizeFocused, resumeInTerminal, save, screenOn, seen, selectTab, setRoots, setScreenOn, setSt, setTab, type Side, SIDE_W, split, st, toggleFold } from "./model";
 import { drag } from "./drag";
-import { TabRow } from "./tabs";
+import { TabMark, TabRow } from "./tabs";
 import { FindBar, NodeView, PaneView } from "./panes";
+
+/** The sidebar's width as its edge sets it; dragged well past its narrowest, it folds to the rail. */
+const SIDE: Size = { ...SIDE_W, set: (px) => (px < SIDE_W.min - 90 ? toggleFold(true) : SIDE_W.set(px)) };
+
+/** Folds the sidebar; ⌘\ or the rail's first button opens it again. */
+function FoldButton(props: { class: string }) {
+  return (
+    <button type="button" class={props.class} aria-label={t("Hide the sidebar")} data-tip={`${t("Hide the sidebar")}  ⌘\\`} onClick={() => toggleFold(true)}>
+      <Icon name="side-close" small />
+    </button>
+  );
+}
 
 export function TerminalScreen(props: { repo: string; repoName: string; lanes: Lane[]; onOpenRun: (id: string) => void }) {
   const [menu, setMenu] = createSignal(false);
@@ -62,8 +74,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
     const arrows: Record<string, Side> = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "bottom" };
     if (k === "t" && !e.shiftKey) {
       take();
-      const m = t ? meta[t.focus] : undefined;
-      void openTerminal(m?.cwd ?? props.repo, m?.label ?? props.repoName);
+      openHere();
     } else if (k === "d" && t) {
       take();
       void split(e.shiftKey ? "col" : "row");
@@ -123,6 +134,14 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
     }
   }
 
+  const folded = () => st.side === "left" && st.fold;
+  const filled = () => st.tabs.length > 0 || agentGroups().length > 0;
+  // ⌘T's place: where the focused pane is, else the repository.
+  const openHere = () => {
+    const m = tab() ? meta[tab()!.focus] : undefined;
+    void openTerminal(m?.cwd ?? props.repo, m?.label ?? props.repoName);
+  };
+
   const closeFind = () => {
     setFinding(false);
     const t = tab();
@@ -133,14 +152,35 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
     <div
       class="terms"
       data-side={st.side}
-      data-empty={st.tabs.length === 0 && agentGroups().length === 0 ? "" : undefined}
-      style={st.side === "left" ? { "--side-w": `${SIDE_W.get()}px` } : undefined}
+      data-empty={filled() ? undefined : ""}
+      data-fold={folded() ? "" : undefined}
+      style={st.side === "left" && !folded() ? { "--side-w": `${SIDE_W.get()}px` } : undefined}
     >
-      <Show when={st.tabs.length > 0 || agentGroups().length > 0}>
+      <Show when={filled() && folded()}>
+        <nav class="terms-rail" aria-label={t("Agents and terminals")}>
+          <button type="button" class="rail-btn" aria-label={t("Show the sidebar")} data-tip={`${t("Show the sidebar")}  ⌘\\`} onClick={() => toggleFold(false)}>
+            <Icon name="side-open" small />
+          </button>
+          <div class="rail-scroll">
+            <Show when={agentGroups().length > 0}>
+              <div class="rail-group" role="tablist" aria-label={t("Agents")} aria-orientation="vertical">
+                <AgentRail />
+              </div>
+            </Show>
+            <div class="rail-group" role="tablist" aria-label={t("Terminals")} aria-orientation="vertical">
+              <For each={st.tabs}>{(x, i) => <TabMark tab={x} index={i()} />}</For>
+              <button type="button" class="rail-btn rail-add" aria-label={t("New terminal")} data-tip={t("New terminal (⌘T)")} onClick={openHere}>
+                <Icon name="plus" small />
+              </button>
+            </div>
+          </div>
+        </nav>
+      </Show>
+      <Show when={filled() && !folded()}>
         <div class="terms-tabs" data-agents={agentGroups().length > 0 ? "" : undefined}>
           <div class="ag-side-wrap" style={st.side === "left" && st.tabs.length > 0 ? { height: `${AGENTS_H.get()}px` } : undefined}>
             <div class="ag-side">
-              <AgentList compact={st.side === "top"} />
+              <AgentList compact={st.side === "top"} actions={st.side === "left" ? <FoldButton class="pane-btn" /> : undefined} />
             </div>
             <Show when={st.side === "left" && st.tabs.length > 0}>
               <Grip size={AGENTS_H} edge="bottom" label={t("Resize agents and terminals")} />
@@ -179,12 +219,15 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
             >
               <Icon name={st.side === "left" ? "tabs-top" : "tabs-side"} small />
             </button>
+            <Show when={st.side === "left" && agentGroups().length === 0}>
+              <FoldButton class="btn btn-ghost btn-icon" />
+            </Show>
           </div>
           <div class="terms-list" role="tablist" aria-label={t("Terminals")} aria-orientation={st.side === "left" ? "vertical" : "horizontal"} data-tablist data-drop={drag()?.over?.kind === "list" ? "" : undefined}>
             <For each={st.tabs}>{(t, i) => <TabRow tab={t} index={i()} />}</For>
           </div>
           <Show when={st.side === "left"}>
-            <Grip size={SIDE_W} edge="right" label={t("Resize the sidebar")} />
+            <Grip size={SIDE} edge="right" label={t("Resize the sidebar")} />
           </Show>
         </div>
       </Show>

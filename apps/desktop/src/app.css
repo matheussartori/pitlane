@@ -660,6 +660,22 @@ dialog.sheet-wide { width: min(720px, calc(100% - 48px)); }
 .terms[data-empty] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .terms-tabs { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--color-rule); background: var(--color-paper); }
 .terms[data-side="top"] .terms-tabs { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) auto; border-right: 0; border-bottom: 1px solid var(--color-rule); }
+/* The sidebar folded: a rail of marks (agents, then terminals), so nothing running drops out of sight. */
+.terms[data-fold] { grid-template-columns: 44px minmax(0, 1fr); }
+.terms-rail { display: grid; grid-template-rows: auto minmax(0, 1fr); justify-items: center; min-height: 0; padding-top: var(--space-2xs); border-right: 1px solid var(--color-rule); background: var(--color-paper); }
+.rail-scroll { display: grid; align-content: start; justify-items: center; min-height: 0; overflow: hidden auto; scrollbar-width: none; padding-bottom: var(--space-md); }
+.rail-group { display: grid; justify-items: center; gap: 2px; padding-block: var(--space-2xs); border-top: 1px solid var(--color-rule); }
+.rail-btn { position: relative; display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--radius-md); background: none; color: var(--color-muted); cursor: pointer; }
+.rail-btn:hover { background: var(--color-paper-2); color: var(--color-ink); }
+.rail-btn[data-active] { background: var(--color-paper-3); color: var(--color-ink); }
+.rail-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.rail-add { margin-top: 2px; }
+.rail-badge { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 2px var(--color-paper); background: var(--color-muted); }
+.rail-btn:hover .rail-badge { box-shadow: 0 0 0 2px var(--color-paper-2); }
+.rail-btn[data-active] .rail-badge { box-shadow: 0 0 0 2px var(--color-paper-3); }
+.rail-badge[data-s="bell"], .rail-badge[data-s="waiting"] { background: var(--color-accent); }
+.rail-badge[data-s="busy"] { background: var(--color-run); animation: shimmer 1.6s var(--ease-in-out) infinite; }
+.rail-badge[data-s="exited"] { background: var(--color-fail); }
 .terms-head { display: flex; align-items: center; gap: var(--space-3xs); height: 36px; padding-inline: var(--space-sm) var(--space-2xs); }
 .terms[data-side="top"] .terms-head { order: 2; height: 34px; padding-inline: var(--space-2xs); border-left: 1px solid var(--color-rule); }
 .terms-title { flex: 1; min-width: 0; font-weight: var(--weight-strong); color: var(--color-ink-2); }
@@ -1024,7 +1040,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-dot[data-s="fail"] { background: var(--color-fail); }
 @media (prefers-reduced-motion: reduce) { .ag-dot[data-s="work"], .navrail-live, .ag-spin { animation: none; } }
 /* The floating tooltip (installTips). */
-.tip { position: fixed; z-index: 1000; max-width: 280px; padding: var(--space-2xs) var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-3); color: var(--color-ink); box-shadow: var(--shadow-pop); font: var(--weight-regular) var(--text-xs)/1.35 var(--font-body); pointer-events: none; opacity: 0; transition: opacity 120ms var(--ease-out); }
+.tip { position: fixed; z-index: 1000; max-width: 280px; padding: var(--space-2xs) var(--space-xs); border-radius: var(--radius-md); background: var(--color-paper-3); color: var(--color-ink); box-shadow: var(--shadow-pop); font: var(--weight-regular) var(--text-xs)/1.35 var(--font-body); white-space: pre-line; pointer-events: none; opacity: 0; transition: opacity 120ms var(--ease-out); }
 .tip[data-on] { opacity: 1; }
 /* Beside the nav rail: the name and its key, a size up. */
 .tip[data-side] { max-width: none; font-size: var(--text-sm); line-height: 1; white-space: pre; }

@@ -2,7 +2,7 @@
 // card, with the subagents each one opens. Shown in the Terminal screen and in a dock on the
 // Board. You can write to a session while it works and stop it with Ctrl+C. A session closes
 // itself a moment after it ends, unless you talked to it.
-import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { api, type RunMeta } from "./api";
 import { ensureTimeline, timelineOf } from "./store/timelines";
 import { agentGroups, agentSessions, agentsWanting, agentsWorking, closeAll, keep, kindLabel, lastLine, live, look, refreshAgents, selectAgent, selected, sessions, since, stopAllAgents, subagentsOf, type Look, type Subagent } from "./store/agents";
@@ -44,7 +44,7 @@ const SUB_LOOK: Record<Subagent["state"], { icon: IconName; word: () => string }
   ended: { icon: "stop", word: () => t("Ended") },
 };
 
-export function AgentList(props: { compact: boolean }) {
+export function AgentList(props: { compact: boolean; actions?: JSX.Element }) {
   return (
     <Show when={agentGroups().length > 0}>
       <Show
@@ -75,6 +75,7 @@ export function AgentList(props: { compact: boolean }) {
             <span class="ag-bar-fill" />
             <CloseEnded />
             <StopAll />
+            {props.actions}
           </div>
           {/* Keyed by card number and by subagent id, not by the objects rebuilt on every refresh:
               rows keep their DOM while agents work, so a click is never lost to a re-render. */}
@@ -113,6 +114,37 @@ export function AgentList(props: { compact: boolean }) {
         </div>
       </Show>
     </Show>
+  );
+}
+
+/** The folded sidebar's agents: one mark per session, in the list's order; the card and state show on hover. */
+export function AgentRail() {
+  const ids = () => agentGroups().flatMap((g) => g.sessions.map((m) => m.id));
+  return (
+    <For each={ids()}>
+      {(id) => {
+        const m = () => agentSessions().find((x) => x.id === id);
+        return (
+          <Show when={m()}>
+            {(m) => {
+              const l = () => look(m());
+              const title = () => agentGroups().find((g) => g.card === m().card)?.title ?? "";
+              const tip = () => `${m().card > 0 ? `#${m().card} ` : ""}${title()}\n${kindLabel(m())} · ${l().word}`;
+              const active = () => selected()?.id === id;
+              return (
+                <button type="button" role="tab" class="rail-btn" aria-selected={active()} data-active={active() ? "" : undefined} data-tip={tip()} aria-label={tip()} onClick={() => selectAgent(id)}>
+                  <span class="ag-state" data-s={l().s}>
+                    <Show when={l().s === "work"} fallback={<Icon name={l().icon} small />}>
+                      <span class="ag-spin" />
+                    </Show>
+                  </span>
+                </button>
+              );
+            }}
+          </Show>
+        );
+      }}
+    </For>
   );
 }
 

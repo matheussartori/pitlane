@@ -317,6 +317,41 @@ export function AgentConsole(props: {
     input?.focus();
   };
 
+  // ↑ and ↓ walk what you wrote to this conversation (earlier runs of the session too), newest
+  // first, as in a shell; past the newest, ↓ gives back what you were typing.
+  const [sentHere, setSentHere] = createSignal<string[]>([]);
+  const mine = createMemo(() => {
+    const out: string[] = [];
+    for (const e of events()) {
+      const said = e.kind === "said" ? e.text : e.kind === "aside" && e.by === "you" ? e.text : "";
+      if (said.trim() && out[out.length - 1] !== said) out.push(said);
+    }
+    for (const x of sentHere()) if (out[out.length - 1] !== x && !out.includes(x)) out.push(x);
+    return out;
+  });
+  let recall: number | null = null;
+  let draft = "";
+  const walk = (step: -1 | 1): boolean => {
+    const all = mine();
+    if (all.length === 0) return false;
+    if (recall === null) {
+      if (step === 1) return false;
+      draft = text();
+      recall = all.length;
+    }
+    const next = recall + step;
+    if (next < 0) return true;
+    if (next >= all.length) {
+      recall = null;
+      setText(draft);
+    } else {
+      recall = next;
+      setText(all[next]!);
+    }
+    requestAnimationFrame(() => input?.setSelectionRange(input.value.length, input.value.length));
+    return true;
+  };
+
   // One message at a time (Enter twice sends once), and the box is cleared when it goes, so
   // what you type while it is on its way stays yours.
   let sending = false;
@@ -326,6 +361,8 @@ export function AgentConsole(props: {
     if (command(msgText)) return;
     sending = true;
     setText("");
+    recall = null;
+    setSentHere((xs) => [...xs.filter((x) => x !== msgText), msgText].slice(-50));
     try {
       if (resumesRun()) {
         const next = await api.runResume(m().id, msgText);
@@ -470,7 +507,7 @@ export function AgentConsole(props: {
           aria-label={t("Message the agent")}
           autocomplete="off"
           value={text()}
-          onInput={(e) => setText(e.currentTarget.value)}
+          onInput={(e) => ((recall = null), setText(e.currentTarget.value))}
           onBlur={keepFocus}
           onKeyDown={(e) => {
             typedAt = performance.now();
@@ -484,6 +521,8 @@ export function AgentConsole(props: {
             } else if (list.length > 0 && e.key === "Escape") {
               e.preventDefault();
               setText("");
+            } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.isComposing && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+              if (walk(e.key === "ArrowUp" ? -1 : 1)) e.preventDefault();
             } else if (e.key === "Enter" && !e.isComposing) (e.preventDefault(), void send(e.metaKey || e.ctrlKey));
             // Escape with nothing typed belongs to the screen (the run goes back to the Board).
             if (!(e.key === "Escape" && !text())) e.stopPropagation();

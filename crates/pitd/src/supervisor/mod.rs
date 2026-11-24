@@ -72,6 +72,9 @@ pub struct StartOpts {
     pub extensions: u32,
     /// Start over: do not resume the session of the card's stopped run.
     pub fresh: bool,
+    /// `message` is what the person wrote to the stopped session: its log shows it as theirs,
+    /// as it shows a message written while the session lives.
+    pub said: bool,
 }
 
 /// What a person decides about a card in review.
