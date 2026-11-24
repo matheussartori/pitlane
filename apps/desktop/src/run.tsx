@@ -259,6 +259,10 @@ export function RunScreen(props: {
               kind={kindLabel(m())}
               ended={t(runStateView[m().state].label)}
               framed
+              onResumed={(next) => {
+                props.onChanged();
+                location.hash = `#run/${next.id}`;
+              }}
             />
 
             <aside class="run-side" aria-label={t("What this run did")}>

@@ -2,7 +2,7 @@
 // an edit as red and green lines), the questions it asks at its end, a prompt that talks to it
 // while it works (Ctrl+C stops it, / for commands) and the model and effort under the prompt.
 // The same console wherever a session shows: Terminal › Agents and a card's run.
-import { For, Show, createEffect, createMemo, createResource, createSignal, on, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, untrack, type JSX } from "solid-js";
 import { api, isLive, type RunEvent, type RunMeta } from "./api";
 import { plural, t } from "./i18n";
 import { Lightbox, Spinner, toast, tailFollower } from "./ui";
@@ -12,6 +12,8 @@ import { Prose } from "./prose";
 import { money, msg } from "./format";
 import { highlight, langOf } from "./highlight";
 import { TERMINAL_FACES, terminalPrefs } from "./terminals/model";
+import { sessions } from "./store/agents";
+import { holdTimeline, timelineOf } from "./store/timelines";
 
 type Done = Extract<RunEvent, { kind: "tool-done" }>;
 
@@ -77,17 +79,43 @@ export function AgentConsole(props: {
   onTalked?: () => void;
   /** In a page (a card's run): a well with its own edge. In the Terminal it fills the pane. */
   framed?: boolean;
+  /** Written to once it had stopped: its session goes on in this new run, to show instead. */
+  onResumed?: (m: RunMeta) => void;
 }) {
   const m = () => props.m;
   const live = () => isLive(m().state);
-  // The Board assistant, once ended, picks its session back up when you write to it.
-  const writable = () => live() || (m().kind === "assist" && !props.sub);
-  // A card's run at work is asked on the side by default: a copy of its conversation answers,
-  // and the run goes on as if nobody had asked. ⌘Enter tells the run itself.
+  // Once ended, the Board assistant and a card's run pick their session back up when you write
+  // to them, as `claude --resume` does: the assistant in the same record, a run in a new one.
+  const resumesRun = () => !live() && !props.sub && (m().kind ?? "run") === "run";
+  const writable = () => live() || (!props.sub && m().kind === "assist") || resumesRun();
+  // Enter talks to the session itself, as in Claude Code: it reads the message after its current
+  // step and goes on with its work. On a card's run at work, ⌘Enter asks on the side instead: a
+  // copy of its conversation answers, in parallel, and the run never sees it.
   const asksAside = () => live() && !props.sub && (m().kind ?? "run") === "run";
   // Keyed on the values themselves: the session's record is read anew every few seconds, and
   // nothing below should start over for a record that says the same.
   const runId = createMemo(() => m().id);
+  // The runs this session went on from (stopped, then written to or run again): their logs come
+  // first, so the whole conversation is in one place, as in Claude Code.
+  const earlier = createMemo(
+    () => {
+      const out: string[] = [];
+      const seen = new Set<string>([m().id]);
+      let p = m().resumed_from;
+      while (p && !seen.has(p) && out.length < 20) {
+        seen.add(p);
+        out.unshift(p);
+        const id: string = p;
+        p = sessions().find((x) => x.id === id)?.resumed_from ?? null;
+      }
+      return out;
+    },
+    undefined,
+    { equals: (a, b) => a.join() === b.join() },
+  );
+  createEffect(on(earlier, (ids) => ids.forEach((id) => onCleanup(holdTimeline(id)))));
+  const history = createMemo(() => earlier().flatMap((id) => timelineOf(id) ?? []));
+  const events = createMemo(() => (history().length ? [...history(), ...props.events] : props.events));
   const worktree = createMemo(() => m().worktree);
   const rel = createMemo(() => relTo(worktree()));
 
@@ -109,6 +137,7 @@ export function AgentConsole(props: {
   // thousands). Starts over for another session, or when the timeline was read anew.
   const fresh = () => ({
     run: "",
+    hist: 0,
     rel: rel(),
     n: 0,
     /** Tool calls, by id. */
@@ -125,8 +154,9 @@ export function AgentConsole(props: {
   let seen = fresh();
   const scanned = createMemo(
     () => {
-      const all = props.events;
-      if (seen.run !== runId() || seen.rel !== rel() || all.length < seen.n) seen = { ...fresh(), run: runId() };
+      const all = events();
+      const hist = history().length;
+      if (seen.run !== runId() || seen.rel !== rel() || seen.hist !== hist || all.length < seen.n) seen = { ...fresh(), run: runId(), hist };
       for (let i = seen.n; i < all.length; i++) {
         const e = all[i]!;
         if (e.kind === "tool") seen.calls.add(e.id);
@@ -147,7 +177,7 @@ export function AgentConsole(props: {
   // still shows on its own); a subagent's steps show behind its Task; setup notes only until the
   // agent starts.
   const shown = createMemo(() => {
-    const all = props.events;
+    const all = events();
     const { calls, started, failed } = scanned();
     const s = props.sub;
     return all
@@ -165,7 +195,7 @@ export function AgentConsole(props: {
   });
   const subLabel = () => {
     const s = props.sub;
-    const call = s ? props.events.find((e) => e.kind === "tool" && e.id === s) : undefined;
+    const call = s ? events().find((e) => e.kind === "tool" && e.id === s) : undefined;
     return call && call.kind === "tool" ? call.detail || call.name : t("subagent");
   };
   // Working, said once at the end: while no call is open, nothing waits on you and the session
@@ -179,6 +209,9 @@ export function AgentConsole(props: {
 
   const [text, setText] = createSignal("");
   let input: HTMLInputElement | undefined;
+  /** When a key was last pressed in the prompt, and a pointer last went down anywhere. */
+  let typedAt = 0;
+  let pointedAt = 0;
   let root: HTMLDivElement | undefined;
   const tail = tailFollower(32);
 
@@ -217,7 +250,7 @@ export function AgentConsole(props: {
       () => m().waiting.length,
       (n, prev) => {
         // Never while you are mid-sentence: the next key you type would answer the request.
-        if (n > (prev ?? 0) && document.activeElement === input && !input?.value) root?.focus();
+        if (n > (prev ?? 0) && document.activeElement === input && !input?.value && performance.now() - typedAt > 4000) root?.focus();
         if (n > (prev ?? 0)) tail.follow();
       },
     ),
@@ -287,14 +320,17 @@ export function AgentConsole(props: {
   // One message at a time (Enter twice sends once), and the box is cleared when it goes, so
   // what you type while it is on its way stays yours.
   let sending = false;
-  const send = async (toRun = false) => {
+  const send = async (aside = false) => {
     const msgText = text().trim();
     if (!msgText || sending) return;
     if (command(msgText)) return;
     sending = true;
     setText("");
     try {
-      if (asksAside() && !toRun) await api.runAside(m().id, msgText);
+      if (resumesRun()) {
+        const next = await api.runResume(m().id, msgText);
+        props.onResumed?.(next);
+      } else if (asksAside() && aside) await api.runAside(m().id, msgText);
       else await api.runSay(m().id, msgText);
       props.onTalked?.();
     } catch (e) {
@@ -315,6 +351,24 @@ export function AgentConsole(props: {
       toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) });
     }
   };
+  // While you type here the keys stay here: when the field loses the focus without you clicking
+  // elsewhere or pressing Tab (a redraw, a field disabled for an instant, the page taking it),
+  // it takes it back, so a sentence is never cut off halfway.
+  const onPointer = () => (pointedAt = performance.now());
+  window.addEventListener("pointerdown", onPointer, true);
+  onCleanup(() => window.removeEventListener("pointerdown", onPointer, true));
+  const keepFocus = (e: FocusEvent) => {
+    if (e.relatedTarget) return; // the focus went to something else on purpose
+    const at = performance.now();
+    if (at - typedAt > 4000 || at - pointedAt < 500) return;
+    requestAnimationFrame(() => {
+      if (!input?.isConnected || input.disabled || !document.hasFocus()) return;
+      const now = document.activeElement;
+      if (now && now !== document.body && !(now === root && input.value)) return;
+      input.focus();
+    });
+  };
+
   const onKey = (e: KeyboardEvent) => {
     // Ctrl+C stops the agent, like in a terminal (unless you are copying a selection).
     if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "c" && !window.getSelection()?.toString()) {
@@ -405,9 +459,11 @@ export function AgentConsole(props: {
               ? props.sub
                 ? t("Message the agent that opened this subagent (Enter). Ctrl+C stops it")
                 : asksAside()
-                  ? t("Ask without stopping it (Enter) · tell the run itself (⌘Enter). Ctrl+C stops it")
+                  ? t("Tell the run more, without stopping it (Enter) · ask on the side (⌘Enter). Ctrl+C stops it")
                   : t("Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it")
-              : writable()
+              : resumesRun()
+                ? t("Write to pick this session back up where it stopped (Enter)")
+                : writable()
                 ? t("Ask something else; it picks this conversation back up (Enter)")
                 : t("This session ended ({state})", { state: props.ended.toLowerCase() })
           }
@@ -415,7 +471,9 @@ export function AgentConsole(props: {
           autocomplete="off"
           value={text()}
           onInput={(e) => setText(e.currentTarget.value)}
+          onBlur={keepFocus}
           onKeyDown={(e) => {
+            typedAt = performance.now();
             const list = suggestions();
             if (list.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault();

@@ -15,7 +15,7 @@ pub fn handoff_schema() -> Value {
         "type": "object",
         "properties": {
             "status": { "type": "string", "enum": ["done", "partial", "blocked"],
-                "description": "done: the card is finished and committed. partial: progress committed, more is needed. blocked: cannot continue without an answer." },
+                "description": "done: everything the card asks for is finished and committed, every phase or stage of it. partial: progress committed, more is needed; this includes finishing only some of the phases or stages the spec or its decisions lay out, and ending on something the person must approve (a proposal, a concept, a plan) before the rest is built. blocked: cannot continue without an answer." },
             "summary": { "type": "string", "description": "What changed and why, in two or three sentences." },
             "files_changed": { "type": "array", "items": { "type": "string" } },
             "commits": { "type": "array", "items": { "type": "string" }, "description": "Short shas with their subject." },
@@ -34,7 +34,7 @@ pub fn handoff_schema() -> Value {
                     "options": { "type": "array", "items": { "type": "string" } },
                     "recommended": { "type": "integer" },
                     "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is about, what you found, and what each option changes." } }, "required": ["text", "context"] } },
-            "check": { "type": "object", "description": "Only with status partial, and only when the next stage builds on something you made whose quality only the person can judge by looking (a model, art, a look, how it feels): one question asking them to look at it before the card goes on, with options (go on as it is, or what to redo) and the one you recommend. The card waits for the answer, and your session hears it. Never for what tests, screenshots you checked yourself or the judge settle.",
+            "check": { "type": "object", "description": "Only with status partial, and only when the next stage builds on something you made that only the person can judge (a proposal or concept to approve, a model, art, a look, how it feels): one question asking them to look at it before the card goes on, with options (go on as it is, or what to redo) and the one you recommend. The card waits for the answer, and your session hears it. Never for what tests, screenshots you checked yourself or the judge settle.",
                 "properties": {
                     "text": { "type": "string", "description": "The question, short: what to look at and whether it is good enough to build on." },
                     "options": { "type": "array", "items": { "type": "string" } },

@@ -70,8 +70,8 @@ pub(crate) async fn run_start(path: String, card: u32, allow_api_key: Option<boo
 }
 
 #[tauri::command]
-pub(crate) async fn run_resume(run: String) -> CmdResult<RunMeta> {
-    blocking(move || daemon()?.resume(&run)).await
+pub(crate) async fn run_resume(run: String, message: Option<String>) -> CmdResult<RunMeta> {
+    blocking(move || daemon()?.resume(&run, message)).await
 }
 
 #[tauri::command]

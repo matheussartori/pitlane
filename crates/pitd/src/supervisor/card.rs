@@ -118,12 +118,12 @@ pub(super) fn prepare(
             t.to_owned()
         }
         (None, _) => {
-            let branch = format!(
-                "{}{}-{}",
-                r.flow.run.branch_prefix,
-                c.id,
-                cards::slug(&c.title)
-            );
+            // The card has no lane: a branch left by an earlier lane of it (its work landed and
+            // the card was reopened) is not this run's, so the new one takes the next free name.
+            let branch = actions::free_branch(
+                &r,
+                &format!("{}{}-{}", r.flow.run.branch_prefix, c.id, cards::slug(&c.title)),
+            )?;
             let from = into.filter(|t| !r.flow.flow.is_trunk(t));
             match from {
                 Some(f) => note(format!("Creating lane {branch} from {f}")),

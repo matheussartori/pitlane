@@ -838,7 +838,7 @@ export const api = {
   cardReview: (path: string, card: number, action: "approve" | "changes" | "discard", message?: string) =>
     invoke<{ run?: RunMeta; shipped_to?: string; state?: string }>("card_review", { path, card, action, message: message ?? null }),
   accountUse: (path: string, id: string) => invoke<void>("account_use", { path, id }),
-  runResume: (run: string) => invoke<RunMeta>("run_resume", { run }),
+  runResume: (run: string, message?: string) => invoke<RunMeta>("run_resume", { run, message: message ?? null }),
   runSay: (run: string, text: string) => invoke<void>("run_say", { run, text }),
   /** Asks a card's run on the side: a copy of its conversation answers; the run never reads it. */
   runAside: (run: string, text: string) => invoke<string>("run_aside", { run, text }),

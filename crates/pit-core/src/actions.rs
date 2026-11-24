@@ -194,6 +194,24 @@ pub fn ensure_worktree(repo: &Repo, branch: &str) -> Result<PathBuf> {
 
 /// Where a new worktree for `branch` goes: the flow's path, or, when that is taken (`fix/a` and
 /// `fix-a` fill in the same folder), the same with a short hash of the branch's real name.
+/// `branch`, or `branch-2`, `branch-3`… when a branch of that name is already here or on the
+/// remote: a card reopened after its work landed keeps its old lane, and starts a new one.
+pub fn free_branch(repo: &Repo, branch: &str) -> Result<String> {
+    let taken = |b: &str| -> Result<bool> {
+        Ok(repo.git.rev_parse(&format!("refs/heads/{b}"))?.is_some() || repo.remote_sha(b)?.is_some())
+    };
+    if !taken(branch)? {
+        return Ok(branch.to_owned());
+    }
+    for n in 2..100 {
+        let b = format!("{branch}-{n}");
+        if !taken(&b)? {
+            return Ok(b);
+        }
+    }
+    bail!("branch {branch} and its numbered variants already exist")
+}
+
 fn free_worktree_path(repo: &Repo, branch: &str) -> Result<PathBuf> {
     let path = repo.flow.worktree.path_for(&repo.home, &repo.name, branch);
     if !path.exists() {

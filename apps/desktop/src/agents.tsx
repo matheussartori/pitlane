@@ -270,6 +270,10 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
             kind={kindLabel(mm())}
             ended={look(mm()).word}
             onTalked={() => (keep(mm().id, true), void refreshAgents())}
+            onResumed={(next) => {
+              keep(next.id, true);
+              void refreshAgents().then(() => selectAgent(next.id));
+            }}
           />
         </div>
       )}

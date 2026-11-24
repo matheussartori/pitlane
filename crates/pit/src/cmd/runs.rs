@@ -60,7 +60,7 @@ pub fn continue_run(run: String, allow_api_key: bool, detach: bool) -> Result<Ex
 }
 
 pub fn resume(run: String, detach: bool) -> Result<ExitCode> {
-    let m = daemon()?.resume(&run)?;
+    let m = daemon()?.resume(&run, None)?;
     println!("{} run {} resumes {}", paint(DONE, "✓"), m.id, run);
     follow_or_detach(&m.id, detach)
 }

@@ -12,6 +12,10 @@ import { msg } from "../format";
 /** How long an ended session stays in view (so you see how it ended) before it closes. */
 const LINGER_MS = 20_000;
 const KEPT_KEY = "pitlane.agents.kept";
+const CLOSED_KEY = "pitlane.agents.closed";
+/** How long a card's run that was stopped (by hand, by Stop all, by quitting) stays in view,
+ *  waiting to be written to and picked back up. */
+const PAUSED_MS = 7 * 24 * 3600_000;
 
 const [repo, setRepo] = createSignal<string | null>(null);
 // A store reconciled by id: rows keep their DOM while the list refreshes.
@@ -23,12 +27,24 @@ const [selected, setSelected] = createSignal<{ id: string; sub: string | null } 
 export { selected };
 const [watching, setWatching] = createSignal(false);
 const [now, setNow] = createSignal(Date.now());
-/** Ended sessions you closed by hand. */
-const [closed, setClosed] = createSignal<string[]>([]);
+/** Ended sessions you closed by hand; kept across launches, so a stopped run you closed does
+ *  not come back after a restart. */
+const [closed, setClosedSignal] = createSignal<string[]>(readList(CLOSED_KEY));
+const setClosed = (ids: string[]) => {
+  setClosedSignal(ids.slice(-300));
+  try {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify(closed()));
+  } catch {
+    /* private window: for this launch only */
+  }
+};
 
 function readKept(): string[] {
+  return readList(KEPT_KEY);
+}
+function readList(key: string): string[] {
   try {
-    return JSON.parse(localStorage.getItem(KEPT_KEY) ?? "[]") as string[];
+    return JSON.parse(localStorage.getItem(key) ?? "[]") as string[];
   } catch {
     return [];
   }
@@ -55,8 +71,25 @@ const endedMs = (m: RunMeta) => (m.ended_at ?? m.started_at) * 1000;
 export const agentSessions = createRoot(() => createMemo(() => {
   const sel = selected()?.id;
   const k = kept();
-  return sessions()
-    .filter((m) => live(m) || (!closed().includes(m.id) && (k.includes(m.id) || m.id === sel || now() - endedMs(m) < LINGER_MS)))
+  const all = sessions();
+  // A card's run stopped mid-work (by hand, Stop all, quitting the app) stays until you close
+  // it: written to, it picks its session back up, as `claude --resume` does. Only the newest
+  // run of its card, and only while no other run went on from it.
+  const newest = new Map<number, string>();
+  const resumed = new Set<string>();
+  for (const m of all) {
+    if ((m.kind ?? "run") !== "run") continue;
+    if (m.resumed_from) resumed.add(m.resumed_from);
+    if (!newest.has(m.card)) newest.set(m.card, m.id); // the list is newest first
+  }
+  const paused = (m: RunMeta) =>
+    (m.kind ?? "run") === "run" &&
+    (m.state === "stopped" || m.state === "interrupted") &&
+    newest.get(m.card) === m.id &&
+    !resumed.has(m.id) &&
+    now() - endedMs(m) < PAUSED_MS;
+  return all
+    .filter((m) => live(m) || (!closed().includes(m.id) && (k.includes(m.id) || m.id === sel || paused(m) || now() - endedMs(m) < LINGER_MS)))
     .sort((a, b) => a.started_at - b.started_at || a.id.localeCompare(b.id));
 }));
 

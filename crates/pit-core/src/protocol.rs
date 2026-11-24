@@ -57,7 +57,9 @@ pub enum Request {
     Finish { repo: PathBuf, cards: Vec<u32>, instructions: String, into: Option<String> },
     /// The Board's assistant: turns what the person says into cards.
     Assist { repo: PathBuf, text: String },
-    Resume { run: String },
+    /// The run's session goes on in a new run. `message`: what the person wrote to it, sent as
+    /// the first message instead of "carry on" (writing to a stopped session resumes it).
+    Resume { run: String, message: Option<String> },
     /// The runs, of one repository or all.
     List { repo: Option<PathBuf> },
     /// Every agent session, of one repository or all.

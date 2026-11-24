@@ -93,8 +93,8 @@ impl Client {
     }
 
     /// Starts the run again where `run` stopped.
-    pub fn resume(&mut self, run: &str) -> Result<RunMeta> {
-        Ok(self.request_as::<RunReply>(&Request::Resume { run: run.into() })?.run)
+    pub fn resume(&mut self, run: &str, message: Option<String>) -> Result<RunMeta> {
+        Ok(self.request_as::<RunReply>(&Request::Resume { run: run.into(), message })?.run)
     }
 
     /// A new run that carries on from `run`.
