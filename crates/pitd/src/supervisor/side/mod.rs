@@ -62,6 +62,8 @@ pub(super) struct Side {
     pub(super) board: bool,
     /// Images sent with the prompt (the card's screenshots, for the analysis).
     pub(super) images: Vec<(&'static str, Vec<u8>)>,
+    /// Picks the run's Claude Code session back up (`--resume`) instead of starting it.
+    pub(super) resume: bool,
 }
 
 impl Supervisor {
@@ -108,7 +110,11 @@ impl Supervisor {
         if side.kind == SessionKind::Assist {
             self.emit(&id, RunEvent::Said { text: side.prompt.clone() });
         }
+        self.drive_side(id, side).await
+    }
 
+    /// Runs a recorded side session's Claude Code to its end and records how it ended.
+    pub(super) async fn drive_side(&self, id: String, side: Side) -> Result<String> {
         let mut cmd = self.side_command(&id, &side)?;
         let work = async {
             let first = runs::claude_user_line_with(&self.in_their_language(&side.prompt), &side.images);

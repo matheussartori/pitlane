@@ -407,7 +407,7 @@ export interface RelatedLane {
   worktree: string;
 }
 
-export type SessionKind = "run" | "analysis" | "judge" | "finish";
+export type SessionKind = "run" | "analysis" | "judge" | "finish" | "assist";
 
 export interface Quota {
   /** The account the meters are about: this repository's. */

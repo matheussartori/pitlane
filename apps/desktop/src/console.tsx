@@ -77,6 +77,8 @@ export function AgentConsole(props: {
 }) {
   const m = () => props.m;
   const live = () => isLive(m().state);
+  // The Board assistant, once ended, picks its session back up when you write to it.
+  const writable = () => live() || (m().kind === "assist" && !props.sub);
   const rel = createMemo(() => relTo(m().worktree));
 
   // One relative copy per event, so the log keeps its rows while the timeline grows.
@@ -303,7 +305,7 @@ export function AgentConsole(props: {
           </div>
         </Show>
       </div>
-      <div class="ag-input" data-off={live() ? undefined : ""}>
+      <div class="ag-input" data-off={writable() ? undefined : ""}>
         <Show when={suggestions().length > 0}>
           <div class="ag-suggest" role="listbox" aria-label={t("Commands")}>
             <For each={suggestions()}>
@@ -332,13 +334,15 @@ export function AgentConsole(props: {
         <input
           ref={input}
           class="ag-field"
-          disabled={!live()}
+          disabled={!writable()}
           placeholder={
             live()
               ? props.sub
                 ? t("Message the agent that opened this subagent (Enter). Ctrl+C stops it")
                 : t("Tell the agent more: context, a check to make… (Enter). Ctrl+C stops it")
-              : t("This session ended ({state})", { state: props.ended.toLowerCase() })
+              : writable()
+                ? t("Ask something else; it picks this conversation back up (Enter)")
+                : t("This session ended ({state})", { state: props.ended.toLowerCase() })
           }
           aria-label={t("Message the agent")}
           autocomplete="off"

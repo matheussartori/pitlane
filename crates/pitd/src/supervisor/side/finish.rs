@@ -53,6 +53,7 @@ impl Supervisor {
             limit: FINISH_LIMIT,
             board: false,
             images: Vec::new(),
+            resume: false,
         };
         let id_hint = now_secs();
         let out = self.side_session(side).await;

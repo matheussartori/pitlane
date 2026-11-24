@@ -1870,3 +1870,62 @@ async fn out_of_turns_under_run_all_goes_on_without_stopping_the_card() {
     assert_eq!(next.extensions, 1);
     assert!(!wait_end(&s, &next.id).await.goes_on);
 }
+
+/// The Board assistant ends once it has answered, like any session, and what you write next
+/// picks its Claude Code session back up in the same run: one row, one log that goes on, and
+/// it remembers what was said. The Board's own box goes on with the same one.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_board_assistant_ends_after_answering_and_a_message_picks_it_back_up() {
+    use pit_core::runs::SessionKind;
+    let fx = fx();
+    let wrapper = fx.fake.with_file_name("fake-assist");
+    fs::write(
+        &wrapper,
+        format!("#!/bin/bash\necho \"$*\" >> \"$PWD/.assist-args\"\nexec {} \"$@\"\n", fx.fake.display()),
+    )
+    .unwrap();
+    Command::new("chmod").arg("+x").arg(&wrapper).status().unwrap();
+    let s = Supervisor::new(Config {
+        home: fx.home.clone(),
+        claude_bin: wrapper.to_string_lossy().into_owned(),
+        pit_bin: Some(fx.fake.clone()),
+    });
+    let assists = |s: &Arc<Supervisor>| -> Vec<String> {
+        s.sessions(None).unwrap().into_iter().filter(|m| m.kind == SessionKind::Assist).map(|m| m.id).collect()
+    };
+
+    s.assist(fx.repo.clone(), "Make cards from this list.".into()).await.unwrap();
+    let mut id = None;
+    for _ in 0..200 {
+        if let Some(x) = assists(&s).pop() {
+            id = Some(x);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let id = id.expect("the assistant started");
+    let first = ends_within(&s, &id, 20).await;
+    assert_eq!(first.state, RunState::Done, "{:?}", first.error);
+
+    s.message(&id, "And one more.").await.unwrap();
+    let second = ends_within(&s, &id, 20).await;
+    assert_eq!(second.state, RunState::Done, "{:?}", second.error);
+    assert_eq!(second.session_id, first.session_id);
+    assert!(second.ended_at.is_some() && second.cost_usd > first.cost_usd);
+
+    s.assist(fx.repo.clone(), "A third one.".into()).await.unwrap();
+    let third = ends_within(&s, &id, 20).await;
+    assert_eq!(third.state, RunState::Done, "{:?}", third.error);
+    assert_eq!(assists(&s), vec![id.clone()], "one assistant, picked back up each time");
+
+    let args = fs::read_to_string(first.worktree.join(".assist-args")).unwrap();
+    // Started once with a session id of its own, then picked back up by the one Claude Code
+    // reported, twice.
+    assert_eq!(args.matches("--session-id ").count(), 1, "{args}");
+    assert_eq!(args.matches(&format!("--resume {}", first.session_id)).count(), 2, "{args}");
+    // One timeline, numbered on from where it stopped, with all three messages.
+    let tl = s.read_timeline(&id, 0);
+    assert!(tl.iter().enumerate().all(|(i, (n, _))| i == *n));
+    let said: Vec<&str> = tl.iter().filter_map(|(_, e)| match e { RunEvent::Said { text } => Some(text.as_str()), _ => None }).collect();
+    assert_eq!(said, ["Make cards from this list.", "And one more.", "A third one."]);
+}

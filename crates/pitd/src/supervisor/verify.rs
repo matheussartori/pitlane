@@ -210,6 +210,7 @@ impl Supervisor {
             limit: JUDGE_LIMIT,
             board: false,
             images: Vec::new(),
+            resume: false,
         };
         match self.side_session(side).await {
             Ok(stdout) => match pit_core::verify::read_judge(&stdout) {

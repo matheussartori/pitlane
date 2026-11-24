@@ -590,11 +590,6 @@ impl Supervisor {
                 let (stdin, pid) = {
                     let mut live = live.lock().unwrap_or_else(PoisonError::into_inner);
                     let Some(l) = live.get_mut(&id) else { return };
-                    // A session the person opened (the Board's assistant) is theirs to end:
-                    // it waits for the next message until they stop it.
-                    if l.meta.kind == SessionKind::Assist {
-                        return;
-                    }
                     if l.results == 0 || l.turn {
                         return; // working again: its next result checks once more
                     }

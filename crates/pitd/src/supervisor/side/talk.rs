@@ -59,6 +59,7 @@ impl Supervisor {
             limit: TALK_LIMIT,
             board: false,
             images: cards::image_bytes(&r, &card),
+            resume: false,
         };
         let stdout = self
             .side_session(side)

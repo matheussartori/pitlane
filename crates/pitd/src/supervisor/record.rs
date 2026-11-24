@@ -111,9 +111,33 @@ impl Supervisor {
     pub(super) fn register(&self, meta: RunMeta) -> Result<()> {
         fs::create_dir_all(self.dir(&meta.id))?;
         self.write_meta(&meta)?;
+        self.hold(meta, 0);
+        Ok(())
+    }
+
+    /// Holds an ended session as live again, to pick its Claude Code session back up: its
+    /// timeline goes on from where it stopped. False when it is live already (someone else
+    /// picked it up first), and then nothing changes.
+    pub(super) fn reopen_record(&self, meta: RunMeta) -> Result<bool> {
+        let events = fs::read_to_string(self.dir(&meta.id).join("timeline.jsonl"))
+            .map(|t| t.lines().count())
+            .unwrap_or(0);
+        if self.live().contains_key(&meta.id) {
+            return Ok(false);
+        }
+        self.write_meta(&meta)?;
+        Ok(self.hold(meta, events))
+    }
+
+    /// Takes a session in as live, unless it already is.
+    fn hold(&self, meta: RunMeta, events: usize) -> bool {
         let timeline = self.open_timeline(&meta.id);
         let (tx, _) = broadcast::channel(EVENTS_BUFFER);
-        self.live().insert(
+        let mut live = self.live();
+        if live.contains_key(&meta.id) {
+            return false;
+        }
+        live.insert(
             meta.id.clone(),
             Live {
                 meta,
@@ -124,7 +148,7 @@ impl Supervisor {
                 background: 0,
                 stop_requested: false,
                 admitted: false,
-                events: 0,
+                events,
                 timeline,
                 tx,
                 rules: Vec::new(),
@@ -132,7 +156,7 @@ impl Supervisor {
                 pending: HashMap::new(),
             },
         );
-        Ok(())
+        true
     }
 
     fn write_meta(&self, m: &RunMeta) -> Result<()> {

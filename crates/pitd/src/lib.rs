@@ -207,7 +207,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
         Request::Sessions { repo } => reply(SessionsReply { sessions: sup.sessions(repo.as_deref())? }),
         Request::Get { run } => reply(RunReply { run: sup.get(run_arg(&run)?)? }),
         Request::Say { run, text } => {
-            sup.say(run_arg(&run)?, &text).await?;
+            sup.message(run_arg(&run)?, &text).await?;
             ok()
         }
         Request::Tune { run, model, effort } => {

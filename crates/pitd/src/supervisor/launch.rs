@@ -199,7 +199,8 @@ impl Supervisor {
     /// where it sets none, and Pitlane's approvals. Notes the effort on the session.
     pub(super) fn side_command(&self, id: &str, side: &Side) -> Result<Command> {
         let mut cmd = stream_json(&self.cfg.claude_bin);
-        cmd.args(["--session-id", &self.get(id)?.session_id])
+        let session = self.get(id)?.session_id;
+        cmd.args([if side.resume { "--resume" } else { "--session-id" }, &session])
             .args(with_language(&refuse_peers(&side.args), &self.cfg.home));
         // Whatever the session does not set comes from your Claude Code: model and effort.
         let set = side

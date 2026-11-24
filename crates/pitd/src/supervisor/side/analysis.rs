@@ -191,6 +191,7 @@ impl Supervisor {
             images: Repo::open(repo, &home_dir(), &self.cfg.home)
                 .map(|r| cards::image_bytes(&r, card))
                 .unwrap_or_default(),
+            resume: false,
         };
         let stdout = self
             .side_session(side)

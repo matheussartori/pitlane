@@ -122,6 +122,9 @@ export async function refreshAgents() {
     const all = await api.sessions(path);
     if (g !== gen || path !== repo()) return;
     setSessions(all.slice(0, 200));
+    // One you closed that came back (an assistant you wrote to again) is open again.
+    const back = closed().filter((id) => all.some((m) => m.id === id && live(m)));
+    if (back.length) setClosed(closed().filter((id) => !back.includes(id)));
     for (const m of all) {
       if (live(m)) {
         void ensureTimeline(m.id);
@@ -364,14 +367,8 @@ function SessionRow(props: { m: RunMeta }) {
           <span class="tt-sub">{lastLine(props.m)}</span>
         </span>
       </button>
-      <Show when={!live(props.m) || idle(props.m)}>
-        <button
-          type="button"
-          class="tt-close"
-          aria-label={live(props.m) ? t("Stop and close this session") : t("Close this session")}
-          title={live(props.m) ? t("Stop and close") : t("Close")}
-          onClick={() => void (live(props.m) ? stopAndClose(props.m.id) : close(props.m.id))}
-        >
+      <Show when={!live(props.m)}>
+        <button type="button" class="tt-close" aria-label={t("Close this session")} title={t("Close")} onClick={() => close(props.m.id)}>
           <Icon name="close" small />
         </button>
       </Show>
@@ -395,19 +392,6 @@ function SubRow(props: { m: RunMeta; s: Subagent }) {
 
 function close(id: string) {
   closeAll([id]);
-}
-
-/** A session waiting for your next message still has a process: closing it stops that first.
- *  It stays in view until it has ended (nothing runs unseen), then the closed list hides it. */
-async function stopAndClose(id: string) {
-  try {
-    await api.runStop(id);
-  } catch (e) {
-    toast({ tone: "fail", title: t("Could not stop it"), body: msg(e) });
-    return;
-  }
-  close(id);
-  void refreshAgents();
 }
 
 /** Takes ended sessions out of view (live ones only stop, never hide: nothing runs unseen). */
@@ -533,7 +517,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
             onSub={(s) => selectAgent(mm().id, s)}
             kind={kindLabel(mm())}
             ended={look(mm()).word}
-            onTalked={() => keep(mm().id, true)}
+            onTalked={() => (keep(mm().id, true), void refreshAgents())}
           />
         </div>
       )}
