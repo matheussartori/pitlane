@@ -157,7 +157,7 @@ impl Supervisor {
         // sessions (`INBOUND`).
         let mut settings = serde_json::Map::new();
         if prep.sandbox && !autopilot {
-            settings.extend(sandbox_settings(&prep.worktree, prep.related.iter().map(|l| l.worktree.as_path())));
+            settings.extend(sandbox_settings(&prep.worktree, prep.related.iter().map(|l| l.worktree.as_path()), &prep.write, prep.ask_unsandboxed));
         }
         if let Some(helper) = &choice.api_key_helper {
             settings.insert("apiKeyHelper".into(), helper.clone().into());
@@ -396,16 +396,32 @@ pub(super) fn read_only_args(mode: &str) -> Vec<String> {
 /// `cargo build` or `npm install` writes there.
 const CACHES: &[&str] = &[".cargo", ".rustup", ".npm", ".pnpm-store", "Library/pnpm", ".yarn", ".bun", ".deno", ".cache", "Library/Caches", "go", ".gradle", ".m2", ".nuget", ".gem", ".pyenv", ".local/share/virtualenvs"];
 
+/// Where the other agents' CLIs an agent may call keep their sessions, logs and refreshed logins:
+/// Codex (`codex exec`) and Antigravity (`agy -p`).
+const AGENT_CLIS: &[&str] = &[".codex", ".gemini", "Library/Application Support/antigravity", "Library/Logs/Antigravity", "Library/HTTPStorages/com.google.antigravity"];
+
+/// Their settings, instructions and MCP servers stay read-only: the next time you run them, outside
+/// the sandbox, they would act on what an agent wrote there.
+const AGENT_CLI_CONFIG: &[&str] = &[".codex/config.toml", ".codex/AGENTS.md", ".codex/rules", ".gemini/config", ".gemini/antigravity-cli/settings.json"];
+
 /// Claude Code's sandbox for a run: its commands write to the worktree (and the lanes beside it,
-/// given with --add-dir), the git repository behind them (a commit writes there) and the package
-/// caches, but not to git's hooks or config, which would run as you outside the sandbox. They
-/// reach any host on the network and no local socket, so nothing the agent runs can answer its
-/// own approvals through Pitlane's daemon. A command that needs more asks you, marked as
-/// unsandboxed; Pitlane's "always" rules never answer that question for you.
-fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>) -> serde_json::Map<String, Value> {
+/// given with --add-dir), the git repository behind them (a commit writes there), the package
+/// caches, the other agents' CLIs and the repository's `[run] write`, but not to git's hooks or
+/// config, which would run as you outside the sandbox. They reach any host on the network and no
+/// local socket, so nothing the agent runs can answer its own approvals through Pitlane's daemon;
+/// they may listen on localhost and ask macOS to check certificates (Go and Rust tools such as
+/// `agy` and `codex` verify TLS through it). A command that needs more fails, unless the
+/// repository turns on `ask_unsandboxed`: then it asks you, marked as unsandboxed, and Pitlane's
+/// "always" rules never answer that question for you.
+fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
     let home = home_dir();
-    let mut write: Vec<String> = CACHES.iter().map(|c| home.join(c).to_string_lossy().into_owned()).collect();
-    let mut deny = Vec::new();
+    let at_home = |p: &str| home.join(p).to_string_lossy().into_owned();
+    let mut write: Vec<String> = CACHES.iter().chain(AGENT_CLIS).map(|c| at_home(c)).collect();
+    write.extend(extra.iter().map(|p| match p.strip_prefix("~/") {
+        Some(rest) => at_home(rest),
+        None => p.clone(),
+    }));
+    let mut deny: Vec<String> = AGENT_CLI_CONFIG.iter().map(|c| at_home(c)).collect();
     for wt in std::iter::once(worktree).chain(related) {
         let git = pit_core::git::Git::new(wt);
         if let Ok(common) = git.run(&["rev-parse", "--path-format=absolute", "--git-common-dir"]) {
@@ -419,14 +435,19 @@ fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Pa
         "sandbox": {
             "enabled": true,
             "autoAllowBashIfSandboxed": false,
-            "allowUnsandboxedCommands": true,
-            "network": { "allowedDomains": ["*"] },
+            "allowUnsandboxedCommands": ask_unsandboxed,
+            "enableWeakerNetworkIsolation": true,
+            "network": { "allowedDomains": ["*"], "allowLocalBinding": true },
             "filesystem": { "allowWrite": write, "denyWrite": deny },
         },
-        "permissions": { "ask": ["Bash(dangerouslyDisableSandbox:true)"] },
     });
     match v {
-        Value::Object(m) => m,
+        Value::Object(mut m) => {
+            if ask_unsandboxed {
+                m.insert("permissions".into(), serde_json::json!({ "ask": ["Bash(dangerouslyDisableSandbox:true)"] }));
+            }
+            m
+        }
         _ => unreachable!(),
     }
 }
@@ -458,6 +479,21 @@ pub(super) fn session_saved(config: &Path, session: &str) -> bool {
 #[cfg(test)]
 mod your_claude_tests {
     use super::*;
+
+    #[test]
+    fn sandbox_never_asks_unless_the_repository_says_so() {
+        let wt = std::env::temp_dir();
+        let s = Value::Object(sandbox_settings(&wt, std::iter::empty(), &["~/.mytool".into()], false));
+        assert_eq!(s["sandbox"]["allowUnsandboxedCommands"], false);
+        assert!(s.get("permissions").is_none());
+        let write = s["sandbox"]["filesystem"]["allowWrite"].as_array().unwrap();
+        for p in [".mytool", ".codex", ".gemini"] {
+            assert!(write.iter().any(|w| w == &Value::from(home_dir().join(p).to_string_lossy().into_owned())), "{p}");
+        }
+        let asks = Value::Object(sandbox_settings(&wt, std::iter::empty(), &[], true));
+        assert_eq!(asks["sandbox"]["allowUnsandboxedCommands"], true);
+        assert_eq!(asks["permissions"]["ask"][0], "Bash(dangerouslyDisableSandbox:true)");
+    }
 
     #[test]
     fn reads_your_model_and_its_effort() {

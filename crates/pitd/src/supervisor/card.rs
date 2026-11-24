@@ -30,6 +30,10 @@ pub(super) struct Prepared {
     pub(super) related: Vec<pit_core::related::RelatedLane>,
     /// The repository keeps its runs' commands in the sandbox (`[run] sandbox`).
     pub(super) sandbox: bool,
+    /// More folders the sandbox lets the agent write to (`[run] write`).
+    pub(super) write: Vec<String>,
+    /// The agent may ask to run a command outside the sandbox (`[run] ask_unsandboxed`).
+    pub(super) ask_unsandboxed: bool,
 }
 
 /// The card's lane and worktree, made when missing, and what the agent is launched with.
@@ -256,6 +260,8 @@ pub(super) fn prepare(
         model: r.flow.run.model.clone(),
         browser: r.flow.run.browser,
         sandbox: r.flow.run.sandbox,
+        write: r.flow.run.write.clone(),
+        ask_unsandboxed: r.flow.run.ask_unsandboxed,
     })
 }
 

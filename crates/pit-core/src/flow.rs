@@ -208,13 +208,18 @@ pub struct RunCfg {
     pub browser: bool,
     /// Run the agent's commands in Claude Code's sandbox (on by default; not under Run all): they
     /// write only to the worktree, the git repository and the usual package caches, and reach no
-    /// local socket, Pitlane's included. Anything else asks you first, as an unsandboxed command.
+    /// local socket, Pitlane's included. Codex and Antigravity (`agy`) work inside it too.
     pub sandbox: bool,
+    /// More folders the agent's commands may write to inside the sandbox; `~/` is your home.
+    pub write: Vec<String>,
+    /// Let the agent ask you to run a command outside the sandbox. Off by default: such a command
+    /// fails in the sandbox and the agent finds another way, so a run never waits on you for it.
+    pub ask_unsandboxed: bool,
 }
 
 impl Default for RunCfg {
     fn default() -> Self {
-        Self { allow: Vec::new(), max_turns: 150, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into(), browser: false, sandbox: true }
+        Self { allow: Vec::new(), max_turns: 150, model: None, branch_prefix: "feat/".into(), brief: true, permission_mode: "auto".into(), browser: false, sandbox: true, write: Vec::new(), ask_unsandboxed: false }
     }
 }
 
@@ -346,6 +351,8 @@ brief = true                # tell the agent where to look, from Pitlane's index
 permission_mode = "auto"    # Claude Code's mode for every session: auto (asks rarely), acceptEdits or default
 browser = false             # a headless browser for agents: they open what they change and screenshot it
 sandbox = true              # agents' commands write only to the worktree, the repository and package caches
+write = []                  # more folders agents' commands may write to, e.g. ["~/.config/mytool"]
+ask_unsandboxed = false     # true: an agent may ask you to run a command outside the sandbox
 # model     = "sonnet"
 "#;
 
