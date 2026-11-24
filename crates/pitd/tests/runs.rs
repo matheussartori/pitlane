@@ -623,6 +623,37 @@ async fn a_run_all_card_stopped_waits_in_the_queue() {
     assert_eq!((c.state, c.paused.as_deref()), (CardState::Queued, Some(meta.id.as_str())), "in the queue, its session kept");
 }
 
+/// A Run all card started again by hand (from Blocked, or by the assistant) stays Run all's: on
+/// the day of #82 such runs lost it, so a partial handoff waited in Review with nothing to decide
+/// and a stop sent the card to the Backlog. One you put back in the Backlog yourself has left.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_all_card_started_by_hand_stays_run_alls() {
+    let fx = fx();
+    let id = card(&fx, "Night batch card, retried");
+    let (s, meta) = slow_run(&fx, id, true).await;
+    s.stop(&meta.id).unwrap();
+    wait_end(&s, &meta.id).await;
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    cards::update(&r, id, CardPatch { state: Some(CardState::Blocked), ..Default::default() }).unwrap();
+    let again = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    assert!(again.autopilot, "started by hand from Blocked, still Run all's");
+    for _ in 0..100 {
+        if card_state(&fx, id).0 == CardState::Running && s.get(&again.id).unwrap().pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    s.stop(&again.id).unwrap();
+    wait_end(&s, &again.id).await;
+    assert_eq!(card_state(&fx, id).0, CardState::Queued, "a stop leaves it in the queue, not the Backlog");
+    cards::update(&r, id, CardPatch { state: Some(CardState::Ready), ..Default::default() }).unwrap();
+    let mine = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    assert!(!mine.autopilot, "put back in the Backlog by hand: yours now");
+    s.stop(&mine.id).unwrap();
+    wait_end(&s, &mine.id).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn moving_a_running_card_out_stops_it_and_keeps_where_it_went() {
     let fx = fx();

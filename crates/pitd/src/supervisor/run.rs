@@ -54,7 +54,12 @@ impl Supervisor {
         let mut opts = opts;
         // A card in Run all's queue stays Run all's when you start it by hand: a partial handoff
         // puts it back in the queue for what is left, instead of in Review with nothing to do.
-        opts.autopilot |= c.state == CardState::Queued;
+        // So does one Run all already worked, started again by hand (from Blocked, Review, or by
+        // the assistant): its last run was Run all's, and without this a partial handoff sent it
+        // to Review with nothing to decide, and a stop to the Backlog. Only a card you put back in
+        // the Backlog yourself has left Run all.
+        opts.autopilot |= c.state == CardState::Queued
+            || (c.state != CardState::Ready && self.latest_run(&r.root, card).is_some_and(|m| m.autopilot));
         let mut resume = resume;
         // A card stopped mid-work picks its session up where it was left: the agent keeps all it
         // did and said. Unless the person starts over, or the session is gone.
