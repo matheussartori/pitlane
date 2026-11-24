@@ -1,7 +1,7 @@
 // The app's preferences: read once at start, changed from Settings, saved in ~/.pitlane/desktop.json.
 import { createSignal } from "solid-js";
 import { DEFAULT_PREFS, api, type Prefs } from "./api";
-import { retheme, setTerminalNotify } from "./terminals";
+import { retheme, setTerminalNotify } from "./terminals/model";
 
 const [prefs, setPrefsSignal] = createSignal<Prefs>(DEFAULT_PREFS);
 export { prefs };

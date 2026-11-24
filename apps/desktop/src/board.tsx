@@ -1,82 +1,18 @@
 // Board: cards grouped by who acts next. A card linked to a lane carries that lane's track.
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { api, isLive, type Card, type Plan, type RunMeta, type Yard } from "./api";
-import { columnEmpty, columnIcon, columnTitle, columns, latestRun, movesFor, place, reviewSummary, unblockActions, type Column, type Move, type UnblockAction } from "./cards";
+import { columnEmpty, columnIcon, columnTitle, columns, holdNote, latestRun, movesFor, onItsWay, place, planNote, reviewSummary, unblockActions, type Column, type Move } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { attachImages, imagesIn } from "./images";
 import { Linked } from "./links";
-import { refreshAgents } from "./agents";
-import { track } from "./lane";
+import { refreshAgents } from "./store/agents";
+import { MiniTrack } from "./track";
+import { ForgetSheet, deleteCard, hasMemory, unblockCard } from "./cardactions";
 import { ErrorLine, Sheet, Spinner, toast } from "./ui";
 import { plural, t } from "./i18n";
 import { clock, elapsed, msg } from "./format";
 
-
-/** The one stop worth naming at card size: your move, a count to settle, or what is wrong. */
-function stopNote(nodes: { stage: string; state: string; figure?: string }[]): string | null {
-  const n = nodes.find((x) => x.state === "fail") ?? nodes.find((x) => x.state === "next") ?? nodes.find((x) => x.state === "count");
-  if (!n) return null;
-  if (n.state === "next") return t("next: {stage}", { stage: n.stage });
-  if (n.state === "fail") return t("mixed in {stage}", { stage: n.stage });
-  return n.figure ?? n.stage;
-}
-
-/** The lane's track at card size: four stops and the one that matters, in words. */
-export function MiniTrack(props: { card: Card; yard: Yard | null; now: number }) {
-  return <LaneTrack branch={props.card.lane} yard={props.yard} now={props.now} />;
-}
-
-/** The track of the lane on `branch`, small, with the one stop that matters in words. */
-export function LaneTrack(props: { branch: string | undefined; yard: Yard | null; now: number }) {
-  const lane = () => (props.branch ? props.yard?.lanes.find((l) => l.branch === props.branch) : undefined);
-  return (
-    <Show when={lane() && props.yard ? lane() : null}>
-      {(l) => (
-        <span class="mini-track">
-          <span
-            class="rail rail-mini"
-            role="img"
-            aria-label={t("Lane {branch}: {stops}", { branch: l().branch, stops: track(l(), props.yard!, props.now).map((n) => `${n.stage} ${n.state === "on" ? t("reached") : n.state === "off" ? t("not reached") : n.state}`).join(", ") })}
-          >
-            <For each={track(l(), props.yard!, props.now)}>
-              {(n) => (
-                <span class="node" data-state={n.state} title={`${n.stage}: ${n.title}`}>
-                  <span class="dot" aria-hidden="true" />
-                </span>
-              )}
-            </For>
-          </span>
-          <Show when={stopNote(track(l(), props.yard!, props.now))}>
-            {(note) => <span class="stop-note" aria-hidden="true">{note()}</span>}
-          </Show>
-        </span>
-      )}
-    </Show>
-  );
-}
-
-/** One quiet line for a card the planner would hold back; nothing for one that can start now. */
-export function planNote(plan: Plan | null | undefined, id: number, cards: Card[] = [], counts: (other: number) => boolean = () => true): string | null {
-  if (!plan) return null;
-  const name = (f: string) => {
-    const [n, dir] = f.split("/").reverse();
-    return dir && /^(index|mod|__init__)\./.test(n!) ? `${dir}/${n}` : n!;
-  };
-  const called = (other: number) => {
-    const c = cards.find((x) => x.id === other);
-    return c ? `#${other} ${c.title}` : `#${other}`;
-  };
-  const wait = plan.waits.find((w) => w.card === id && (w.with_card == null || counts(w.with_card)));
-  if (wait) return t("Waits for {other} to land: both touch {file}", { other: wait.with_lane ?? called(wait.with_card!), file: name(wait.files[0]!) });
-  const batch = plan.batches.findIndex((b) => b.includes(id));
-  if (batch <= 0) return null;
-  const earlier = new Set(plan.batches.slice(0, batch).flat());
-  const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1) && counts(x.with_card!)) || (x.with_card === id && earlier.has(x.card) && counts(x.card)));
-  if (!c) return null;
-  const other = c.card === id ? c.with_card! : c.card;
-  return t("After {other}: both touch {file}", { other: called(other), file: name(c.files[0]!) });
-}
 
 /**
  * Ask Claude about the board, typed or dictated: "make cards from this list", "split #4". A
@@ -140,111 +76,6 @@ function BoardAsk(props: { repo: string }) {
   );
 }
 
-/** The card carries something of Claude's: the analysis mark, its notes or the judge's, or open questions. */
-export const hasMemory = (c: Card) =>
-  !!c.analyzed || (c.notes ?? []).some((n) => n.by !== "you") || (c.questions ?? []).some((q) => q.answer == null) || (c.after?.length ?? 0) > 0;
-
-/**
- * Forget what Claude learned, to analyse again from scratch: its notes and the judge's, the open
- * questions, the analysis mark and the order. Says exactly what goes and what stays, and needs a
- * deliberate confirm (no Enter-to-confirm, the safe button has the focus).
- */
-export function ForgetSheet(props: { repo: string; cards: Card[]; onDone: () => void; onClose: () => void }) {
-  const [busy, setBusy] = createSignal(false);
-  const notes = () => props.cards.reduce((n, c) => n + (c.notes ?? []).filter((x) => x.by !== "you").length, 0);
-  const open = () => props.cards.reduce((n, c) => n + (c.questions ?? []).filter((q) => q.answer == null).length, 0);
-  const one = () => props.cards.length === 1;
-  const go = async () => {
-    setBusy(true);
-    try {
-      const r = await api.cardsForget(props.repo, props.cards.map((c) => c.id));
-      props.onDone();
-      toast({ tone: "done", title: one() ? t("#{id} is back to not analysed", { id: props.cards[0]!.id }) : t("{n} cards are back to not analysed", { n: props.cards.length }), body: t("Forgot {notes} and {questions}.", { notes: plural(r.notes, "{n} note", "{n} notes"), questions: plural(r.questions, "{n} open question", "{n} open questions") }) });
-      props.onClose();
-    } catch (e) {
-      toast({ tone: "fail", title: t("Nothing was forgotten"), body: e instanceof Error ? e.message : String(e) });
-      setBusy(false);
-    }
-  };
-  return (
-    <Sheet
-      title={one() ? t("Forget the analysis of #{id}", { id: props.cards[0]!.id }) : t("Forget the analysis of {n} cards", { n: props.cards.length })}
-      onClose={props.onClose}
-      foot={
-        <>
-          <button type="button" class="btn btn-ghost" autofocus onClick={props.onClose} disabled={busy()}>
-            {t("Keep it")}
-          </button>
-          <button type="button" class="btn btn-danger" aria-busy={busy()} disabled={busy()} onClick={() => void go()}>
-            <Show when={busy()} fallback={<Icon name="undo" small />}>
-              <Spinner />
-            </Show>
-            {one() ? t("Forget it") : t("Forget all")}
-          </button>
-        </>
-      }
-    >
-      <p>
-        {one() ? t("Claude starts over on this card: the next Analyse reads it from scratch.") : t("Claude starts over on these cards: the next Analyse reads them from scratch.")}
-      </p>
-      <ul class="forget-list">
-        <li>
-          <b>{t("Goes:")}</b>{" "}
-          {t("{notes}, {questions}, the analysis mark and the order it worked out.", {
-            notes: plural(notes(), "{n} note by Claude and the judge", "{n} notes by Claude and the judge"),
-            questions: plural(open(), "{n} unanswered question", "{n} unanswered questions"),
-          })}
-        </li>
-        <li>
-          <b>{t("Stays:")}</b> {t("the spec, your own notes, your answers to its questions, and any lane or run.")}
-        </li>
-      </ul>
-      <p class="field-help">{t("This cannot be undone.")}</p>
-    </Sheet>
-  );
-}
-
-/** Deletes a card, with an undo in the toast (the file waits in the board's deleted folder). */
-/** Carries out what you chose for a blocked card, and says what happened. */
-export async function unblockCard(repo: string, card: Card, action: UnblockAction, onChanged: () => void): Promise<void> {
-  try {
-    const run = await api.unblockCard(repo, card.id, action);
-    const title =
-      action === "backlog" ? t("#{id} back in Backlog", { id: card.id })
-      : action === "review" ? t("#{id} is ready for your review", { id: card.id })
-      : run ? t("#{id} runs again", { id: card.id })
-      : t("Reading #{id} again", { id: card.id });
-    toast({ tone: "done", title });
-    onChanged();
-  } catch (e) {
-    toast({ tone: "fail", title: t("Could not move #{id}", { id: card.id }), body: msg(e) });
-  }
-}
-
-export async function deleteCard(repo: string, card: Card, onChanged: () => void): Promise<boolean> {
-  try {
-    await api.cardDelete(repo, card.id);
-    onChanged();
-    toast(
-      {
-        tone: "done",
-        title: t("Deleted #{id} {title}", { id: card.id, title: card.title }),
-        body: card.lane ? t("Its lane {lane} stays; clean it from Lanes if you do not need it.", { lane: card.lane }) : undefined,
-        action: {
-          label: t("Undo"),
-          run: () =>
-            void api.cardRestore(repo, card.id).then(onChanged, (e) => toast({ tone: "fail", title: t("Could not restore #{id}", { id: card.id }), body: e instanceof Error ? e.message : String(e) })),
-        },
-      },
-      12000,
-    );
-    return true;
-  } catch (e) {
-    toast({ tone: "fail", title: t("Could not delete #{id}", { id: card.id }), body: e instanceof Error ? e.message : String(e) });
-    return false;
-  }
-}
-
 /** Deletes every card given (the Landed column's Clear all), with one undo that brings them all back. */
 async function deleteCards(repo: string, cards: Card[], onChanged: () => void) {
   const gone: Card[] = [];
@@ -276,66 +107,6 @@ async function deleteCards(repo: string, cards: Card[], onChanged: () => void) {
     },
     12000,
   );
-}
-
-/** Landed where it was going: dependencies on it are met. */
-const landedState = (c: Card) => c.state === "done" || c.state === "in-dev";
-
-/**
- * Which cards are on their way to landing, for Run all: at work, being checked, landing, or
- * about to start in this batch. The planner's file clashes hold a card only for one of these.
- * A parked card (blocked, waiting for an answer, back in the backlog outside the queue) will not
- * land by itself, so nobody waits for it: whoever did would wait for ever.
- *
- * `busy` is the cards running now, `queued` what the batch still has to start, `batch` every
- * card it took.
- */
-export function onItsWay(cards: Card[], busy: number[], queued: number[], batch: number[]): (id: number) => boolean {
-  const known = new Map<number, boolean>();
-  const check = (id: number, seen: number[]): boolean => {
-    const hit = known.get(id);
-    if (hit !== undefined) return hit;
-    if (seen.includes(id)) return true; // waiting on each other: the board order decides
-    const c = cards.find((x) => x.id === id);
-    let on = false;
-    if (!c) on = false;
-    else if (busy.includes(id) || c.state === "running" || c.state === "verifying") on = true;
-    else if (c.state === "review") on = batch.includes(id);
-    else if (queued.includes(id) && (c.questions ?? []).every((x) => x.answer != null))
-      // It starts once what it builds on lands: that has to be on its way too.
-      on = (c.after ?? []).every((a) => {
-        const dep = cards.find((x) => x.id === a);
-        return !dep || landedState(dep) || (dep.after ?? []).includes(id) || check(a, [...seen, id]);
-      });
-    known.set(id, on);
-    return on;
-  };
-  return (id) => check(id, []);
-}
-
-/**
- * Why Run all holds a card back beyond the planner's file clashes: a card the analysis said must
- * land first, or a shared area (an engine, a schema) another card is changing right now.
- * `busy` is the cards running now (or started in this pass).
- */
-export function holdNote(id: number, cards: Card[], busy: number[]): string | null {
-  const c = cards.find((x) => x.id === id);
-  if (!c) return null;
-  const called = (o: Card) => `#${o.id} ${o.title}`;
-  for (const a of c.after ?? []) {
-    const dep = cards.find((x) => x.id === a);
-    // A dependency both ways is the analysts disagreeing: the board order decides.
-    if (!dep || landedState(dep) || (dep.after ?? []).includes(id)) continue;
-    return t("After {other} lands: it builds on it", { other: called(dep) });
-  }
-  const mine = new Set(c.areas ?? []);
-  if (mine.size > 0)
-    for (const b of busy) {
-      const o = cards.find((x) => x.id === b);
-      const shared = o && o.id !== id ? (o.areas ?? []).find((a) => mine.has(a)) : undefined;
-      if (o && shared) return t("Waits for {other}: both change {area}", { other: called(o), area: shared });
-    }
-  return null;
 }
 
 export function BoardView(props: {

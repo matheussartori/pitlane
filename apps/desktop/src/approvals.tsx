@@ -7,7 +7,7 @@ import { msg } from "./format";
 
 
 /** `Bash(npm test:*)` → `npm test`; a tool rule is the tool's name. */
-export function ruleLabel(rule: string): string {
+function ruleLabel(rule: string): string {
   const m = /^Bash\((.*?)(?::\*)?\)$/.exec(rule);
   return m ? m[1]! : rule;
 }

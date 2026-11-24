@@ -1,18 +1,18 @@
 // The one-card view (its notes, its questions, its runs) and Run all's questions, asked one at a time.
 import { For, Show, createEffect, createSignal, on } from "solid-js";
 import { api, isLive, type Card, type RunMeta, type Yard } from "./api";
-import { runStateView } from "./run";
-import { columnIcon, columnTitle, movesFor, openQuestions, place, unblockActions, type Move } from "./cards";
+import { columnIcon, columnTitle, movesFor, noteBy, openQuestions, place, runStateView, unblockActions, type Move } from "./cards";
 import { Icon } from "./icons";
 import { Dictate } from "./dictate";
 import { CardImages, imagesIn } from "./images";
 import { Prose, inline } from "./prose";
-import { DecisionItem, LiveMark, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./inbox";
+import { DecisionItem, LiveMark, QuestionAbout, QuestionBlock, QuestionTalk, talking } from "./questions";
 import { ErrorLine, Sheet, Spinner, dismissable, toast } from "./ui";
 import { CARD_SIDE_W, Grip } from "./layout";
 import { plural, t } from "./i18n";
 import { age, clock, elapsed, money, msg } from "./format";
-import { ForgetSheet, MiniTrack, deleteCard, hasMemory, unblockCard } from "./board";
+import { MiniTrack } from "./track";
+import { ForgetSheet, deleteCard, hasMemory, unblockCard } from "./cardactions";
 
 /**
  * Run all's questions, one at a time, each with its card as context and Claude to talk it over
@@ -149,12 +149,6 @@ export function QuestionsSheet(props: { repo: string; cards: Card[]; onChanged: 
 }
 
 // ---------------------------------------------------------------- one card
-
-export const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
-  claude: { name: "Claude", icon: "spark" },
-  you: { name: "You", icon: "person" },
-  judge: { name: "Judge", icon: "verify" },
-};
 
 export function CardSheet(props: {
   repo: string;

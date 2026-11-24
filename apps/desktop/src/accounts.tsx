@@ -6,7 +6,7 @@ import { api, type AccountKind, type AccountView } from "./api";
 import { Icon } from "./icons";
 import { locale, t } from "./i18n";
 import { ErrorLine, Sheet, Spinner, toast, ok } from "./ui";
-import { msg } from "./format";
+import { msg, timeOfDay } from "./format";
 
 
 const ADD = "pit account add <name> && pit account login <name>";
@@ -48,7 +48,7 @@ function resetLabel(at: number, nowS: number): string {
   const d = new Date(at * 1000);
   const left = at - nowS;
   if (left <= 0) return t("Reset, fills again from zero");
-  const time = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+  const time = timeOfDay(at);
   if (left < 86400) {
     const h = Math.floor(left / 3600);
     const m = Math.floor((left % 3600) / 60);

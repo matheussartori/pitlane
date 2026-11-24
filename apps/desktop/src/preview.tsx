@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Icon } from "./icons";
 import { t } from "./i18n";
-import { localServers } from "./terminals";
+import { localServers } from "./terminals/model";
 import { openExternal } from "./api";
 import { msg } from "./format";
 import { keepUnchanged } from "./keep";

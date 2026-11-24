@@ -1,12 +1,12 @@
 // The tab list's rows: a tab's place, its status, renaming, closing, dragging.
 import { Show, createSignal } from "solid-js";
-import { agentSelected } from "../agents";
+import { agentSelected } from "../store/agents";
 import { t } from "../i18n";
+import { tilde } from "../format";
 import { Icon } from "../icons";
 import { closeTab, type Meta, meta, panesOf, selectTab, setTab, st, type Status, type Tab } from "./model";
 import { drag, startDrag } from "./drag";
 
-const place = (cwd: string) => cwd.replace(/^\/Users\/[^/]+/, "~");
 
 function statusOf(tab: Tab): { s: Status; note: string } {
   const all = panesOf(tab.root).map((id) => meta[id]).filter(Boolean) as Meta[];
@@ -31,7 +31,7 @@ export function TabRow(props: { tab: Tab; index: number }) {
   const sub = () => {
     const m = focusMeta();
     if (!m) return "";
-    return m.title && m.title !== name() ? m.title : place(m.cwd);
+    return m.title && m.title !== name() ? m.title : tilde(m.cwd);
   };
   const status = () => statusOf(props.tab);
   const count = () => panesOf(props.tab.root).length;

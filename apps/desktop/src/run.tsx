@@ -1,30 +1,18 @@
 // One run: what the agent is doing, live, beside the figures and its handoff.
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
-import { api, isLive, onRun, type Card, type RunMeta, type RunState, type Yard } from "./api";
+import { api, isLive, onRun, type Card, type RunMeta, type Yard } from "./api";
 import { holdTimeline, timelineOf } from "./store/timelines";
-import { kindLabel } from "./agents";
+import { kindLabel } from "./store/agents";
 import { AgentConsole } from "./console";
-import { LaneTrack } from "./board";
-import { noteBy } from "./cardsheet";
-import { Counts, DiffViewer, statusLetter, statusWord, type ChangedFile } from "./diffview";
+import { LaneTrack } from "./track";
+import { noteBy, runStateView } from "./cards";
+import { Counts, DiffViewer, parsePatch, statusLetter, statusWord, type ChangedFile } from "./diffview";
 import { Prose } from "./prose";
-import { parsePatch } from "./review";
-import { Icon, type IconName } from "./icons";
-import type { ChipState } from "./lane";
-import { locale, plural, t } from "./i18n";
+import { Icon } from "./icons";
+import { plural, t } from "./i18n";
 import { ErrorLine, toast } from "./ui";
 import { Grip, RUN_SIDE_W } from "./layout";
-import { age, clock, elapsed, kTokens, money, msg } from "./format";
-
-export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; label: string }> = {
-  starting: { chip: "running", icon: "run", label: "Starting" },
-  running: { chip: "running", icon: "run", label: "Running" },
-  verifying: { chip: "running", icon: "verify", label: "Checking" },
-  done: { chip: "done", icon: "done", label: "Done" },
-  failed: { chip: "failed", icon: "fail", label: "Failed" },
-  stopped: { chip: "queued", icon: "queued", label: "Stopped" },
-  interrupted: { chip: "needs", icon: "needs", label: "Interrupted" },
-};
+import { age, clock, elapsed, kTokens, money, msg, timeOfDay } from "./format";
 
 export function RunScreen(props: {
   repo: string;
@@ -244,7 +232,7 @@ export function RunScreen(props: {
                 <p class="approval-why">
                   {t("Continue as {next}, paid per token", { next: next() })}
                   <Show when={m().resets_at}>
-                    {(at) => <>{t(", or wait: the window resets at {time}", { time: new Date(at() * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }) })}</>}
+                    {(at) => <>{t(", or wait: the window resets at {time}", { time: timeOfDay(at()) })}</>}
                   </Show>
                   .
                 </p>

@@ -3,7 +3,7 @@
 // screen, merged here. A string without a translation shows in English.
 import { prefs } from "./prefs";
 
-export type Lang = "en" | "pt-BR";
+type Lang = "en" | "pt-BR";
 
 const PT: Record<string, string> = Object.assign(
   {},

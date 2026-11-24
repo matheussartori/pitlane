@@ -1,6 +1,6 @@
 // The Lanes screen: every lane grouped by who acts next, each with its place on the track
 // (local, remote, integration, production). The Tower is the same lanes, compact, for the other screens.
-import { For, Show, createEffect, type JSX } from "solid-js";
+import { For, Index, Show, createEffect, type JSX } from "solid-js";
 import { isLive, isOpenJob, isStandingStop, type Lane, type RunMeta, type ShipJob, type Yard } from "./api";
 import { ago, clock, elapsed } from "./format";
 import { Icon } from "./icons";
@@ -9,7 +9,7 @@ import { ErrorLine, Spinner } from "./ui";
 import { Grip, TOWER_W } from "./layout";
 import { lang, plural, t, tx } from "./i18n";
 
-export interface LanesProps {
+interface LanesProps {
   yard: Yard | null;
   fetching: boolean;
   error: string | null;
@@ -122,7 +122,7 @@ export function LanesView(props: LanesProps) {
                   <th scope="col">{t("Lane")}</th>
                   <th scope="col">
                     <span class="rail rail-head">
-                      <For each={track(y().lanes[0]!, y(), props.now)}>{(n) => <span>{n.stage}</span>}</For>
+                      <Index each={track(y().lanes[0]!, y(), props.now)}>{(n) => <span>{n().stage}</span>}</Index>
                     </span>
                   </th>
                   <th scope="col">{t("Worktree")}</th>
@@ -282,21 +282,23 @@ function LaneRow(p: { lane: Lane; yard: Yard; props: LanesProps; ref: (el: HTMLT
       </td>
       <td>
         <span class="rail">
-          <For each={track(l, p.yard, p.props.now)}>
+          {/* By place, not by identity: the track is worked out again with every tick of the
+              clock, and its stops would otherwise be torn down and drawn again each second. */}
+          <Index each={track(l, p.yard, p.props.now)}>
             {(node) => (
-              <span class="node" data-state={node.state} title={node.title}>
+              <span class="node" data-state={node().state} title={node().title}>
                 <span class="dot" aria-hidden="true" />
                 <span class="visually-hidden">
-                  {node.stage}: {node.title}
+                  {node().stage}: {node().title}
                 </span>
-                <Show when={node.figure}>
+                <Show when={node().figure}>
                   <span class="fig" aria-hidden="true">
-                    {node.figure}
+                    {node().figure}
                   </span>
                 </Show>
               </span>
             )}
-          </For>
+          </Index>
         </span>
       </td>
       <td>

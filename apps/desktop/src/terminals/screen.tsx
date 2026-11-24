@@ -1,7 +1,8 @@
 // The Terminal screen: the agents and the tab list beside the stage that shows the active tab.
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import type { Lane } from "../api";
-import { AgentList, AgentPane, agentGroups, agentSelected } from "../agents";
+import { AgentList, AgentPane } from "../agents";
+import { agentGroups, agentSelected } from "../store/agents";
 import { t } from "../i18n";
 import { Icon } from "../icons";
 import { dismissable } from "../ui";

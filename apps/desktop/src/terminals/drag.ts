@@ -5,7 +5,8 @@ import { insert, live, nextTabId, pane, panesOf, save, setSt, setTab, type Side,
 
 type Drag = { kind: "pane"; term: number } | { kind: "tab"; id: number };
 type Drop = { kind: "pane"; term: number; side: Side | "center" } | { kind: "tab"; id: number; after: boolean } | { kind: "list" };
-export const [drag, setDrag] = createSignal<{ what: Drag; over: Drop | null } | null>(null);
+const [drag, setDrag] = createSignal<{ what: Drag; over: Drop | null } | null>(null);
+export { drag };
 
 function dropAt(x: number, y: number, what: Drag): Drop | null {
   const el = document.elementFromPoint(x, y) as HTMLElement | null;

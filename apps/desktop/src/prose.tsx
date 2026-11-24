@@ -72,7 +72,7 @@ function cells(line: string): string[] {
 }
 
 /** Splits markdown into the blocks `Prose` draws. */
-export function proseBlocks(text: string): ProseBlock[] {
+function proseBlocks(text: string): ProseBlock[] {
   const out: ProseBlock[] = [];
   const lines = text.replace(/\r/g, "").split("\n");
   for (let i = 0; i < lines.length; i++) {

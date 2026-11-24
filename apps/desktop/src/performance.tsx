@@ -3,16 +3,15 @@
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { api, type PerfEvent, type PerfAgent, type PerfMode, type PerfSample, type PerfSnapshot, type PresenceConfig, type PresenceSnapshot } from "./api";
-import { Seg } from "./settings";
 import { Icon, type IconName } from "./icons";
 import { locale, plural, t, tx } from "./i18n";
-import { Spinner, toast } from "./ui";
-import { msg } from "./format";
-import { KIND } from "./agents";
+import { Seg, Spinner, toast } from "./ui";
+import { msg, timeOfDay } from "./format";
+import { KIND } from "./store/agents";
 
 
 /** 1.2 GB, 420 MB. */
-export function bytes(n: number): string {
+function bytes(n: number): string {
   if (n >= 1000 * 1024 ** 2) return `${(n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1)} GB`;
   if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
   return `${Math.round(n / 1024)} KB`;
@@ -607,7 +606,7 @@ function Log(props: { snap: PerfSnapshot }) {
           <For each={props.snap.events.slice(0, 12)}>
             {(e) => (
               <li>
-                <span class="mono muted">{new Date(e.t * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" })}</span>
+                <span class="mono muted">{timeOfDay(e.t)}</span>
                 <span>{eventText(e)}</span>
               </li>
             )}

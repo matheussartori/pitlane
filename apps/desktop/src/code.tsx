@@ -4,27 +4,12 @@ import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-
 import { listen } from "@tauri-apps/api/event";
 import { api, onVscodePlace, onVscodeReady, onVscodeStuck, vscode, type Lane } from "./api";
 import { loadCards, repo, yard } from "./store/repo";
+import { codeRoot, setCodeRoot, takeCodeOpen } from "./store/code";
 import { t } from "./i18n";
 import { prefs } from "./prefs";
 import { Spinner, toast } from "./ui";
 import { msg, cssHex } from "./format";
 
-
-const [rootSig, setRootSig] = createSignal<string | null>(null);
-/** The folder Code shows (a lane's worktree or the repository), once it was opened. */
-export const codeRoot = () => rootSig();
-/** Another repository: Code goes back to showing the repository itself, not a folder of the last one. */
-export const resetCodeRoot = () => setRootSig(null);
-let pending: { root: string; path: string; line?: number; col?: number } | null = null;
-
-/** Opens `path` under `root` in the Code tab, at a line when one is given. The app shows the Code
- *  tab when `show` is set. */
-export function openInCode(root: string, path: string, line?: number, col?: number, show = false) {
-  setRootSig(root);
-  pending = { root, path, line, col };
-  window.dispatchEvent(new CustomEvent("pitlane-code-open"));
-  if (show) window.dispatchEvent(new CustomEvent("pitlane-show-code"));
-}
 
 // ---------------------------------------------------------------- "Ask Claude about this" (⌘L in VS Code)
 
@@ -206,7 +191,7 @@ export function setCodePlaces(repo: string, repoName: string, lanes: Lane[], hea
 
 export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[] }) {
   let host!: HTMLDivElement;
-  const root = () => rootSig() ?? props.repo;
+  const root = () => codeRoot() ?? props.repo;
   const [state, setState] = createSignal<"starting" | "ready" | "failed">("starting");
   // "Opening VS Code" only when it takes long enough to notice.
   const [slow, setSlow] = createSignal(false);
@@ -233,10 +218,9 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
     }
   };
   const openPending = async () => {
-    if (!pending) return;
-    const p = pending;
-    pending = null;
-    if (p.root !== root()) setRootSig(p.root);
+    const p = takeCodeOpen();
+    if (!p) return;
+    if (p.root !== root()) setCodeRoot(p.root);
     await place();
     if (!p.path) return; // the folder alone: it is the place now
     try {
@@ -297,7 +281,7 @@ export function CodeScreen(props: { repo: string; repoName: string; lanes: Lane[
       setState("failed");
     }).then((off) => (alive ? (offStuck = off) : off()));
     // The picker inside VS Code chose another folder.
-    void onVscodePlace((r) => setRootSig(r)).then((off) => (alive ? (offPlace = off) : off()));
+    void onVscodePlace((r) => setCodeRoot(r)).then((off) => (alive ? (offPlace = off) : off()));
     const onRequest = () => void openPending();
     window.addEventListener("pitlane-code-open", onRequest);
     onCleanup(() => {

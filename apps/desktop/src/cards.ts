@@ -1,9 +1,10 @@
 // Where a card sits on the board and why. The card file says what someone set; the lane it is
 // linked to says where the work really is. The board groups by who acts next.
-import type { BlockReason, Card, CardState, Lane, MoveTo, RunMeta, Turn, Yard } from "./api";
+import type { BlockReason, Card, CardState, Lane, MoveTo, Plan, RunMeta, RunState, Turn, Yard } from "./api";
 import type { IconName } from "./icons";
 import { group, next, type ChipState } from "./lane";
-import { locale, plural, t } from "./i18n";
+import { plural, t } from "./i18n";
+import { timeOfDay } from "./format";
 
 export type Column = "needs" | "backlog" | "queued" | "progress" | "landed";
 export const columns: Column[] = ["needs", "backlog", "queued", "progress", "landed"];
@@ -23,7 +24,7 @@ export const columnEmpty: Record<Column, string> = {
   landed: "Cards finished and committed in the branch they were asked for.",
 };
 
-export const stateLabel: Record<CardState, string> = {
+const stateLabel: Record<CardState, string> = {
   inbox: "New",
   ready: "Ready",
   queued: "Queued",
@@ -36,7 +37,7 @@ export const stateLabel: Record<CardState, string> = {
 };
 
 /** What blocked a card, on its tile. */
-export const blockLabel: Record<BlockReason, string> = {
+const blockLabel: Record<BlockReason, string> = {
   questions: "Blocked on questions",
   check: "Waits for your look",
   stuck: "Agent stuck",
@@ -112,7 +113,7 @@ export function movesFor(card: Card, live: boolean): Move[] {
   }
 }
 
-export interface Placement {
+interface Placement {
   column: Column;
   chip: ChipState;
   icon: IconName;
@@ -121,7 +122,7 @@ export interface Placement {
   why?: string;
 }
 
-export function laneOf(card: Card, yard: Yard | null): Lane | undefined {
+function laneOf(card: Card, yard: Yard | null): Lane | undefined {
   // Worked directly in its target (Run all's "directly"), the branch is shared, not the card's:
   // what that branch holds or where it landed says nothing about this card, so its state decides.
   if (!card.lane || card.lane === card.target) return undefined;
@@ -141,7 +142,7 @@ export function place(card: Card, yard: Yard | null): Placement {
     const why = b?.detail || about(card);
     // Pitlane tries it again by itself: say when.
     if (b?.retry_at) {
-      const at = new Date(b.retry_at * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+      const at = timeOfDay(b.retry_at);
       return { column: "needs", chip: "queued", icon: "refresh", label: t("Tries again at {time}", { time: at }), why };
     }
     return { column: "needs", chip: "needs", icon: "blocked", label: t(blockLabel[b?.reason ?? "other"]), why };
@@ -183,7 +184,7 @@ export function place(card: Card, yard: Yard | null): Placement {
 }
 
 /** What the card is about, for its tile: Claude's summary, else the spec's first line. */
-export function about(card: Card): string | undefined {
+function about(card: Card): string | undefined {
   return card.summary?.trim() || firstLine(card.body);
 }
 
@@ -259,3 +260,104 @@ export function openQuestions(cards: Card[]): OpenQuestion[] {
 // the same questions, so they keep their DOM (and whatever is being typed into it).
 const asked = new WeakMap<Card, OpenQuestion[]>();
 
+// ---------------------------------------------------------------- a run and a note, in words
+
+export const runStateView: Record<RunState, { chip: ChipState; icon: IconName; label: string }> = {
+  starting: { chip: "running", icon: "run", label: "Starting" },
+  running: { chip: "running", icon: "run", label: "Running" },
+  verifying: { chip: "running", icon: "verify", label: "Checking" },
+  done: { chip: "done", icon: "done", label: "Done" },
+  failed: { chip: "failed", icon: "fail", label: "Failed" },
+  stopped: { chip: "queued", icon: "queued", label: "Stopped" },
+  interrupted: { chip: "needs", icon: "needs", label: "Interrupted" },
+};
+
+export const noteBy: Record<string, { name: string; icon: "spark" | "person" | "verify" }> = {
+  claude: { name: "Claude", icon: "spark" },
+  you: { name: "You", icon: "person" },
+  judge: { name: "Judge", icon: "verify" },
+};
+
+// ---------------------------------------------------------------- what holds a card back in Run all
+
+/** One quiet line for a card the planner would hold back; nothing for one that can start now. */
+export function planNote(plan: Plan | null | undefined, id: number, cards: Card[] = [], counts: (other: number) => boolean = () => true): string | null {
+  if (!plan) return null;
+  const name = (f: string) => {
+    const [n, dir] = f.split("/").reverse();
+    return dir && /^(index|mod|__init__)\./.test(n!) ? `${dir}/${n}` : n!;
+  };
+  const called = (other: number) => {
+    const c = cards.find((x) => x.id === other);
+    return c ? `#${other} ${c.title}` : `#${other}`;
+  };
+  const wait = plan.waits.find((w) => w.card === id && (w.with_card == null || counts(w.with_card)));
+  if (wait) return t("Waits for {other} to land: both touch {file}", { other: wait.with_lane ?? called(wait.with_card!), file: name(wait.files[0]!) });
+  const batch = plan.batches.findIndex((b) => b.includes(id));
+  if (batch <= 0) return null;
+  const earlier = new Set(plan.batches.slice(0, batch).flat());
+  const c = plan.clashes.find((x) => (x.card === id && earlier.has(x.with_card ?? -1) && counts(x.with_card!)) || (x.with_card === id && earlier.has(x.card) && counts(x.card)));
+  if (!c) return null;
+  const other = c.card === id ? c.with_card! : c.card;
+  return t("After {other}: both touch {file}", { other: called(other), file: name(c.files[0]!) });
+}
+
+/** Landed where it was going: dependencies on it are met. */
+const landedState = (c: Card) => c.state === "done" || c.state === "in-dev";
+
+/**
+ * Which cards are on their way to landing, for Run all: at work, being checked, landing, or
+ * about to start in this batch. The planner's file clashes hold a card only for one of these.
+ * A parked card (blocked, waiting for an answer, back in the backlog outside the queue) will not
+ * land by itself, so nobody waits for it: whoever did would wait for ever.
+ *
+ * `busy` is the cards running now, `queued` what the batch still has to start, `batch` every
+ * card it took.
+ */
+export function onItsWay(cards: Card[], busy: number[], queued: number[], batch: number[]): (id: number) => boolean {
+  const known = new Map<number, boolean>();
+  const check = (id: number, seen: number[]): boolean => {
+    const hit = known.get(id);
+    if (hit !== undefined) return hit;
+    if (seen.includes(id)) return true; // waiting on each other: the board order decides
+    const c = cards.find((x) => x.id === id);
+    let on = false;
+    if (!c) on = false;
+    else if (busy.includes(id) || c.state === "running" || c.state === "verifying") on = true;
+    else if (c.state === "review") on = batch.includes(id);
+    else if (queued.includes(id) && (c.questions ?? []).every((x) => x.answer != null))
+      // It starts once what it builds on lands: that has to be on its way too.
+      on = (c.after ?? []).every((a) => {
+        const dep = cards.find((x) => x.id === a);
+        return !dep || landedState(dep) || (dep.after ?? []).includes(id) || check(a, [...seen, id]);
+      });
+    known.set(id, on);
+    return on;
+  };
+  return (id) => check(id, []);
+}
+
+/**
+ * Why Run all holds a card back beyond the planner's file clashes: a card the analysis said must
+ * land first, or a shared area (an engine, a schema) another card is changing right now.
+ * `busy` is the cards running now (or started in this pass).
+ */
+export function holdNote(id: number, cards: Card[], busy: number[]): string | null {
+  const c = cards.find((x) => x.id === id);
+  if (!c) return null;
+  const called = (o: Card) => `#${o.id} ${o.title}`;
+  for (const a of c.after ?? []) {
+    const dep = cards.find((x) => x.id === a);
+    // A dependency both ways is the analysts disagreeing: the board order decides.
+    if (!dep || landedState(dep) || (dep.after ?? []).includes(id)) continue;
+    return t("After {other} lands: it builds on it", { other: called(dep) });
+  }
+  const mine = new Set(c.areas ?? []);
+  if (mine.size > 0)
+    for (const b of busy) {
+      const o = cards.find((x) => x.id === b);
+      const shared = o && o.id !== id ? (o.areas ?? []).find((a) => mine.has(a)) : undefined;
+      if (o && shared) return t("Waits for {other}: both change {area}", { other: called(o), area: shared });
+    }
+  return null;
+}

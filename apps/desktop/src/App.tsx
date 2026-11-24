@@ -2,7 +2,7 @@
 import { For, Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { systemNotify } from "./notify";
 import { NEEDS_API_KEY, api, isLive, onRun, type Lane, type RepoEntry, type RunMeta, type Settings, isOpenJob } from "./api";
 import { AccountsSheet } from "./accounts";
 import { LedgerView } from "./ledger";
@@ -17,9 +17,11 @@ import { InboxView } from "./inbox";
 import { Icon, type IconName } from "./icons";
 import { LanesView, Tower, queuedGroup } from "./lanes";
 import { TerminalScreen, openTerminal, startTerminals, terminalAt, terminalsWanting } from "./terminals";
-import { AgentDock, agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./agents";
+import { AgentDock } from "./agents";
+import { agentsWanting, agentsWorking, kindLabel, selectAgent, setAgentsRepo, startAgents } from "./store/agents";
 import { PreviewScreen } from "./preview";
-import { CodeScreen, codeRoot, openInCode, prewarmCode, resetCodeRoot, rethemeCode, setCodePlaces } from "./code";
+import { CodeScreen, prewarmCode, rethemeCode, setCodePlaces } from "./code";
+import { codeRoot, openInCode, resetCodeRoot } from "./store/code";
 import { SettingsScreen } from "./settings";
 import { ReportsView } from "./reports";
 import { loadPrefs, prefs } from "./prefs";
@@ -27,7 +29,7 @@ import { CleanSheet, NewLaneSheet, ProjectSheet, RunAllSheet, ShipSheet } from "
 import { ScreenBoundary, Toasts, dismissable, installTips, toast } from "./ui";
 import { TOWER_W } from "./layout";
 import { plural, t } from "./i18n";
-import { msg } from "./format";
+import { msg, tilde } from "./format";
 import { cards, dropCardPoll, dropLoads, error, fetchedAt, fetching, jobs, load, loadCards, loadQueue, loadReports, loadRuns, problems, queueAll, dequeue, quota, reports, repo, runs, setCards, setError, setFetchedAt, setFetching, setJobs, setProblems, setQuota, setRepo, setReports, setRuns, setYard, yard } from "./store/repo";
 import { createRunAll, batchIds, phaseIn, agentShare } from "./runall";
 import { shortcuts } from "./shortcuts";
@@ -61,7 +63,7 @@ function savedTab(): Tab {
 
 /** `/Users/me/Projects/a/b/c/repo` → `~/Projects/…/c/repo`: short, and still the right folder. */
 function shortPath(p: string): string {
-  const home = p.replace(/^\/Users\/[^/]+/, "~");
+  const home = tilde(p);
   const parts = home.split("/").filter(Boolean);
   return parts.length > 4 ? [parts[0], parts[1], "…", ...parts.slice(-2)].join("/") : home;
 }
@@ -193,26 +195,12 @@ export default function App() {
   /** Lanes that finished while you were away, told together once the last one ends. */
   const doneAway: RunMeta[] = [];
 
-  async function say(title: string, body: string) {
-    try {
-      let ok = await isPermissionGranted();
-      if (!ok) ok = (await requestPermission()) === "granted";
-      if (ok) sendNotification({ title, body });
-    } catch {
-      /* the browser preview has no notifications */
-    }
-  }
-
-  async function notify(run: string, detail: string) {
+  function notify(run: string, detail: string) {
     if (!prefs().notify_approvals) return;
-    try {
-      let ok = await isPermissionGranted();
-      if (!ok) ok = (await requestPermission()) === "granted";
+    void systemNotify(() => {
       const m = (runs() ?? []).find((r) => r.id === run);
-      if (ok) sendNotification({ title: m ? t("#{card} {title} is waiting for you", { card: m.card, title: m.card_title }) : t("An agent is waiting for you"), body: detail });
-    } catch {
-      /* the browser preview has no notifications */
-    }
+      return m ? t("#{card} {title} is waiting for you", { card: m.card, title: m.card_title }) : t("An agent is waiting for you");
+    }, detail);
   }
 
   /** `fresh`: start over instead of resuming the card's stopped session. */
@@ -348,7 +336,7 @@ export default function App() {
         if (e.kind !== "approval" && e.kind !== "decided") return;
         void loadRuns();
         // Not looking at Pitlane: say so where the person is.
-        if (e.kind === "approval" && !document.hasFocus()) void notify(run, e.approval.detail || e.approval.tool);
+        if (e.kind === "approval" && !document.hasFocus()) notify(run, e.approval.detail || e.approval.tool);
       },
       async (_run, m) => {
         const fresh = loadRuns();
@@ -362,7 +350,7 @@ export default function App() {
           if (m.goes_on) return;
           await cardsFresh;
           if (m.repo === repo() && cards()?.find((c) => c.id === m.card)?.blocked?.retry_at) return;
-          void say(t("#{card} {title} stopped", { card: m.card, title: m.card_title }), t("The run failed. Open it in Pitlane to see why."));
+          void systemNotify(t("#{card} {title} stopped", { card: m.card, title: m.card_title }), t("The run failed. Open it in Pitlane to see why."));
           return;
         }
         if (m.state !== "done") return;
@@ -370,8 +358,8 @@ export default function App() {
         await fresh;
         if ((runs() ?? []).some((r) => r.id !== m.id && isLive(r.state))) return;
         const done = doneAway.splice(0);
-        if (done.length === 1) void say(t("#{card} {title} is ready for review", { card: m.card, title: m.card_title }), t("The agent finished. Its checks and the review are waiting in Pitlane."));
-        else void say(t("All {n} lanes finished", { n: done.length }), done.map((d) => `#${d.card} ${d.card_title}`).join(" · "));
+        if (done.length === 1) void systemNotify(t("#{card} {title} is ready for review", { card: m.card, title: m.card_title }), t("The agent finished. Its checks and the review are waiting in Pitlane."));
+        else void systemNotify(t("All {n} lanes finished", { n: done.length }), done.map((d) => `#${d.card} ${d.card_title}`).join(" · "));
       },
     ).then((off) => {
       // Unmounted before the listener came back: let it go at once.

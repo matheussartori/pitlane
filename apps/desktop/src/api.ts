@@ -11,8 +11,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   throw "Pitlane runs inside its desktop app.";
 }
 
-export type Landed = "ancestor" | "patch-id" | "merge-tree" | "pull-request";
-export type Status =
+type Landed = "ancestor" | "patch-id" | "merge-tree" | "pull-request";
+type Status =
   | "contaminated"
   | "can-delete"
   | "shipped-dirty"
@@ -22,14 +22,14 @@ export type Status =
   | "new"
   | "stale";
 
-export interface LaneWorktree {
+interface LaneWorktree {
   path: string;
   dirty: number;
   is_main: boolean;
   is_current: boolean;
 }
 
-export type Sync =
+type Sync =
   | { kind: "local-only" }
   | { kind: "gone" }
   | { kind: "synced" }
@@ -60,7 +60,7 @@ export interface Lane {
   status: Status;
 }
 
-export interface Commit {
+interface Commit {
   sha: string;
   short: string;
   subject: string;
@@ -94,13 +94,7 @@ export interface ShipPlan {
   remote_ahead: number;
 }
 
-export type LocalUpdate =
-  | { kind: "updated" }
-  | { kind: "left-behind"; detail: string }
-  | { kind: "diverged" }
-  | { kind: "no-local-branch" };
-
-export interface CleanItem {
+interface CleanItem {
   branch: string;
   sha: string;
   local: boolean;
@@ -115,12 +109,12 @@ export interface CleanPlan {
   skipped: { branch: string; reason: string }[];
 }
 
-export interface CleanOutcome {
+interface CleanOutcome {
   branch: string;
   error: string | null;
 }
 
-export interface UndoReport {
+interface UndoReport {
   branch: string;
   sha: string;
   local_restored: boolean;
@@ -128,7 +122,7 @@ export interface UndoReport {
   worktree: string | null;
 }
 
-export interface NewReport {
+interface NewReport {
   branch: string;
   path: string;
   base: string;
@@ -140,11 +134,10 @@ export interface NewReport {
 }
 
 export type CardState = "inbox" | "ready" | "queued" | "running" | "verifying" | "review" | "in-dev" | "done" | "blocked";
-export const cardStates: CardState[] = ["inbox", "ready", "queued", "running", "verifying", "review", "in-dev", "done", "blocked"];
 /** Where a person can move a card: the Backlog, Run all's queue, or held in the Backlog. */
 export type MoveTo = "backlog" | "queue" | "hold";
 
-export interface Question {
+interface Question {
   id: number;
   text: string;
   options?: string[];
@@ -173,7 +166,7 @@ export interface Turn {
   recommended?: number;
 }
 
-export interface CardNote {
+interface CardNote {
   at: string;
   /** "claude", "judge" or "you". */
   by: string;
@@ -182,7 +175,7 @@ export interface CardNote {
 
 /** Why a card is blocked: what would free it. */
 export type BlockReason = "questions" | "check" | "stuck" | "failed" | "no-route" | "api-key" | "conflict" | "checks" | "other";
-export interface Block {
+interface Block {
   reason: BlockReason;
   detail?: string;
   since: string;
@@ -266,16 +259,16 @@ export interface Report {
   digest?: { headline: string; points: string[]; suggestions: string[] };
 }
 
-export interface CardList {
+interface CardList {
   cards: Card[];
   problems: string[];
 }
 
 export type RunState = "starting" | "running" | "verifying" | "done" | "failed" | "stopped" | "interrupted";
 
-export type Verdict = "approve" | "changes";
+type Verdict = "approve" | "changes";
 
-export interface Proof {
+interface Proof {
   command: string;
   ok: boolean;
   code: number | null;
@@ -314,14 +307,14 @@ export interface LaneDiff {
   truncated: boolean;
 }
 
-export interface Tokens {
+interface Tokens {
   input: number;
   output: number;
   cache_read: number;
   cache_write: number;
 }
 
-export interface Handoff {
+interface Handoff {
   status?: "done" | "partial" | "blocked";
   summary?: string;
   files_changed?: string[];
@@ -392,7 +385,7 @@ export interface RunMeta {
 }
 
 /** One related repository's side of a run. */
-export interface RelatedLane {
+interface RelatedLane {
   /** The repository's folder name. */
   name: string;
   /** Its main worktree. */
@@ -401,7 +394,7 @@ export interface RelatedLane {
   worktree: string;
 }
 
-export type SessionKind = "run" | "analysis" | "judge" | "finish" | "assist" | "aside";
+type SessionKind = "run" | "analysis" | "judge" | "finish" | "assist" | "aside";
 
 export interface Quota {
   /** The account the meters are about: this repository's. */
@@ -434,7 +427,7 @@ export interface AccountView {
   overage?: { status: string; reason: string | null; using: boolean; at: number } | null;
 }
 
-export interface Accounts {
+interface Accounts {
   accounts: AccountView[];
   route: string[];
   five_hour_at: number;
@@ -481,14 +474,14 @@ export const isLive = (s: RunState) => s === "starting" || s === "running" || s 
 
 // ---------------------------------------------------------------- the planner
 
-export interface Footprint {
+interface Footprint {
   card: number;
   title: string;
   source: "predicted" | "lane";
   lane: string | null;
   files: string[];
 }
-export interface Clash {
+interface Clash {
   card: number;
   with_card: number | null;
   with_lane: string | null;
@@ -599,7 +592,7 @@ export async function onRun(
   };
 }
 
-export type JobState = "queued" | "shipping" | "done" | "conflict" | "failed" | "removed";
+type JobState = "queued" | "shipping" | "done" | "conflict" | "failed" | "removed";
 
 export interface ShipJob {
   id: string;
@@ -666,7 +659,7 @@ export const DEFAULT_PREFS: Prefs = {
 };
 
 /** Presence: Here, runs ask you the calls that are yours; Away, they take their recommendation. */
-export type PresenceMode = "here" | "away";
+type PresenceMode = "here" | "away";
 export interface PresenceConfig {
   mode: PresenceMode;
   /** Here while you use the Mac, Away after Performance's `away_minutes`. */
@@ -685,7 +678,7 @@ export interface PresenceSnapshot {
 
 /** Performance: Full takes the Mac while you are away, Light leaves room while you use it. */
 export type PerfMode = "full" | "light";
-export interface PerfConfig {
+interface PerfConfig {
   mode: PerfMode;
   /** Light while you use the Mac, Full after `away_minutes` away. */
   auto: boolean;
@@ -693,7 +686,7 @@ export interface PerfConfig {
   light_agents: number;
   light_background: boolean;
 }
-export type PerfAgentState = "working" | "background" | "paused" | "waiting" | "starting";
+type PerfAgentState = "working" | "background" | "paused" | "waiting" | "starting";
 export interface PerfAgent {
   id: string;
   card: number;
@@ -763,7 +756,7 @@ export interface PerfSnapshot {
 }
 
 /** How many agents Run all may have working now, and why. */
-export interface Capacity {
+interface Capacity {
   agents: number;
   max: number;
   load: number;

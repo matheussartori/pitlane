@@ -1,11 +1,10 @@
 // Reports: what each Run all came to, card by card, and what its closing step did. Exported as a
 // PDF through the system's print dialog (Save as PDF).
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
-import { Portal } from "solid-js/web";
+import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { api, type Report } from "./api";
 import { locale, plural, t } from "./i18n";
 import { Icon } from "./icons";
-import { Spinner, toast, escapeCloses } from "./ui";
+import { Lightbox, Spinner, toast } from "./ui";
 import { ago, clock, money, msg } from "./format";
 
 /** The first sentence of a suggestion's spec, for its tile when Claude's line is not there. */
@@ -19,7 +18,6 @@ const firstLine = (body: string) => {
 function ReportShot(props: { run: string; file: string; label: string }) {
   const [src] = createResource(() => [props.run, props.file] as const, ([r, f]) => api.runShot(r, f).catch(() => ""));
   const [big, setBig] = createSignal(false);
-  escapeCloses(big, () => setBig(false));
   return (
     <Show when={src()}>
       {(u) => (
@@ -28,13 +26,7 @@ function ReportShot(props: { run: string; file: string; label: string }) {
             <img src={u()} alt={props.label} loading="lazy" />
           </button>
           <figcaption>{props.label}</figcaption>
-          <Show when={big()}>
-            <Portal>
-              <div class="shot-view" role="dialog" aria-label={t("Screenshot")} onClick={() => setBig(false)}>
-                <img src={u()} alt={props.label} />
-              </div>
-            </Portal>
-          </Show>
+          <Lightbox open={big()} src={u()} alt={props.label} label={t("Screenshot")} class="shot-view" onClose={() => setBig(false)} />
         </figure>
       )}
     </Show>

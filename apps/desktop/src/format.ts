@@ -60,3 +60,9 @@ export function elapsed(m: RunMeta, nowMs: number): number {
 export const money = (n: number | null | undefined) => (n == null ? "" : `$${n.toFixed(2)}`);
 export const kTokens = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+
+/** The time of day of a moment in seconds: 14:05. */
+export const timeOfDay = (secs: number) => new Date(secs * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+
+/** `/Users/me/Projects/repo` → `~/Projects/repo`. */
+export const tilde = (path: string) => path.replace(/^\/Users\/[^/]+/, "~");

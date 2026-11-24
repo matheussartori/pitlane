@@ -6,13 +6,12 @@ import { getVersion } from "@tauri-apps/api/app";
 import { api, vscode, type FlowFile, type RepoEntry } from "./api";
 import { Icon } from "./icons";
 import { prefs, setPrefs } from "./prefs";
-import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalRender, setTerminalSide, terminalPrefs } from "./terminals";
+import { TERMINAL_FACES, setTerminalFace, setTerminalFont, setTerminalRender, setTerminalSide, terminalPrefs } from "./terminals/model";
 import { t } from "./i18n";
-import { toast, ok } from "./ui";
+import { Seg, toast, ok } from "./ui";
 import { resetLayout } from "./layout";
-import { msg } from "./format";
+import { msg, tilde } from "./format";
 
-const shortPath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
 type Section = "general" | "repositories" | "agents" | "accounts" | "terminal" | "code" | "shortcuts" | "about";
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
@@ -27,7 +26,6 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
 ];
 
 const [section, setSection] = createSignal<Section>("general");
-export const openSettingsAt = (s: Section) => setSection(s);
 
 // ---------------------------------------------------------------- building blocks
 
@@ -63,20 +61,6 @@ function Group(props: { title?: string; note?: JSX.Element; children: JSX.Elemen
 
 function Toggle(props: { id: string; on: boolean; onChange: (v: boolean) => void; label: string }) {
   return <input id={props.id} type="checkbox" class="switch" role="switch" aria-label={t(props.label)} checked={props.on} onChange={(e) => props.onChange(e.currentTarget.checked)} />;
-}
-
-export function Seg<T extends string>(props: { value: T; options: { v: T; label: string }[]; label: string; onChange: (v: T) => void }) {
-  return (
-    <div class="seg" role="group" aria-label={t(props.label)}>
-      <For each={props.options}>
-        {(o) => (
-          <button type="button" aria-pressed={props.value === o.v} onClick={() => props.onChange(o.v)}>
-            {t(o.label)}
-          </button>
-        )}
-      </For>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------- the screen
@@ -274,7 +258,7 @@ function Repositories(props: { repo: string | null; repos: RepoEntry[]; onAddRep
                     <span class="set-tag">{t("Current")}</span>
                   </Show>
                 </div>
-                <div class="set-help set-mono">{shortPath(r.path)}</div>
+                <div class="set-help set-mono">{tilde(r.path)}</div>
               </div>
               <div class="set-control">
                 <button type="button" class="btn btn-ghost" onClick={() => void api.reveal(r.path)}>
@@ -541,7 +525,7 @@ function About() {
           <span class="set-value">{version()}</span>
         </Row>
         <Row label="Pitlane’s files" help="Settings, cards, runs, worktrees and VS Code’s data.">
-          <span class="set-value set-mono">{shortPath(home() ?? "")}</span>
+          <span class="set-value set-mono">{tilde(home() ?? "")}</span>
           <button type="button" class="btn btn-ghost" disabled={!home()} onClick={() => void api.reveal(home()!)}>
             {t("Show in Finder")}
           </button>

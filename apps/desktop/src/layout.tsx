@@ -80,8 +80,20 @@ export function resetLayout() {
 /**
  * A divider on one edge of the panel whose size it sets: drag it, double click for the default,
  * arrows from the keyboard. Put it inside the panel (which is `position: relative`).
+ *
+ * `bare` is a grip drawn by a class of its own (`class`, `cursor`): no edge, hint or maximum on
+ * it, and the page is not told a resize is going on. `onGrab` runs as a drag starts.
  */
-export function Grip(props: { size: Size; edge: "left" | "right" | "top" | "bottom"; label: string; style?: JSX.CSSProperties }) {
+export function Grip(props: {
+  size: Size;
+  edge: "left" | "right" | "top" | "bottom";
+  label: string;
+  style?: JSX.CSSProperties;
+  class?: string;
+  cursor?: string;
+  bare?: boolean;
+  onGrab?: () => void;
+}) {
   const vertical = () => props.edge === "left" || props.edge === "right";
   const sign = () => (props.edge === "right" || props.edge === "bottom" ? 1 : -1);
   let from = 0;
@@ -91,29 +103,30 @@ export function Grip(props: { size: Size; edge: "left" | "right" | "top" | "bott
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     document.body.style.removeProperty("cursor");
-    delete document.body.dataset.resizing;
+    if (!props.bare) delete document.body.dataset.resizing;
   };
   onCleanup(up);
   return (
     <div
-      class="grip"
-      data-edge={props.edge}
+      class={props.class ?? "grip"}
+      data-edge={props.bare ? undefined : props.edge}
       style={props.style}
       role="separator"
       aria-orientation={vertical() ? "vertical" : "horizontal"}
       aria-label={props.label}
       aria-valuenow={props.size.get()}
       aria-valuemin={props.size.min}
-      aria-valuemax={props.size.max()}
-      data-tip={t("Drag to resize · double click for the default")}
+      aria-valuemax={props.bare ? undefined : props.size.max()}
+      data-tip={props.bare ? undefined : t("Drag to resize · double click for the default")}
       tabindex="0"
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
+        props.onGrab?.();
         from = vertical() ? e.clientX : e.clientY;
         start = props.size.get();
-        document.body.style.cursor = vertical() ? "col-resize" : "row-resize";
-        document.body.dataset.resizing = "";
+        document.body.style.cursor = props.cursor ?? (vertical() ? "col-resize" : "row-resize");
+        if (!props.bare) document.body.dataset.resizing = "";
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", up);
       }}

@@ -2,14 +2,77 @@
 // right, removed lines in red and added ones in green, line numbers on both sides. Opened from a
 // run's What changed; the file list beside it moves between the files of the same diff.
 import { For, Show, createMemo, createSignal } from "solid-js";
-import type { DiffFile, DiffHunk } from "./review";
 import { highlight, langOf } from "./highlight";
 import { Icon } from "./icons";
 import { plural, t } from "./i18n";
 import { DIFF_FILES_W, Grip } from "./layout";
 import { ownsKey } from "./ui";
 
-export type FileStatus = DiffFile["status"];
+interface DiffLine {
+  kind: "add" | "del" | "ctx" | "meta";
+  text: string;
+  old?: number;
+  new?: number;
+}
+interface DiffHunk {
+  head: string;
+  lines: DiffLine[];
+}
+export interface DiffFile {
+  path: string;
+  hunks: DiffHunk[];
+  binary: boolean;
+  /** Added, deleted, renamed (from `from`), or modified. */
+  status: "added" | "deleted" | "renamed" | "modified";
+  from?: string;
+}
+
+/** Unified diff text into files and hunks, with line numbers on both sides. */
+export function parsePatch(patch: string): DiffFile[] {
+  const files: DiffFile[] = [];
+  let file: DiffFile | null = null;
+  let hunk: DiffHunk | null = null;
+  let o = 0;
+  let n = 0;
+  for (const raw of patch.split("\n")) {
+    const header = /^diff --git a\/(.+) b\/(.+)$/.exec(raw);
+    if (header) {
+      file = { path: header[2]!, hunks: [], binary: false, status: header[1] !== header[2] ? "renamed" : "modified", from: header[1] !== header[2] ? header[1] : undefined };
+      files.push(file);
+      hunk = null;
+      continue;
+    }
+    if (!file) continue;
+    if (!hunk && raw.startsWith("new file mode")) {
+      file.status = "added";
+      continue;
+    }
+    if (!hunk && raw.startsWith("deleted file mode")) {
+      file.status = "deleted";
+      continue;
+    }
+    if (raw.startsWith("Binary files")) {
+      file.binary = true;
+      continue;
+    }
+    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(raw);
+    if (h) {
+      o = Number(h[1]);
+      n = Number(h[2]);
+      hunk = { head: raw, lines: [] };
+      file.hunks.push(hunk);
+      continue;
+    }
+    if (!hunk) continue;
+    if (raw.startsWith("+")) hunk.lines.push({ kind: "add", text: raw.slice(1), new: n++ });
+    else if (raw.startsWith("-")) hunk.lines.push({ kind: "del", text: raw.slice(1), old: o++ });
+    else if (raw.startsWith(" ")) hunk.lines.push({ kind: "ctx", text: raw.slice(1), old: o++, new: n++ });
+    else if (raw.startsWith("\\")) hunk.lines.push({ kind: "meta", text: raw });
+  }
+  return files;
+}
+
+type FileStatus = DiffFile["status"];
 
 /** One changed file as the side column lists it. */
 export interface ChangedFile {
@@ -70,7 +133,7 @@ function rows(hunks: DiffHunk[]): Row[] {
 const hunkWhere = (head: string) => /@@[^@]*@@\s?(.*)$/.exec(head)?.[1]?.trim() ?? "";
 
 /** The diff of one file, side by side or inline. */
-export function FileDiffView(props: { file: DiffFile; inline: boolean }) {
+function FileDiffView(props: { file: DiffFile; inline: boolean }) {
   const table = createMemo(() => rows(props.file.hunks));
   const lang = createMemo(() => langOf(props.file.path, props.file.hunks.reduce((n, h) => n + h.lines.length, 0)));
   return (

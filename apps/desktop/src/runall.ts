@@ -9,15 +9,23 @@
 // repository with nothing ready lends its share to the others.
 import { createEffect, createMemo, createSignal, on, type Accessor, type Setter } from "solid-js";
 import { NEEDS_API_KEY, api, isLive, type Card, type Plan, type Finish, type RunMeta, type ShipJob, isOpenJob } from "./api";
-import { holdNote, onItsWay, planNote } from "./board";
-import { openQuestions } from "./cards";
-import { setAgentsWatch } from "./agents";
-import type { RunAllChoice } from "./sheets";
+import { holdNote, onItsWay, openQuestions, planNote } from "./cards";
+import { setAgentsWatch } from "./store/agents";
 import { toast, type Toast } from "./ui";
 import { plural, t } from "./i18n";
-import { msg } from "./format";
+import { money, msg } from "./format";
 import { cards, jobs, loadCards, loadQueue, loadReports, loadRuns, repo, runs } from "./store/repo";
 import type { SheetState, Tab } from "./App";
+
+/** Where Run all lands the work, as chosen in its sheet. */
+export interface RunAllChoice {
+  /** null: the repository's flow (a lane per card from the base, shipped through each stage). */
+  into: string | null;
+  direct: boolean;
+  /** What happens around and after the work, in the person's words; every agent reads it, and a
+   * closing session does the "when it is all done" part. */
+  instructions: string;
+}
 
 /** The shell's part in a session: the questions sheet, the Reports screen, and going to a repository. */
 interface Shell {
@@ -30,7 +38,7 @@ interface Shell {
   nameOf: (path: string) => string | undefined;
 }
 
-export type Phase = "idle" | "analyzing" | "asking" | "working" | "finishing";
+type Phase = "idle" | "analyzing" | "asking" | "working" | "finishing";
 
 /** One repository's Run all. */
 interface Batch {
@@ -381,7 +389,7 @@ export function createRunAll(shell: Shell) {
         {
           tone: finish && !finish.ok ? "fail" : "done",
           title: t("Run all is done"),
-          body: plural(r.cards.length, "{n} card, {cost}. The report is ready.", "{n} cards, {cost}. The report is ready.", { cost: `$${r.cost_usd.toFixed(2)}` }),
+          body: plural(r.cards.length, "{n} card, {cost}. The report is ready.", "{n} cards, {cost}. The report is ready.", { cost: money(r.cost_usd) }),
           action: {
             label: t("Open the report"),
             run: () => {

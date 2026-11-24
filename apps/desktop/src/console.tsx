@@ -2,17 +2,16 @@
 // an edit as red and green lines), the questions it asks at its end, a prompt that talks to it
 // while it works (Ctrl+C stops it, / for commands) and the model and effort under the prompt.
 // The same console wherever a session shows: Terminal › Agents and a card's run.
-import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, untrack, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, untrack, type JSX } from "solid-js";
 import { api, isLive, type RunEvent, type RunMeta } from "./api";
 import { plural, t } from "./i18n";
-import { Spinner, toast, tailFollower, escapeCloses } from "./ui";
+import { Lightbox, Spinner, toast, tailFollower } from "./ui";
 import { ApprovalBlock } from "./approvals";
 import { Icon } from "./icons";
 import { Prose } from "./prose";
-import { msg } from "./format";
+import { money, msg } from "./format";
 import { highlight, langOf } from "./highlight";
-import { TERMINAL_FACES, terminalPrefs } from "./terminals";
+import { TERMINAL_FACES, terminalPrefs } from "./terminals/model";
 
 type Done = Extract<RunEvent, { kind: "tool-done" }>;
 
@@ -508,7 +507,6 @@ function Shot(props: { run: string; file: string }) {
     return api.runShot(r, f).catch(() => "");
   });
   const [big, setBig] = createSignal(false);
-  escapeCloses(big, () => setBig(false));
   return (
     <Show when={src()}>
       {(u) => (
@@ -517,13 +515,7 @@ function Shot(props: { run: string; file: string }) {
           <button type="button" class="cc-shot-thumb" title={t("Open full size")} onClick={() => setBig(true)}>
             <img src={u()} alt={t("Screenshot")} loading="lazy" />
           </button>
-          <Show when={big()}>
-            <Portal>
-              <div class="shot-view" role="dialog" aria-label={t("Screenshot")} onClick={() => setBig(false)}>
-                <img src={u()} alt={t("Screenshot")} />
-              </div>
-            </Portal>
-          </Show>
+          <Lightbox open={big()} src={u()} alt={t("Screenshot")} label={t("Screenshot")} class="shot-view" onClose={() => setBig(false)} />
         </div>
       )}
     </Show>
@@ -689,7 +681,7 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Done; asking?: boolean; o
     case "finished":
       return (
         <Sys glyph={e.ok ? "✓" : "✕"} tone={e.ok ? "ok" : "fail"}>
-          {[e.ok ? t("Finished") : t("Stopped with an error"), plural(e.turns, "{n} turn", "{n} turns"), `$${e.cost_usd.toFixed(2)}`].join(" · ")}
+          {[e.ok ? t("Finished") : t("Stopped with an error"), plural(e.turns, "{n} turn", "{n} turns"), money(e.cost_usd)].join(" · ")}
         </Sys>
       );
     case "exited":

@@ -3,7 +3,7 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api, type Card } from "./api";
 import { Icon } from "./icons";
-import { Spinner, toast } from "./ui";
+import { Lightbox, Spinner, toast } from "./ui";
 import { t } from "./i18n";
 import { msg } from "./format";
 
@@ -189,11 +189,7 @@ export function CardImages(props: { repo: string; card: Card; onChanged: () => v
           </For>
         </ul>
       </Show>
-      <Show when={big()}>
-        <div class="img-big" role="dialog" aria-label={t("Image")} onClick={() => setBig(null)} onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setBig(null))} tabindex="-1" ref={(el) => requestAnimationFrame(() => el.focus())}>
-          <img src={big()!} alt="" />
-        </div>
-      </Show>
+      <Lightbox open={!!big()} src={big() ?? ""} alt="" label={t("Image")} class="img-big" inline onClose={() => setBig(null)} />
     </section>
   );
 }

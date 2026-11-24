@@ -13,10 +13,10 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { Blocks, onBlockCard } from "../blocks";
 import { loadCards, repo, yard } from "../store/repo";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { systemNotify } from "../notify";
 import { api, files, onTerm, openExternal, terms, type TermInfo } from "../api";
-import { selectAgent } from "../agents";
-import { openInCode } from "../code";
+import { selectAgent } from "../store/agents";
+import { openInCode } from "../store/code";
 import { t } from "../i18n";
 import { toast } from "../ui";
 import { size } from "../layout";
@@ -211,12 +211,13 @@ type Face = (typeof TERMINAL_FACES)[number]["v"];
 const faceCss = (f: Face) => (TERMINAL_FACES.find((x) => x.v === f) ?? TERMINAL_FACES[0]).css;
 /** How glyphs reach the screen. Smooth: WebKit draws the text as Warp does (grayscale, no stem
  * thickening), soft to read for hours. Sharp: the GPU atlas, whose canvas glyphs macOS thickens. */
-export type Render = "smooth" | "gpu";
+type Render = "smooth" | "gpu";
 /** The terminal's text size until you change it: Warp's. */
 export const DEFAULT_FONT = 13;
 
 export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face; render: Render }>({ tabs: [], active: null, side: "left", font: DEFAULT_FONT, face: "hack", render: "smooth" });
-export const [meta, setMeta] = createStore<Record<number, Meta>>({});
+const [meta, setMeta] = createStore<Record<number, Meta>>({});
+export { meta };
 export const [screenOn, setScreenOn] = createSignal(false);
 let nextTab = 1;
 /** A new tab's id. */
@@ -255,8 +256,7 @@ function loadSaved(): Saved | null {
   }
 }
 
-/** Tabs, for the top bar's count; and how many want you. */
-export const terminalTabs = () => st.tabs;
+/** How many terminals want you, for the top bar's count. */
 export const terminalsWanting = () => Object.values(meta).filter((m) => m.status === "bell" || m.status === "waiting").length;
 
 export const activeTab = () => st.tabs.find((t) => t.id === st.active);
@@ -350,16 +350,6 @@ function lastLine(t: Terminal): string {
 function placeName(term: number) {
   const tb = tabOf(term);
   return tb?.name || meta[term]?.label || t("A terminal");
-}
-
-async function systemNotify(title: string, body: string) {
-  try {
-    let ok = await isPermissionGranted();
-    if (!ok) ok = (await requestPermission()) === "granted";
-    if (ok) sendNotification({ title, body });
-  } catch {
-    /* the browser preview has no notifications */
-  }
 }
 
 let notifyOn = true;
@@ -482,7 +472,8 @@ export function seen(tab: Tab | undefined) {
 let ticker: ReturnType<typeof setInterval> | undefined;
 /** Busy for a while, then quiet: the program finished or stopped to ask. */
 /** A second hand for running blocks' clocks. */
-export const [clock, setClock] = createSignal(performance.now());
+const [clock, setClock] = createSignal(performance.now());
+export { clock };
 function tick() {
   const now = performance.now();
   setClock(now);

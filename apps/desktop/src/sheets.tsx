@@ -6,6 +6,7 @@ import { ErrorLine, Sheet, Spinner, toast, ok } from "./ui";
 import { Dictate } from "./dictate";
 import { plural, t, tx } from "./i18n";
 import { msg } from "./format";
+import type { RunAllChoice } from "./runall";
 
 
 
@@ -404,15 +405,6 @@ export function NewLaneSheet(props: { repo: string; base: string; onDone: () => 
 }
 
 // ---------------------------------------------------------------- Run all
-
-export interface RunAllChoice {
-  /** null: the repository's flow (a lane per card from the base, shipped through each stage). */
-  into: string | null;
-  direct: boolean;
-  /** What happens around and after the work, in the person's words; every agent reads it, and a
-   * closing session does the "when it is all done" part. */
-  instructions: string;
-}
 
 /**
  * Before Run all starts: where the work lands. A lane per card, branched from the target when it

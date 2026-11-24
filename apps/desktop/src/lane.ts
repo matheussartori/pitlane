@@ -7,7 +7,7 @@ import { ago } from "./format";
 /** `data-state` of .chip and .tower-row in design/components.css. */
 export type ChipState = "needs" | "running" | "done" | "failed" | "queued";
 
-export interface LaneView {
+interface LaneView {
   chip: ChipState;
   icon: IconName;
   label: string;
@@ -43,7 +43,7 @@ export function laneView(lane: Lane, yard: Yard): LaneView {
   }
 }
 
-export interface SyncView {
+interface SyncView {
   label: string;
   /** Colour role: done = all on the remote, needs = your move, failed = diverged. */
   tone: "done" | "needs" | "failed" | "muted" | "plain";
@@ -136,8 +136,8 @@ export function group(l: Lane): Group {
 // ---------------------------------------------------------------- the track
 
 /** off: not there · on: there · next: your move takes it here (the only orange) · ahead/behind: a count to settle · gone: deleted on the remote · fail: wrong. */
-export type NodeState = "off" | "on" | "next" | "count" | "gone" | "fail";
-export interface TrackNode {
+type NodeState = "off" | "on" | "next" | "count" | "gone" | "fail";
+interface TrackNode {
   stage: string;
   state: NodeState;
   /** A short figure under the node, e.g. 2↑. */
@@ -214,7 +214,7 @@ export function track(l: Lane, y: Yard, now: number): TrackNode[] {
 
 // ---------------------------------------------------------------- the one line that says what is next
 
-export interface Next {
+interface Next {
   text: string;
   tone: "needs" | "failed" | "muted" | "plain";
 }
@@ -233,9 +233,4 @@ export function next(l: Lane, y: Yard): Next | null {
   }
   if (l.idle_days >= 2) return { text: plural(l.idle_days, "Idle {n} day", "Idle {n} days"), tone: "muted" };
   return null;
-}
-
-/** Idle time for the table: blank while the lane moved today, so only quiet lanes draw the eye. */
-export function idle(days: number): string {
-  return days === 0 ? "" : `${days}d`;
 }

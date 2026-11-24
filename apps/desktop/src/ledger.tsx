@@ -3,10 +3,10 @@
 import { For, Show, createMemo } from "solid-js";
 import { isLive, type RunMeta } from "./api";
 import { Icon } from "./icons";
-import { runStateView } from "./run";
-import { kindLabel } from "./agents";
+import { runStateView } from "./cards";
+import { kindLabel } from "./store/agents";
 import { modelLabel } from "./console";
-import { clock, elapsed, kTokens, money } from "./format";
+import { clock, elapsed, kTokens, money, timeOfDay } from "./format";
 import { locale, plural, t } from "./i18n";
 import { Spinner } from "./ui";
 
@@ -65,7 +65,6 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
       : s === today() - DAY
         ? t("Yesterday")
         : new Date(s).toLocaleDateString(locale(), { weekday: "long", day: "numeric", month: "long" });
-  const timeOf = (sec: number) => new Date(sec * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
 
   return (
     <div class="ledger">
@@ -179,7 +178,7 @@ export function LedgerView(props: { runs: RunMeta[] | null; now: number; onOpen:
                             {t(runStateView[r.state].label)}
                           </span>
                         </td>
-                        <td class="muted">{timeOf(r.started_at)}</td>
+                        <td class="muted">{timeOfDay(r.started_at)}</td>
                         <td class="num">{clock(elapsed(r, props.now))}</td>
                         <td class="num">{kTokens(tokensOf(r))}</td>
                         <td class="num cost">{money(r.cost_usd ?? 0)}</td>

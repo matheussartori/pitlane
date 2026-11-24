@@ -25,7 +25,7 @@ export interface Command {
 }
 
 /** Subsequence match with bonuses for starts of words and runs of letters; -1 when it misses. */
-export function score(text: string, q: string): number {
+function score(text: string, q: string): number {
   const s = text.toLowerCase();
   if (!q) return 0;
   const at = s.indexOf(q);

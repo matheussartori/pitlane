@@ -7,7 +7,7 @@ import type { IDecoration, IDisposable, IMarker, Terminal } from "@xterm/xterm";
 import { createSignal, type Accessor } from "solid-js";
 import { t } from "./i18n";
 
-export interface Block {
+interface Block {
   prompt: IMarker;
   out?: IMarker;
   end?: IMarker;
@@ -20,7 +20,7 @@ export interface Block {
 }
 
 /** What the pane shows on top while you read inside a long block. */
-export interface Sticky {
+interface Sticky {
   cmd: string;
   line: number;
   exit?: number;

@@ -1,7 +1,23 @@
 // Small building blocks: modal sheet, toasts, spinner.
 import { ErrorBoundary, For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX, type Resource } from "solid-js";
+import { Portal } from "solid-js/web";
 import { Icon } from "./icons";
 import { t } from "./i18n";
+
+/** One choice among a few, as buttons side by side. Labels are English keys. */
+export function Seg<T extends string>(props: { value: T; options: { v: T; label: string }[]; label: string; onChange: (v: T) => void }) {
+  return (
+    <div class="seg" role="group" aria-label={t(props.label)}>
+      <For each={props.options}>
+        {(o) => (
+          <button type="button" aria-pressed={props.value === o.v} onClick={() => props.onChange(o.v)}>
+            {t(o.label)}
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
 
 /** A menu or popover that closes like any other: a click outside it, Escape, or the window
  *  losing focus. Call during a component's setup; `box` is the element holding the trigger and the menu. */
@@ -246,7 +262,7 @@ const [toasts, setToasts] = createSignal<Toast[]>([]);
 let nextId = 1;
 /** Escape closes what is enlarged over the screen (a screenshot) and nothing else: the key is
  *  taken before the screen under it sees it, so a run's own Escape does not also leave the run. */
-export function escapeCloses(open: () => boolean, close: () => void) {
+function escapeCloses(open: () => boolean, close: () => void) {
   const key = (ev: KeyboardEvent) => {
     if (ev.key !== "Escape" || !open()) return;
     ev.preventDefault();
@@ -255,6 +271,29 @@ export function escapeCloses(open: () => boolean, close: () => void) {
   };
   window.addEventListener("keydown", key, true);
   onCleanup(() => window.removeEventListener("keydown", key, true));
+}
+
+/** An image opened full size over the screen: a click anywhere or Escape closes it. `class` is
+ *  the caller's own, so each keeps its look. `inline` is for one inside a sheet: a sheet sits in
+ *  the browser's top layer, above anything put on the body, so the image stays where it is
+ *  written, takes the focus and hears its own Escape. */
+export function Lightbox(props: { open: boolean; src: string; alt: string; label: string; class: string; inline?: boolean; onClose: () => void }) {
+  if (!props.inline) escapeCloses(() => props.open, () => props.onClose());
+  return (
+    <Show when={props.open}>
+      {props.inline ? (
+        <div class={props.class} role="dialog" aria-label={props.label} onClick={() => props.onClose()} onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), props.onClose())} tabindex="-1" ref={(el) => requestAnimationFrame(() => el.focus())}>
+          <img src={props.src} alt={props.alt} />
+        </div>
+      ) : (
+        <Portal>
+          <div class={props.class} role="dialog" aria-label={props.label} onClick={() => props.onClose()}>
+            <img src={props.src} alt={props.alt} />
+          </div>
+        </Portal>
+      )}
+    </Show>
+  );
 }
 
 /** The toasts that stay until answered. */

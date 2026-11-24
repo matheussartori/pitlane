@@ -4,7 +4,7 @@
 // a parser. Unknown file types and very long lines stay plain.
 import type { JSX } from "solid-js";
 
-export type Lang = "c" | "rust" | "hash" | "css" | "json";
+type Lang = "c" | "rust" | "hash" | "css" | "json";
 
 const BY_EXT: Record<string, Lang> = {
   ts: "c", tsx: "c", js: "c", jsx: "c", mjs: "c", cjs: "c", go: "c", java: "c", kt: "c", swift: "c", c: "c", h: "c", cc: "c", cpp: "c", hpp: "c", cs: "c", php: "c", dart: "c", scala: "c",
