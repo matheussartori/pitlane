@@ -400,13 +400,17 @@ const CACHES: &[&str] = &[".cargo", ".rustup", ".npm", ".pnpm-store", "Library/p
 /// Codex (`codex exec`) and Antigravity (`agy -p`).
 const AGENT_CLIS: &[&str] = &[".codex", ".gemini", "Library/Application Support/antigravity", "Library/Logs/Antigravity", "Library/HTTPStorages/com.google.antigravity"];
 
+/// What an agent downloads through a browser (Claude in Chrome, say) lands in Downloads, and it
+/// moves it from there into the worktree.
+const DOWNLOADS: &str = "Downloads";
+
 /// Their settings, instructions and MCP servers stay read-only: the next time you run them, outside
 /// the sandbox, they would act on what an agent wrote there.
 const AGENT_CLI_CONFIG: &[&str] = &[".codex/config.toml", ".codex/AGENTS.md", ".codex/rules", ".gemini/config", ".gemini/antigravity-cli/settings.json"];
 
 /// Claude Code's sandbox for a run: its commands write to the worktree (and the lanes beside it,
 /// given with --add-dir), the git repository behind them (a commit writes there), the package
-/// caches, the other agents' CLIs and the repository's `[run] write`, but not to git's hooks or
+/// caches, Downloads, the other agents' CLIs and the repository's `[run] write`, but not to git's hooks or
 /// config, which would run as you outside the sandbox. They reach any host on the network and no
 /// local socket, so nothing the agent runs can answer its own approvals through Pitlane's daemon;
 /// they may listen on localhost and ask macOS to check certificates (Go and Rust tools such as
@@ -416,7 +420,7 @@ const AGENT_CLI_CONFIG: &[&str] = &[".codex/config.toml", ".codex/AGENTS.md", ".
 fn sandbox_settings<'a>(worktree: &'a Path, related: impl Iterator<Item = &'a Path>, extra: &[String], ask_unsandboxed: bool) -> serde_json::Map<String, Value> {
     let home = home_dir();
     let at_home = |p: &str| home.join(p).to_string_lossy().into_owned();
-    let mut write: Vec<String> = CACHES.iter().chain(AGENT_CLIS).map(|c| at_home(c)).collect();
+    let mut write: Vec<String> = CACHES.iter().chain(AGENT_CLIS).chain([&DOWNLOADS]).map(|c| at_home(c)).collect();
     write.extend(extra.iter().map(|p| match p.strip_prefix("~/") {
         Some(rest) => at_home(rest),
         None => p.clone(),
@@ -487,7 +491,7 @@ mod your_claude_tests {
         assert_eq!(s["sandbox"]["allowUnsandboxedCommands"], false);
         assert!(s.get("permissions").is_none());
         let write = s["sandbox"]["filesystem"]["allowWrite"].as_array().unwrap();
-        for p in [".mytool", ".codex", ".gemini"] {
+        for p in [".mytool", ".codex", ".gemini", "Downloads"] {
             assert!(write.iter().any(|w| w == &Value::from(home_dir().join(p).to_string_lossy().into_owned())), "{p}");
         }
         let asks = Value::Object(sandbox_settings(&wt, std::iter::empty(), &[], true));
