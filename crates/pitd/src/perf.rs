@@ -5,10 +5,12 @@
 //! background priority (efficiency cores, throttled disk), leaving the Mac responsive.
 //! "Switch by itself" picks Light while you use the Mac and Full once you have been away a while.
 //!
-//! Every 2 s the governor samples the Mac (memory pressure, free memory, swap, CPU) and each
-//! agent's process tree (memory as Activity Monitor counts it, `phys_footprint`). When more
-//! cards work than the mode or the memory allows, it pauses the newest (or, for memory, the
-//! heaviest) with SIGSTOP on its whole tree and resumes it with SIGCONT when there is room.
+//! Every 2 s the governor samples the Mac (memory pressure, free memory, swap, CPU, macOS's
+//! thermal pressure) and each agent's process tree (memory as Activity Monitor counts it,
+//! `phys_footprint`). When more cards work than the mode, the memory or the heat allows, it
+//! pauses the newest (for memory the largest, for heat the busiest) with SIGSTOP on its whole
+//! tree and resumes it with SIGCONT when there is room. CPU alone never pauses a card: a busy
+//! Mac is the point of Full, and Light already keeps agents off the performance cores.
 //! A pause loses nothing: the process, its conversation, its context and the command it was
 //! running are frozen in place, and Claude Code's stream watchdog retries a request that went
 //! quiet meanwhile (`CLAUDE_STREAM_IDLE_TIMEOUT_MS`, raised for runs). Stop on a paused run
@@ -82,6 +84,8 @@ enum Why {
     You,
     Mode,
     Memory,
+    /// macOS's thermal pressure reached serious or critical.
+    Heat,
 }
 
 impl Why {
@@ -90,6 +94,7 @@ impl Why {
             Why::You => "you",
             Why::Mode => "mode",
             Why::Memory => "memory",
+            Why::Heat => "heat",
         }
     }
 }
@@ -137,6 +142,8 @@ struct State {
     throttled: HashSet<i32>,
     tight_streak: u32,
     calm_streak: u32,
+    /// Heat cut the cards since they were last all back: a warm Mac waits longer to resume.
+    cooling: bool,
     last_cap: u32,
     history: VecDeque<Sample>,
     events: VecDeque<Event>,
@@ -345,6 +352,7 @@ impl Perf {
     pub fn tick(&self, sessions: &[LiveSession]) -> Vec<(String, String)> {
         let procs = processes();
         let sys = system(&procs);
+        let temps = crate::temps::read();
         let (max, adaptive) = desktop_limits(&self.home);
         let idle = idle_seconds();
         let mut notes = Vec::new();
@@ -386,8 +394,18 @@ impl Perf {
             Mode::Full => (10.0, 5.0),
             Mode::Light => (25.0, 12.0),
         };
-        let critical = adaptive && (sys.pressure >= 4 || sys.free_pct < critical_free);
-        let tight = critical || (adaptive && (sys.pressure >= 2 || sys.free_pct < tight_free));
+        let mem_critical = adaptive && (sys.pressure >= 4 || sys.free_pct < critical_free);
+        let mem_tight = mem_critical || (adaptive && (sys.pressure >= 2 || sys.free_pct < tight_free));
+        // Heat goes by macOS's own thermal pressure, not by a sensor: Apple silicon runs its dies
+        // near 100 °C under load by design and slows itself down; serious is where Apple asks
+        // apps to cut work, critical where the Mac must cool down. Fair asks nothing yet.
+        let hot_critical = adaptive && temps.thermal == Some("critical");
+        let hot = hot_critical || (adaptive && temps.thermal == Some("serious"));
+        let critical = mem_critical || hot_critical;
+        let tight = mem_tight || hot;
+        if hot {
+            s.cooling = true;
+        }
         if tight {
             s.tight_streak += 1;
             s.calm_streak = 0;
@@ -407,11 +425,17 @@ impl Perf {
             s.allowed = cap;
         }
         s.last_cap = cap;
+        // A card back every 16 s once memory eases, every 60 s after heat: a Mac cools slower
+        // than it frees memory, and bringing the work back at once heats it right up again.
+        let calm_needed = if s.cooling { 30 } else { 8 };
         if target < s.allowed && s.tight_streak >= 2 {
             s.allowed = target;
-        } else if target > s.allowed && (s.calm_streak >= 8 || !adaptive) {
+        } else if target > s.allowed && (s.calm_streak >= calm_needed || !adaptive) {
             s.allowed += 1;
             s.calm_streak = 1;
+        }
+        if s.allowed >= cap {
+            s.cooling = false;
         }
         let allowed = s.allowed.max(1);
 
@@ -452,15 +476,22 @@ impl Perf {
         if self.enabled() && working.len() as u32 > allowed {
             let over = working.len() - allowed as usize;
             let by_mode = working.len() as u32 > cap;
-            let mut pick: Vec<_> = working.clone();
-            if by_mode {
-                pick.sort_by_key(|a| std::cmp::Reverse(a.0.meta.started_at));
+            // Memory first: running out of it gets processes killed, heat only slows the Mac.
+            let why = if by_mode {
+                Why::Mode
+            } else if mem_tight {
+                Why::Memory
             } else {
-                pick.sort_by_key(|a| std::cmp::Reverse(a.2));
+                Why::Heat
+            };
+            let mut pick: Vec<_> = working.clone();
+            match why {
+                Why::Mode => pick.sort_by_key(|a| std::cmp::Reverse(a.0.meta.started_at)),
+                Why::Heat => pick.sort_by(|a, b| b.3.total_cmp(&a.3)),
+                _ => pick.sort_by_key(|a| std::cmp::Reverse(a.2)),
             }
             let take = if by_mode { over } else { 1 };
             for a in pick.into_iter().take(take) {
-                let why = if by_mode { Why::Mode } else { Why::Memory };
                 freeze(&a.1);
                 s.holds.insert(
                     a.0.meta.id.clone(),
@@ -476,10 +507,12 @@ impl Perf {
                         mode_name(mode),
                         plural(allowed, "card")
                     ),
+                    Why::Heat => "the Mac is too warm and macOS is slowing it down".to_string(),
                     _ => format!("memory is tight ({}% free)", sys.free_pct.round()),
                 };
                 let (kind, n) = match why {
                     Why::Mode => ("paused_mode", u64::from(allowed)),
+                    Why::Heat => ("paused_heat", u64::from(hot_critical)),
                     _ => ("paused_memory", sys.free_pct.round() as u64),
                 };
                 push_event(
@@ -617,13 +650,14 @@ impl Perf {
         }
         s.snapshot = json!({
             "at": t,
-            "cap": cap, "max": max, "adaptive": adaptive, "idle_secs": idle, "tight": tight, "critical": critical,
+            "cap": cap, "max": max, "adaptive": adaptive, "idle_secs": idle, "tight": mem_tight, "critical": mem_critical, "hot": hot, "hot_critical": hot_critical,
             "background": background, "awake": s.caffeinate.is_some(),
             "system": {
                 "mem_total": sys.mem_total, "mem_used": sys.mem_used, "free_pct": sys.free_pct, "pressure": match sys.pressure { 4 => "critical", 2 => "warn", _ => "normal" },
                 "swap_used": sys.swap_used, "swap_total": sys.swap_total, "cpu": sys.cpu, "cores": sys.cores, "p_cores": sys.p_cores,
                 "load": sys.load,
             },
+            "temps": temps,
             "agents": list,
             "agents_mem": agents_mem, "agents_cpu": agents_cpu,
             "others": others,
@@ -703,7 +737,12 @@ fn system(procs: &HashMap<i32, Proc>) -> System {
     } else {
         0.0
     };
-    let cpu = (procs.values().map(|p| p.cpu).sum::<f64>() / f64::from(cores)).clamp(0.0, 100.0);
+    // `ps` %CPU is a decaying average per live process: it misses the short-lived compilers, git
+    // and test runs agents start by the hundred, and lags. The kernel's tick counters are what
+    // Activity Monitor and `top` read; `ps` stays as the fallback for the first tick.
+    let cpu = cpu_busy()
+        .unwrap_or_else(|| procs.values().map(|p| p.cpu).sum::<f64>() / f64::from(cores))
+        .clamp(0.0, 100.0);
     System {
         mem_total,
         mem_used: (mem_total as f64 * (100.0 - free_pct) / 100.0) as u64,
@@ -716,6 +755,35 @@ fn system(procs: &HashMap<i32, Proc>) -> System {
         p_cores,
         load,
     }
+}
+
+unsafe extern "C" {
+    fn mach_host_self() -> libc::mach_port_t;
+}
+
+/// Share of all cores busy since the last call, from the kernel's per-state tick counters
+/// (user, system, idle, nice). Like Activity Monitor it counts a busy efficiency core the same
+/// as a busy performance core and ignores clock speed, so it says how occupied the Mac is, not
+/// how much more it could do.
+fn cpu_busy() -> Option<f64> {
+    static HOST: std::sync::OnceLock<libc::mach_port_t> = std::sync::OnceLock::new();
+    static LAST: Mutex<Option<[u32; 4]>> = Mutex::new(None);
+    // SAFETY: returns this task's send right to the host port; asked once and kept.
+    let host = *HOST.get_or_init(|| unsafe { mach_host_self() });
+    let mut info = libc::host_cpu_load_info { cpu_ticks: [0; 4] };
+    let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
+    // SAFETY: HOST_CPU_LOAD_INFO fills a host_cpu_load_info of `count` integers, the size we pass.
+    let r = unsafe { libc::host_statistics(host, libc::HOST_CPU_LOAD_INFO, (&mut info as *mut libc::host_cpu_load_info).cast(), &mut count) };
+    if r != 0 {
+        return None;
+    }
+    let now = info.cpu_ticks;
+    let prev = LAST.lock().ok()?.replace(now)?;
+    // The counters are 32-bit and wrap; a difference across the wrap is still right.
+    let d: Vec<u64> = (0..4).map(|i| u64::from(now[i].wrapping_sub(prev[i]))).collect();
+    let total: u64 = d.iter().sum();
+    let idle = d[libc::CPU_STATE_IDLE as usize];
+    (total > 0).then(|| (total - idle) as f64 * 100.0 / total as f64)
 }
 
 fn sysctl<T: Copy>(name: &str) -> Option<T> {
@@ -873,6 +941,17 @@ mod tests {
         assert!(footprint(std::process::id() as i32).is_some_and(|f| f > 0));
         let me = tree(std::process::id() as i32, &procs);
         assert_eq!(me[0], std::process::id() as i32);
+    }
+
+    #[test]
+    fn cpu_comes_from_the_kernel_ticks() {
+        cpu_busy();
+        // Ticks come at 100 Hz per core: spin long enough for some to land.
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(50) {
+            std::hint::spin_loop();
+        }
+        assert!(cpu_busy().is_some_and(|c| (0.0..=100.0).contains(&c)));
     }
 
     fn stat(pid: u32) -> String {

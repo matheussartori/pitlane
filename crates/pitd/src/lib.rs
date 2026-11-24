@@ -12,6 +12,7 @@ mod peer;
 pub mod perf;
 pub mod presence;
 pub mod supervisor;
+mod temps;
 
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
