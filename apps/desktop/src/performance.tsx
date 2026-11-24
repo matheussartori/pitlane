@@ -2,7 +2,7 @@
 // it; the daemon's governor pauses, resumes and throttles the agents to fit, without losing a thing.
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { api, type PerfEvent, type PerfAgent, type PerfMode, type PerfSample, type PerfSnapshot, type PresenceConfig, type PresenceSnapshot } from "./api";
+import { api, type PerfEvent, type PerfAgent, type PerfSample, type PerfSnapshot, type PresenceConfig, type PresenceSnapshot } from "./api";
 import { Icon, type IconName } from "./icons";
 import { locale, plural, t, tx } from "./i18n";
 import { Seg, Spinner, toast } from "./ui";
@@ -94,6 +94,10 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
     const parts = [t("{mode}: {n} at once.", { mode, n: plural(s.allowed, "{n} card", "{n} cards") })];
     if (cards().length === 0) parts.push(t("No agent is working."));
     else parts.push(t("{working} working, {paused} paused, {waiting} waiting.", { working: String(working()), paused: String(paused()), waiting: String(waiting()) }));
+    for (const p of ["cpu", "gpu", "battery"] as Part[]) {
+      const v = s.temps?.[p];
+      if (v != null && levelOf(p, v) === "critical") parts.push(t("{part} is too hot ({v}).", { part: partName(p), v: celsius(v) }));
+    }
     if (s.tight) parts.push(s.critical ? t("Memory is critical: fewer agents until it eases.") : t("Memory is tight: one fewer agent until it eases."));
     return parts.join(" ");
   };
@@ -101,28 +105,9 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
   return (
     <div class="perf">
       <header class="screen-head perf-head">
-        <div>
-          <h1 class="title">{t("Performance")}</h1>
-          <Show when={snap()}>
-            <p class="summary">{summary()}</p>
-          </Show>
-        </div>
+        <h1 class="title">{t("Performance")}</h1>
         <Show when={snap()}>
-          {(s) => (
-            <label class="perf-auto">
-              <input
-                type="checkbox"
-                class="switch"
-                role="switch"
-                checked={s().config.auto}
-                onChange={(e) => void set({ auto: e.currentTarget.checked })}
-              />
-              <span>
-                {t("Switch by itself")}
-                <small>{t("Light while you use the Mac, Full after {n} min away", { n: String(s().config.away_minutes) })}</small>
-              </span>
-            </label>
-          )}
+          <p class="summary">{summary()}</p>
         </Show>
       </header>
 
@@ -136,8 +121,10 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
         <Show when={snap()} fallback={<div class="loading-line"><Spinner /> {t("Reading this Mac")}</div>}>
           {(s) => (
             <>
-              <ModePicker snap={s()} onMode={(mode) => void set({ mode })} onSet={(p) => void set(p)} />
-              <PresencePicker />
+              <div class="perf-controls">
+                <ModeCard snap={s()} onSet={(p) => void set(p)} />
+                <PresenceCard />
+              </div>
               <Show when={s().system}>{(sys) => <MacPanel snap={s()} sys={sys()} />}</Show>
               <AgentsTable agents={agents()} memTotal={s().system?.mem_total ?? 1} busy={busy()} onHold={hold} onOpen={props.onOpen} />
               <div class="perf-foot">
@@ -152,89 +139,116 @@ export function PerformanceView(props: { onOpen: (id: string) => void }) {
   );
 }
 
-// ---------------------------------------------------------------- modes
+// ---------------------------------------------------------------- settings
 
-function ModePicker(props: { snap: PerfSnapshot; onMode: (m: PerfMode) => void; onSet: (p: Parameters<typeof api.perfSet>[0]) => void }) {
-  const c = () => props.snap.config;
-  const max = () => props.snap.max ?? 3;
-  const Tile = (p: { mode: PerfMode; title: string; line: string; facts: JSX.Element }) => (
-    <button type="button" class="perf-mode" aria-pressed={props.snap.mode === p.mode} onClick={() => props.onMode(p.mode)}>
-      <span class="perf-mode-head">
-        <span class="perf-mode-title">{tx(p.title, "perf")}</span>
-        <Show when={props.snap.mode === p.mode}>
-          <span class="chip" data-state="review">
-            <Icon name="done" small />
-            {c().auto ? t("On, by itself") : t("On")}
-          </span>
-        </Show>
-      </span>
-      <span class="perf-mode-line">{t(p.line)}</span>
-      <span class="perf-mode-facts">{p.facts}</span>
-    </button>
-  );
+/** Mode and Presence share one shape: a title, the two choices, "by itself", what the choice
+ *  means, then one row per setting with its label on the left. */
+function SettingsCard(props: { title: string; seg: JSX.Element; auto: boolean; onAuto: (on: boolean) => void; line: string; children: JSX.Element; foot?: JSX.Element }) {
   return (
-    <section class="perf-modes" aria-label={t("Mode")}>
-      <Tile
-        mode="full"
-        title="Full"
-        line="You are away: the agents take the Mac, and it stays awake while they work."
-        facts={
-          <>
-            <span>{plural(max(), "{n} card at once", "{n} cards at once")}</span>
-            <span>{t("full priority")}</span>
-            <span>{t("pauses only when memory runs out")}</span>
-          </>
-        }
-      />
-      <Tile
-        mode="light"
-        title="Light"
-        line="You are using the Mac: fewer agents, on the efficiency cores, so nothing you do stutters."
-        facts={
-          <>
-            <span class="perf-inline" onClick={(e) => e.stopPropagation()}>
-              <input
-                class="input perf-num"
-                type="number"
-                min="1"
-                max={max()}
-                aria-label={t("Cards at once in Light")}
-                value={Math.min(c().light_agents, max())}
-                onChange={(e) => props.onSet({ light_agents: Math.max(1, Math.round(Number(e.currentTarget.value)) || 1) })}
-              />
-              {t("at once")}
-            </span>
-            <span class="perf-inline" onClick={(e) => e.stopPropagation()}>
-              <input type="checkbox" class="switch" role="switch" aria-label={t("Background priority")} checked={c().light_background} onChange={(e) => props.onSet({ light_background: e.currentTarget.checked })} />
-              {t("background priority")}
-            </span>
-            <span>{t("pauses early when memory gets tight")}</span>
-          </>
-        }
-      />
-      <Show when={c().auto}>
-        <p class="perf-note">
-          {t("Full after")}{" "}
-          <input
-            class="input perf-num"
-            type="number"
-            min="1"
-            max="120"
-            aria-label={t("Minutes away before Full")}
-            value={c().away_minutes}
-            onChange={(e) => props.onSet({ away_minutes: Math.max(1, Math.round(Number(e.currentTarget.value)) || 10) })}
-          />{" "}
-          {t("min without a key or the mouse. You have been away {t}.", { t: away(props.snap.idle_secs ?? 0) })}
-        </p>
+    <section class="perf-card" aria-label={t(props.title)}>
+      <header class="perf-card-head">
+        <h2 class="perf-card-title">{t(props.title)}</h2>
+        {props.seg}
+        <label class="perf-auto">
+          <input type="checkbox" class="switch" role="switch" checked={props.auto} onChange={(e) => props.onAuto(e.currentTarget.checked)} />
+          {t("Switch by itself")}
+        </label>
+      </header>
+      <p class="perf-card-line">{props.line}</p>
+      <dl class="perf-rows">{props.children}</dl>
+      <Show when={props.foot}>
+        <p class="perf-card-foot">{props.foot}</p>
       </Show>
     </section>
   );
 }
 
-// ---------------------------------------------------------------- presence
+function Row(props: { label: string; on?: boolean; children: JSX.Element }) {
+  return (
+    <div class="perf-row" data-on={props.on ? "" : undefined}>
+      <dt>{props.label}</dt>
+      <dd>{props.children}</dd>
+    </div>
+  );
+}
+
+function NumInput(props: { value: number; min: number; max: number; label: string; fallback: number; onSet: (n: number) => void }) {
+  return (
+    <input
+      class="input perf-num"
+      type="number"
+      min={props.min}
+      max={props.max}
+      aria-label={t(props.label)}
+      value={props.value}
+      onChange={(e) => props.onSet(Math.min(props.max, Math.max(props.min, Math.round(Number(e.currentTarget.value)) || props.fallback)))}
+    />
+  );
+}
+
+function ModeCard(props: { snap: PerfSnapshot; onSet: (p: Parameters<typeof api.perfSet>[0]) => void }) {
+  const c = () => props.snap.config;
+  const max = () => props.snap.max ?? 3;
+  const mode = () => props.snap.mode;
+  return (
+    <SettingsCard
+      title="Mode"
+      seg={
+        <Seg
+          label="Mode"
+          value={mode()}
+          options={[
+            { v: "light", label: tx("Light", "perf") },
+            { v: "full", label: tx("Full", "perf") },
+          ]}
+          onChange={(m) => props.onSet({ mode: m })}
+        />
+      }
+      auto={c().auto}
+      onAuto={(on) => props.onSet({ auto: on })}
+      line={
+        mode() === "full"
+          ? t("You are away: the agents take the Mac, and it stays awake while they work.")
+          : t("You are using the Mac: fewer agents, on the efficiency cores, so nothing you do stutters.")
+      }
+      foot={
+        <>
+          <span>{props.snap.background ? t("Agents at background priority") : t("Agents at full priority")}</span>
+          <span>{props.snap.awake ? t("Kept awake while agents work") : t("Sleeps as usual")}</span>
+          <span>{props.snap.adaptive ? t("Fewer agents while the Mac is loaded") : t("Fixed number of agents (Settings)")}</span>
+        </>
+      }
+    >
+      <Row label={tx("Light", "perf")} on={mode() === "light"}>
+        <span class="perf-inline">
+          <NumInput value={Math.min(c().light_agents, max())} min={1} max={max()} label="Cards at once in Light" fallback={1} onSet={(n) => props.onSet({ light_agents: n })} />
+          {t("at once")}
+        </span>
+        <label class="perf-inline">
+          <input type="checkbox" class="switch" role="switch" checked={c().light_background} onChange={(e) => props.onSet({ light_background: e.currentTarget.checked })} />
+          {t("background priority")}
+        </label>
+        <span class="muted">{t("pauses early when memory gets tight")}</span>
+      </Row>
+      <Row label={tx("Full", "perf")} on={mode() === "full"}>
+        <span>{plural(max(), "{n} card at once", "{n} cards at once")}</span>
+        <span>{t("full priority")}</span>
+        <span class="muted">{t("pauses only when memory runs out")}</span>
+      </Row>
+      <Row label={t("By itself")}>
+        <span class="perf-inline">
+          <span>{t("Full after")}</span>
+          <NumInput value={c().away_minutes} min={1} max={120} label="Minutes away before Full" fallback={10} onSet={(n) => props.onSet({ away_minutes: n })} />
+          {t("min without a key or the mouse.")}
+        </span>
+        <span class="muted">{t("Away for {t}", { t: away(props.snap.idle_secs ?? 0) })}</span>
+      </Row>
+    </SettingsCard>
+  );
+}
 
 /** Here: a run asks you the calls that are yours. Away: it takes its recommendation. */
-function PresencePicker() {
+function PresenceCard() {
   const [p, setP] = createSignal<PresenceSnapshot | null>(null);
   let gen = 0;
   const load = async () => {
@@ -260,13 +274,12 @@ function PresencePicker() {
       toast({ tone: "fail", title: t("Presence did not change"), body: msg(e) });
     }
   };
-  const num = (v: string, fallback: number) => Math.max(1, Math.round(Number(v)) || fallback);
   return (
     <Show when={p()}>
       {(s) => (
-        <section class="presence" aria-label={t("Presence")}>
-          <div class="presence-head">
-            <h2 class="presence-title">{t("Presence")}</h2>
+        <SettingsCard
+          title="Presence"
+          seg={
             <Seg
               label="Presence"
               value={s().mode}
@@ -276,27 +289,32 @@ function PresencePicker() {
               ]}
               onChange={(mode) => void set({ mode })}
             />
-            <label class="perf-auto">
-              <input type="checkbox" class="switch" role="switch" checked={s().config.auto} onChange={(e) => void set({ auto: e.currentTarget.checked })} />
-              <span>
-                {t("Switch by itself")}
-                <small>{t("Here while you use the Mac, Away after {n} min away", { n: String(s().away_minutes) })}</small>
-              </span>
-            </label>
-          </div>
-          <p class="presence-line">
-            {s().mode === "here"
+          }
+          auto={s().config.auto}
+          onAuto={(auto) => void set({ auto })}
+          line={
+            s().mode === "here"
               ? t("You are here: an agent asks you the calls that are yours, and takes its recommendation when no answer comes in time.")
-              : t("You are away: agents take their own recommendation and stop only for what they cannot do or what is costly to undo. What they decide for you is on the card.")}
-          </p>
-          <p class="perf-note">
-            {t("Wait")}{" "}
-            <input class="input perf-num" type="number" min="1" max="120" aria-label={t("Minutes to wait for an answer")} value={s().config.wait_minutes} onChange={(e) => void set({ wait_minutes: num(e.currentTarget.value, 10) })} />{" "}
-            {t("min for an answer, at most")}{" "}
-            <input class="input perf-num" type="number" min="1" max="20" aria-label={t("Questions per run")} value={s().config.per_run} onChange={(e) => void set({ per_run: num(e.currentTarget.value, 3) })} />{" "}
-            {t("questions per run.")}
-          </p>
-        </section>
+              : t("You are away: agents take their own recommendation and stop only for what they cannot do or what is costly to undo. What they decide for you is on the card.")
+          }
+        >
+          <Row label={t("Wait")}>
+            <span class="perf-inline">
+              <NumInput value={s().config.wait_minutes} min={1} max={120} label="Minutes to wait for an answer" fallback={10} onSet={(n) => void set({ wait_minutes: n })} />
+              {t("min for an answer")}
+            </span>
+          </Row>
+          <Row label={t("Questions")}>
+            <span class="perf-inline">
+              <span>{t("at most")}</span>
+              <NumInput value={s().config.per_run} min={1} max={20} label="Questions per run" fallback={3} onSet={(n) => void set({ per_run: n })} />
+              {t("per run")}
+            </span>
+          </Row>
+          <Row label={t("By itself")}>
+            <span>{t("Here while you use the Mac, Away after {n} min away", { n: String(s().away_minutes) })}</span>
+          </Row>
+        </SettingsCard>
       )}
     </Show>
   );
@@ -309,88 +327,238 @@ function away(secs: number): string {
 
 // ---------------------------------------------------------------- the Mac
 
+type Share = { cls: string; v: number };
+
+/** Every tile reads the same way: label and badge, the figure, a bar, then one row per share. */
+function Tile(props: { label: string; badge?: JSX.Element; big: JSX.Element; small?: string; bar?: Share[]; barLabel?: string; children?: JSX.Element }) {
+  return (
+    <div class="perf-tile">
+      <div class="perf-tile-head">
+        <span>{t(props.label)}</span>
+        {props.badge}
+      </div>
+      <div class="perf-big">
+        {props.big}
+        <Show when={props.small}>
+          <small>{props.small}</small>
+        </Show>
+      </div>
+      <div class="perf-stack" role={props.barLabel ? "img" : undefined} aria-label={props.barLabel} aria-hidden={props.barLabel ? undefined : "true"}>
+        <For each={props.bar ?? []}>{(b) => <span class={b.cls} style={{ "flex-grow": Math.max(0, b.v) }} />}</For>
+      </div>
+      <div class="perf-legend">{props.children}</div>
+    </div>
+  );
+}
+
+function Leg(props: { sw?: string; label: string; value: string }) {
+  return (
+    <span>
+      <Show when={props.sw} fallback={<i class="sw sw-none" />}>
+        <i class={`sw ${props.sw}`} />
+      </Show>
+      {props.label}
+      <b>{props.value}</b>
+    </span>
+  );
+}
+
+const thermalView = {
+  nominal: { chip: "done", icon: "done", label: "Normal" },
+  fair: { chip: "needs", icon: "needs", label: "Moderate" },
+  serious: { chip: "needs", icon: "needs", label: "High" },
+  critical: { chip: "failed", icon: "fail", label: "Critical" },
+} as const satisfies Record<string, { chip: string; icon: IconName; label: string }>;
+
+/** Where each part goes from fine to hot to too hot, in °C. Apple publishes no die limit:
+ *  under sustained load Apple silicon settles near 100 °C and throttles from there (M3 Air
+ *  stress tests peak at 107 °C CPU, 103 °C GPU), and 90 °C is where tools start to warn. The
+ *  GPU shares the die, so it shares the CPU's limits. Apple gives 10–35 °C as the room to work
+ *  in and 45 °C as the top even for storage, and a cell over 40 °C wears faster. */
+const TEMP_LIMITS = {
+  cpu: { high: 85, critical: 100 },
+  gpu: { high: 85, critical: 100 },
+  battery: { high: 40, critical: 45 },
+} as const;
+type Part = keyof typeof TEMP_LIMITS;
+type Level = "ok" | "high" | "critical";
+const levelOf = (part: Part, v: number): Level => (v >= TEMP_LIMITS[part].critical ? "critical" : v >= TEMP_LIMITS[part].high ? "high" : "ok");
+const rank = { ok: 0, high: 1, critical: 2 } as const;
+const partName = (p: Part) => (p === "battery" ? t("Battery") : p.toUpperCase());
+
+const celsius = (v: number) => `${Math.round(v)} °C`;
+
+/** The temperature tile: the hottest part big, every part on its row marked by its own limits,
+ *  and a line saying what to do when one runs hot. */
+function TempTile(props: { temps: NonNullable<PerfSnapshot["temps"]> }) {
+  const parts = () =>
+    (["cpu", "gpu", "battery"] as Part[])
+      .filter((p) => props.temps[p] != null)
+      .map((p) => ({ part: p, v: props.temps[p]!, level: levelOf(p, props.temps[p]!) }));
+  // The part in the worst state leads; while all are fine, the CPU does (the first listed).
+  const worst = () => parts().reduce((a, b) => (rank[b.level] > rank[a.level] ? b : a));
+  const level = (): Level => {
+    const own = parts().reduce<Level>((l, p) => (rank[p.level] > rank[l] ? p.level : l), "ok");
+    const th = props.temps.thermal;
+    const mac: Level = th === "critical" ? "critical" : th === "serious" ? "high" : "ok";
+    return rank[mac] > rank[own] ? mac : own;
+  };
+  const badge = () =>
+    level() === "critical"
+      ? { chip: "failed", icon: "fail" as IconName, label: "Critical" }
+      : level() === "high"
+        ? { chip: "needs", icon: "needs" as IconName, label: "High" }
+        : props.temps.thermal === "fair"
+          ? thermalView.fair
+          : thermalView.nominal;
+  // The bar runs from a cold Mac (30 °C) to the leading part's critical limit.
+  const fill = () => Math.min(1, Math.max(0.02, (worst().v - 30) / (TEMP_LIMITS[worst().part].critical - 30)));
+  const note = () => {
+    const w = parts().filter((p) => p.level !== "ok").sort((a, b) => rank[b.level] - rank[a.level])[0];
+    if (w?.level === "critical")
+      return w.part === "battery"
+        ? t("The battery is past {n}: unplug it or give it air; heat this high wears it for good.", { n: celsius(TEMP_LIMITS.battery.critical) })
+        : t("{part} is at its limit: macOS is slowing the Mac down. Fewer agents or Light will cool it.", { part: partName(w.part) });
+    if (w?.level === "high")
+      return w.part === "battery"
+        ? t("The battery runs warm: fine for a while, but it ages faster above {n}.", { n: celsius(TEMP_LIMITS.battery.high) })
+        : t("{part} runs hot but within limits: normal under heavy load.", { part: partName(w.part) });
+    if (props.temps.thermal === "serious" || props.temps.thermal === "critical") return t("macOS says the Mac is too warm and is slowing it down.");
+    return t("Within limits.");
+  };
+  return (
+    <Tile
+      label="Temperature"
+      badge={
+        <span class="chip" data-state={badge().chip}>
+          <Icon name={badge().icon} small />
+          {t(badge().label)}
+        </span>
+      }
+      big={celsius(worst().v)}
+      small={partName(worst().part)}
+      bar={[
+        { cls: `perf-stack-heat-${levelOf(worst().part, worst().v)}`, v: fill() },
+        { cls: "perf-stack-free", v: 1 - fill() },
+      ]}
+      barLabel={t("{part} at {v}, critical from {c}", { part: partName(worst().part), v: celsius(worst().v), c: celsius(TEMP_LIMITS[worst().part].critical) })}
+    >
+      <For each={parts()}>
+        {(p) => (
+          <span data-level={p.level} title={t("High from {h}, critical from {c}", { h: celsius(TEMP_LIMITS[p.part].high), c: celsius(TEMP_LIMITS[p.part].critical) })}>
+            <i class={`sw sw-heat-${p.level}`} />
+            {partName(p.part)}
+            <b>{celsius(p.v)}</b>
+          </span>
+        )}
+      </For>
+      <span class="perf-tile-note" data-level={level()}>{note()}</span>
+    </Tile>
+  );
+}
+
 function MacPanel(props: { snap: PerfSnapshot; sys: NonNullable<PerfSnapshot["system"]> }) {
   const s = () => props.sys;
   const agentsMem = () => props.snap.agents_mem ?? 0;
   const othersMem = () => Math.max(0, s().mem_used - agentsMem());
+  // CPU as a share of the whole Mac, the way the chart draws it, not "648% of one core".
+  const agentsCpu = () => Math.min(s().cpu, (props.snap.agents_cpu ?? 0) / Math.max(1, s().cores));
   const pressure = () =>
     s().pressure === "critical"
       ? { chip: "failed", icon: "fail" as IconName, label: "Critical" }
       : s().pressure === "warn"
         ? { chip: "needs", icon: "needs" as IconName, label: "Tight" }
         : { chip: "done", icon: "done" as IconName, label: "Normal" };
+  const temps = () => props.snap.temps;
   return (
     <section class="perf-mac" aria-label={t("This Mac")}>
-      <div class="perf-tile perf-tile-wide">
-        <div class="perf-tile-head">
-          <span>{t("Memory")}</span>
-          <span class="chip" data-state={pressure().chip}>
-            <Icon name={pressure().icon} small />
-            {t("Pressure: {level}", { level: t(pressure().label) })}
-          </span>
-        </div>
-        <div class="perf-big">
-          {bytes(s().mem_used)} <small>{t("of {total}", { total: bytes(s().mem_total) })}</small>
-        </div>
-        <div class="perf-stack" role="img" aria-label={t("Agents {a}, everything else {o}, free {f}", { a: bytes(agentsMem()), o: bytes(othersMem()), f: pct(s().free_pct) })}>
-          <span class="perf-stack-agents" style={{ "flex-grow": agentsMem() }} />
-          <span class="perf-stack-others" style={{ "flex-grow": othersMem() }} />
-          <span class="perf-stack-free" style={{ "flex-grow": Math.max(0, s().mem_total - s().mem_used) }} />
-        </div>
-        <div class="perf-legend">
-          <span><i class="sw sw-agents" />{t("Agents")} <b>{bytes(agentsMem())}</b></span>
-          <span><i class="sw sw-others" />{t("Everything else")} <b>{bytes(othersMem())}</b></span>
-          <span><i class="sw sw-free" />{t("Free")} <b>{pct(s().free_pct)}</b></span>
-        </div>
+      <h2 class="perf-h2">{t("This Mac")}</h2>
+      <div class="perf-tiles">
+        <Tile
+          label="Memory"
+          badge={
+            <span class="chip" data-state={pressure().chip}>
+              <Icon name={pressure().icon} small />
+              {t("Pressure: {level}", { level: t(pressure().label) })}
+            </span>
+          }
+          big={bytes(s().mem_used)}
+          small={t("of {total}", { total: bytes(s().mem_total) })}
+          bar={[
+            { cls: "perf-stack-agents", v: agentsMem() },
+            { cls: "perf-stack-others", v: othersMem() },
+            { cls: "perf-stack-free", v: s().mem_total - s().mem_used },
+          ]}
+          barLabel={t("Agents {a}, everything else {o}, free {f}", { a: bytes(agentsMem()), o: bytes(othersMem()), f: pct(s().free_pct) })}
+        >
+          <Leg sw="sw-agents" label={t("Agents")} value={bytes(agentsMem())} />
+          <Leg sw="sw-others" label={t("Everything else")} value={bytes(othersMem())} />
+          <Leg sw="sw-free" label={t("Free")} value={pct(s().free_pct)} />
+        </Tile>
+        <Tile
+          label="CPU"
+          badge={<span class="muted">{plural(s().cores, "{n} core", "{n} cores")}</span>}
+          big={pct(s().cpu)}
+          bar={[
+            { cls: "perf-stack-agents", v: agentsCpu() },
+            { cls: "perf-stack-others", v: s().cpu - agentsCpu() },
+            { cls: "perf-stack-free", v: 100 - s().cpu },
+          ]}
+        >
+          <Leg sw="sw-agents" label={t("Agents")} value={pct(agentsCpu())} />
+          <Leg sw="sw-others" label={t("Everything else")} value={pct(s().cpu - agentsCpu())} />
+          <Leg label={t("Load")} value={s().load.toFixed(1)} />
+        </Tile>
+        <Show
+          when={temps() && (temps()!.cpu != null || temps()!.gpu != null)}
+          fallback={
+            <Tile label="Temperature" big="—" bar={[{ cls: "perf-stack-free", v: 1 }]}>
+              <span class="perf-tile-note">{t("This Mac does not share its sensors yet.")}</span>
+            </Tile>
+          }
+        >
+          <TempTile temps={temps()!} />
+        </Show>
+        <Tile
+          label="Swap"
+          big={bytes(s().swap_used)}
+          small={s().swap_total > 0 ? t("of {total}", { total: bytes(s().swap_total) }) : undefined}
+          bar={[
+            { cls: s().swap_used > 1024 ** 3 ? "perf-stack-warm" : "perf-stack-others", v: s().swap_used },
+            { cls: "perf-stack-free", v: Math.max(s().swap_total - s().swap_used, s().swap_total ? 0 : 1) },
+          ]}
+        >
+          <span class="perf-tile-note">{s().swap_used > 1024 ** 3 ? t("The Mac is paging to disk: it feels slower.") : t("Little or none: memory fits.")}</span>
+        </Tile>
       </div>
-      <div class="perf-tile">
-        <div class="perf-tile-head">
-          <span>{t("CPU")}</span>
-          <span class="mono muted">{t("load {l} on {c} cores", { l: s().load.toFixed(1), c: String(s().cores) })}</span>
-        </div>
-        <div class="perf-big">{pct(s().cpu)}</div>
-        <div class="perf-sub">{t("Agents: {n} of one core", { n: pct(props.snap.agents_cpu ?? 0) })}</div>
+      <div class="perf-charts">
+        <Chart title="Memory" unit="bytes" history={props.snap.history} total={s().mem_total} mac={(h) => h.mem_used} agents={(h) => h.agents_mem} />
+        <Chart title="CPU" unit="pct" history={props.snap.history} total={100} mac={(h) => h.cpu} agents={(h) => Math.min(h.cpu, h.agents_cpu / Math.max(1, s().cores))} />
       </div>
-      <div class="perf-tile">
-        <div class="perf-tile-head">
-          <span>{t("Swap")}</span>
-        </div>
-        <div class="perf-big">{bytes(s().swap_used)}</div>
-        <div class="perf-sub">{s().swap_used > 1024 ** 3 ? t("The Mac is paging to disk: it feels slower.") : t("Little or none: memory fits.")}</div>
-      </div>
-      <div class="perf-tile">
-        <div class="perf-tile-head">
-          <span>{t("This Mac")}</span>
-        </div>
-        <div class="perf-facts">
-          <span>{props.snap.background ? t("Agents at background priority") : t("Agents at full priority")}</span>
-          <span>{props.snap.awake ? t("Kept awake while agents work") : t("Sleeps as usual")}</span>
-          <span>{props.snap.adaptive ? t("Fewer agents while the Mac is loaded") : t("Fixed number of agents (Settings)")}</span>
-        </div>
-      </div>
-      <Chart title="Memory" unit="bytes" history={props.snap.history} total={s().mem_total} mac={(h) => h.mem_used} agents={(h) => h.agents_mem} />
-      <Chart title="CPU" unit="pct" history={props.snap.history} total={100} mac={(h) => h.cpu} agents={(h) => Math.min(100, h.agents_cpu / Math.max(1, s().cores))} />
     </section>
   );
 }
 
-/** The last minutes as two lines on one axis: the whole Mac and the agents' share of it. */
+/** The last minutes as two lines on one axis: the whole Mac and the agents' share of it. The
+ *  scale sits in its own gutter, so no line runs over a label, and nothing is drawn outside. */
 function Chart(props: { title: string; unit: "bytes" | "pct"; history: PerfSample[]; total: number; mac: (h: PerfSample) => number; agents: (h: PerfSample) => number }) {
   const W = 600;
   const H = 120;
   const [hover, setHover] = createSignal<number | null>(null);
-  const span = 360; // seconds shown
   const pts = () => props.history;
   const end = () => (pts().length ? pts()[pts().length - 1]!.t : 0);
-  const x = (tt: number) => W - ((end() - tt) / span) * W;
-  const y = (v: number) => H - 2 - (Math.min(v, props.total) / Math.max(1, props.total)) * (H - 4);
+  // The window is what the history holds: samples come every two seconds or a little slower.
+  const span = () => Math.max(60, end() - (pts()[0]?.t ?? end()));
+  const minutes = () => Math.max(1, Math.round(span() / 60));
+  const x = (tt: number) => Math.max(0, W - ((end() - tt) / span()) * W);
+  const y = (v: number) => H - (Math.max(0, Math.min(v, props.total)) / Math.max(1, props.total)) * H;
   const line = (f: (h: PerfSample) => number) => pts().map((h, i) => `${i ? "L" : "M"}${x(h.t).toFixed(1)},${y(f(h)).toFixed(1)}`).join("");
   const area = (f: (h: PerfSample) => number) => (pts().length ? `${line(f)}L${x(end()).toFixed(1)},${H}L${x(pts()[0]!.t).toFixed(1)},${H}Z` : "");
   const fmt = (v: number) => (props.unit === "bytes" ? bytes(v) : pct(v));
   const at = () => (hover() == null ? null : pts()[hover()!]);
   const onMove = (e: PointerEvent) => {
     const r = (e.currentTarget as SVGElement).getBoundingClientRect();
-    const tt = end() - (1 - (e.clientX - r.left) / r.width) * span;
+    const tt = end() - (1 - (e.clientX - r.left) / r.width) * span();
     let best = -1;
     let d = Infinity;
     pts().forEach((h, i) => {
@@ -401,37 +569,49 @@ function Chart(props: { title: string; unit: "bytes" | "pct"; history: PerfSampl
     });
     setHover(best >= 0 ? best : null);
   };
+  // The tip stays inside the plot: anchored left near the start, right near the end.
+  const tipStyle = (h: PerfSample) => {
+    const f = x(h.t) / W;
+    return { left: `${f * 100}%`, transform: f < 0.2 ? "translateX(8px)" : f > 0.8 ? "translateX(calc(-100% - 8px))" : "translateX(-50%)" };
+  };
   return (
     <figure class="perf-chart">
       <figcaption class="perf-tile-head">
         <span>{t(props.title)}</span>
-        <span class="perf-legend">
+        <span class="perf-legend perf-legend-row">
           <span><i class="sw sw-mac" />{t("This Mac")}</span>
           <span><i class="sw sw-agents" />{t("Agents")}</span>
         </span>
       </figcaption>
       <div class="perf-plot">
-        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={onMove} onPointerLeave={() => setHover(null)} role="img" aria-label={t("{title} over the last 6 minutes", { title: t(props.title) })}>
-          <line class="perf-grid" x1="0" x2={W} y1={y(props.total / 2)} y2={y(props.total / 2)} />
-          <path class="perf-area-agents" d={area(props.agents)} />
-          <path class="perf-line-mac" d={line(props.mac)} />
-          <path class="perf-line-agents" d={line(props.agents)} />
-          <Show when={at()}>{(h) => <line class="perf-cross" x1={x(h().t)} x2={x(h().t)} y1="0" y2={H} />}</Show>
-        </svg>
-        <Show when={at()}>
-          {(h) => (
-            <div class="perf-tip" style={{ left: `${(x(h().t) / W) * 100}%` }}>
-              <span class="muted">{new Date(h().t * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-              <span><i class="sw sw-mac" />{t("This Mac")} <b>{fmt(props.mac(h()))}</b></span>
-              <span><i class="sw sw-agents" />{t("Agents")} <b>{fmt(props.agents(h()))}</b></span>
-            </div>
-          )}
-        </Show>
-        <span class="perf-axis perf-axis-top">{fmt(props.total)}</span>
-        <span class="perf-axis perf-axis-mid">{fmt(props.total / 2)}</span>
+        <div class="perf-yaxis" aria-hidden="true">
+          <span style={{ top: "0%" }}>{fmt(props.total)}</span>
+          <span style={{ top: "50%" }}>{fmt(props.total / 2)}</span>
+          <span style={{ top: "100%" }}>0</span>
+        </div>
+        <div class="perf-plot-area">
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onPointerMove={onMove} onPointerLeave={() => setHover(null)} role="img" aria-label={t("{title} over the last {n} minutes", { title: t(props.title), n: minutes() })}>
+            <line class="perf-grid" x1="0" x2={W} y1={0} y2={0} />
+            <line class="perf-grid" x1="0" x2={W} y1={H / 2} y2={H / 2} />
+            <line class="perf-grid perf-grid-base" x1="0" x2={W} y1={H} y2={H} />
+            <path class="perf-area-agents" d={area(props.agents)} />
+            <path class="perf-line-mac" d={line(props.mac)} />
+            <path class="perf-line-agents" d={line(props.agents)} />
+            <Show when={at()}>{(h) => <line class="perf-cross" x1={x(h().t)} x2={x(h().t)} y1="0" y2={H} />}</Show>
+          </svg>
+          <Show when={at()}>
+            {(h) => (
+              <div class="perf-tip" style={tipStyle(h())}>
+                <span class="muted">{new Date(h().t * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                <span><i class="sw sw-mac" />{t("This Mac")} <b>{fmt(props.mac(h()))}</b></span>
+                <span><i class="sw sw-agents" />{t("Agents")} <b>{fmt(props.agents(h()))}</b></span>
+              </div>
+            )}
+          </Show>
+        </div>
       </div>
       <div class="perf-axis-x">
-        <span>{t("6 min ago")}</span>
+        <span>{t("{n} min ago", { n: minutes() })}</span>
         <span>{t("now")}</span>
       </div>
     </figure>

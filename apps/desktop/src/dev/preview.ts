@@ -59,6 +59,7 @@ const perfSnap = () => ({
   governed: true, mode: perfCfg.mode, config: perfCfg, allowed: perfCfg.mode === "full" ? 3 : perfCfg.light_agents, at: now(), cap: 2, max: 3, adaptive: true,
   idle_secs: 42, tight: false, critical: false, background: perfCfg.mode === "light", awake: perfCfg.mode === "full",
   system: { mem_total: 32 * GB, mem_used: 22.4 * GB, free_pct: 30, pressure: "normal", swap_used: 0.6 * GB, swap_total: 2 * GB, cpu: 46, cores: 12, p_cores: 8, load: 7.4 },
+  temps: { cpu: 61.4, gpu: 48.2, battery: 31.5, thermal: "nominal" },
   agents: [
     { id: "3-live", card: 3, title: "Strip scripts from SVG avatars", kind: "run", repo: repo.path, branch: "fix/avatar-svg", model: "opus", started_at: now() - 900, pid: 4242,
       state: "background", paused_by: null, paused_since: null, mem: 3.1 * GB, cpu: 212, procs: 9,

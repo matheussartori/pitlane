@@ -753,6 +753,8 @@ export interface PerfSnapshot {
     p_cores: number;
     load: number;
   };
+  /** °C from the SMC's sensors (null when the Mac won't say) and macOS's thermal state. */
+  temps?: { cpu: number | null; gpu: number | null; battery: number | null; thermal: "nominal" | "fair" | "serious" | "critical" | null };
   agents?: PerfAgent[];
   agents_mem?: number;
   agents_cpu?: number;
