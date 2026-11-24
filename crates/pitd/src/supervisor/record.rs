@@ -151,9 +151,19 @@ impl Supervisor {
         n
     }
 
+    /// Refuses once the daemon is closing: a session started after the sweep that stops them all
+    /// would go on with nobody watching.
+    pub(super) fn still_open(&self) -> Result<()> {
+        if self.closing.load(std::sync::atomic::Ordering::SeqCst) {
+            anyhow::bail!("Pitlane is closing; nothing new starts");
+        }
+        Ok(())
+    }
+
     /// Records a new session (its folder and `meta.json`) and holds it as live, with nobody
     /// following it yet.
     pub(super) fn register(&self, meta: RunMeta) -> Result<()> {
+        self.still_open()?;
         fs::create_dir_all(self.dir(&meta.id))?;
         self.write_meta(&meta)?;
         self.hold(meta, 0);
@@ -170,6 +180,7 @@ impl Supervisor {
         if self.live().contains_key(&meta.id) {
             return Ok(false);
         }
+        self.still_open()?;
         self.write_meta(&meta)?;
         Ok(self.hold(meta, events))
     }

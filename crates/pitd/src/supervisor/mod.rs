@@ -146,6 +146,8 @@ pub struct Supervisor {
     /// The session records already read from disk, by run, with the date and size of the file
     /// they were read from (`list_disk`).
     records: Mutex<HashMap<String, (FileStamp, RunMeta)>>,
+    /// Set once the daemon began to close: from then on nothing new starts.
+    closing: std::sync::atomic::AtomicBool,
 }
 
 /// A file's date and size: when both are the same, it was not rewritten.
@@ -191,6 +193,7 @@ impl Supervisor {
             one_shots: Mutex::default(),
             holders: Default::default(),
             records: Mutex::default(),
+            closing: Default::default(),
         })
     }
 

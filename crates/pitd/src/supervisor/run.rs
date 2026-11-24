@@ -29,6 +29,7 @@ impl Supervisor {
         resume: Option<String>,
         opts: StartOpts,
     ) -> Result<RunMeta> {
+        self.still_open()?;
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
         let c = cards::get(&r, card)?;
         if c.open_questions() > 0 {

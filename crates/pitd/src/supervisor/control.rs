@@ -14,7 +14,8 @@ use super::Supervisor;
 
 /// Stop all's escalation: SIGTERM this many seconds after SIGINT, SIGKILL as many after that.
 const ESCALATE_AFTER_SECS: u64 = 4;
-/// Shutdown waits for the sessions to go in this many polls of `SHUTDOWN_POLL` (9 s in all).
+/// Closing waits for the sessions to go in this many polls of `SHUTDOWN_POLL` (9 s in all: Stop
+/// all's SIGKILL lands at 8 s).
 const SHUTDOWN_POLLS: u32 = 90;
 const SHUTDOWN_POLL: Duration = Duration::from_millis(100);
 /// How long a stopped agent has to end its turn before its group gets SIGTERM.
@@ -268,16 +269,34 @@ impl Supervisor {
                     pids.iter().filter(|(id, pid)| live.get(id).is_some_and(|l| l.meta.pid == Some(*pid))).cloned().collect()
                 };
                 for (_, pid) in &still {
-                    signal(*pid, sig);
+                    signal_tree(*pid, sig);
                 }
             }
         });
         n
     }
 
-    /// Stop all, wait for the sessions to go (at most 9 s), then end the daemon. Nothing it
-    /// started outlives it.
+    /// Closes, then ends the daemon. Nothing it started outlives it.
     pub async fn shutdown(self: &Arc<Self>) {
+        self.close().await;
+        std::process::exit(0)
+    }
+
+    /// Stops everything the daemon started and waits for it to go: at most
+    /// `runs::DAEMON_CLOSES_WITHIN`, which the app's wait on quitting is sized by. From its first
+    /// line nothing new starts (`still_open`). Asked a second time while it runs (the app asks,
+    /// then its connection drops), it only waits: the first one ends the daemon.
+    pub async fn close(self: &Arc<Self>) {
+        if self.closing.swap(true, Ordering::SeqCst) {
+            return std::future::pending().await;
+        }
+        if tokio::time::timeout(runs::DAEMON_CLOSES_WITHIN, self.stop_everything()).await.is_err() {
+            eprintln!("pitd: closing took longer than {} s; ending anyway", runs::DAEMON_CLOSES_WITHIN.as_secs());
+        }
+        let _ = fs::remove_file(runs::socket_path(&self.cfg.home));
+    }
+
+    async fn stop_everything(self: &Arc<Self>) {
         // Work left in the merge queue waits for a person to resume it.
         if self.queue.lock().unwrap().iter().any(|j| j.state.is_open()) {
             let _ = pit_core::queue::set_paused(&self.cfg.home, true);
@@ -289,23 +308,22 @@ impl Supervisor {
             }
             tokio::time::sleep(SHUTDOWN_POLL).await;
         }
-        for l in self.live().values() {
-            if let Some(pid) = l.meta.pid {
-                signal(pid, libc::SIGKILL);
-            }
-        }
+        // Whatever is still there goes now, with what it started, in its group or out of it.
+        let left: Vec<u32> = self.live().values().filter_map(|l| l.meta.pid).collect();
         // Exiting skips the drops that would end the one-shot calls still in flight.
-        for pid in self.one_shots.lock().unwrap().drain() {
-            signal(pid, libc::SIGKILL);
-        }
+        let one_shots: Vec<u32> = self.one_shots.lock().unwrap().drain().collect();
+        let _ = tokio::task::spawn_blocking(move || {
+            for pid in left.into_iter().chain(one_shots) {
+                pit_core::procs::signal_all(&pit_core::procs::reach(pid), libc::SIGKILL);
+            }
+        })
+        .await;
         // A proof, a worktree's setup or a ship's check still running.
         pit_core::procs::end_shells();
         self.perf.release_all();
         // The app's code-server, when the app went without closing it (a crash, a force quit).
         let home = self.cfg.home.clone();
         let _ = tokio::task::spawn_blocking(move || pit_core::procs::end_code_server(&home)).await;
-        let _ = fs::remove_file(runs::socket_path(&self.cfg.home));
-        std::process::exit(0)
     }
 
     /// SIGINT ends the current turn cleanly; if the agent is still there after 10 s, SIGTERM.
@@ -370,13 +388,16 @@ pub(super) fn still_agent(pid: u32, session: &str) -> bool {
             .unwrap_or(false)
 }
 
-/// SIGTERM to the whole group, SIGKILL a moment later, off the async threads.
+/// Ends the agent `pid` and everything it started, in its group or out of it (a server run with
+/// `setsid` or `nohup`): SIGTERM, SIGKILL a moment later, off the async threads.
 pub(super) fn end_group(pid: u32) {
-    signal(pid, libc::SIGTERM);
-    tokio::spawn(async move {
-        tokio::time::sleep(GROUP_KILL_AFTER).await;
-        signal(pid, libc::SIGKILL);
-    });
+    tokio::task::spawn_blocking(move || pit_core::procs::end_group(pid, GROUP_KILL_AFTER));
+}
+
+/// `sig` to the agent `pid` and everything it started, in its group or out of it, off the async
+/// threads. For the signals that end it; Ctrl-C (`signal`) goes to the group alone.
+pub(super) fn signal_tree(pid: u32, sig: i32) {
+    tokio::task::spawn_blocking(move || pit_core::procs::signal_all(&pit_core::procs::reach(pid), sig));
 }
 
 /// Signals the agent's whole process group, like Ctrl-C in a terminal: the agent and the

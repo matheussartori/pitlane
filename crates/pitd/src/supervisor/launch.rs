@@ -37,6 +37,7 @@ impl Supervisor {
         prompt: String,
         what: &str,
     ) -> Result<Output> {
+        self.still_open()?;
         let mut cmd = Command::new(&self.cfg.claude_bin);
         cmd.args(["-p", "--output-format", "json", "--model", pit_core::describe::MODEL])
             .args(["--setting-sources", "project,local", "--tools", "", "--max-turns", ONE_SHOT_MAX_TURNS])

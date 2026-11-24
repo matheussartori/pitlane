@@ -21,6 +21,11 @@ use crate::protocol::{
 };
 use crate::queue::ShipJob;
 
+/// The longest the daemon takes to close: it waits up to 9 s for its sessions to go (Stop all's
+/// SIGKILL lands at 8 s), then ends what is left and the app's code-server. It answers a
+/// shutdown request only then, so the app's wait on quitting is sized by this.
+pub const DAEMON_CLOSES_WITHIN: std::time::Duration = std::time::Duration::from_secs(11);
+
 pub mod answer;
 pub mod prune;
 mod permissions;

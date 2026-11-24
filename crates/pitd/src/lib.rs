@@ -155,6 +155,13 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
             }
             return Ok(());
         }
+        if let Request::Shutdown = req {
+            // Answered once everything is stopped, so whoever asked (the app, as it quits) can
+            // wait for that: nothing the daemon started is still there when it hears back.
+            sup.close().await;
+            let _ = send(&mut write, &reply(Done { ok: true })?).await;
+            std::process::exit(0);
+        }
         if let Request::Follow { run, from } = &req {
             // A follow takes over the connection until the run ends.
             return follow(&sup, run, *from, &mut write).await;
@@ -307,11 +314,8 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
         }
         Request::Consult { run, question, costly } => Ok(json!({ "text": sup.consult(run_arg(&run)?, question, costly).await })),
         Request::StopAnalyses => reply(Stopped { stopped: sup.stop_where(|m| m.kind == pit_core::runs::SessionKind::Analysis) }),
-        Request::Shutdown => {
-            let sup = Arc::clone(sup);
-            tokio::spawn(async move { sup.shutdown().await });
-            ok()
-        }
+        // Taken by the connection itself, which answers only once everything has stopped.
+        Request::Shutdown => ok(),
         Request::Quota => reply(QuotaReply { quota: sup.quota() }),
         Request::Review { repo, card, action, message } => sup.review(repo, card, action, message).await,
         Request::Enqueue { repo, branch, to } => reply(JobReply { job: sup.enqueue(&repo, &branch, to.as_deref())? }),

@@ -28,8 +28,9 @@ mod term;
 mod term_cmds;
 mod vscode;
 
-/// How long quitting waits for the daemon to end its sessions.
-const QUIT_WAIT: Duration = Duration::from_secs(12);
+/// How long quitting waits for the daemon to end its sessions: the daemon answers once they are
+/// gone, within `DAEMON_CLOSES_WITHIN`; a second more, and the app quits without the answer.
+const QUIT_WAIT: Duration = Duration::from_secs(pit_core::runs::DAEMON_CLOSES_WITHIN.as_secs() + 1);
 
 type CmdResult<T> = Result<T, String>;
 
@@ -215,8 +216,8 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // Nothing outlives the app: the daemon stops every agent and ends.
                 daemon::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
-                // The daemon needs at most ~9 s to end its sessions; a daemon that hangs past
-                // that must not keep the app from quitting.
+                // The daemon answers once its sessions are gone (at once when none runs); one that
+                // hangs past `QUIT_WAIT` must not keep the app from quitting.
                 if let Some(mut c) = daemon::running().and_then(|c| c.with_timeout(Some(QUIT_WAIT)).ok()) {
                     let _ = c.shutdown();
                 }

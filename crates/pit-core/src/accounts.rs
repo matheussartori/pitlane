@@ -288,6 +288,9 @@ pub struct AccountStatus {
     pub problem: Option<String>,
 }
 
+/// How long `claude auth status` may take: it reads a local file, and a start waits on it.
+const STATUS_WITHIN: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// `claude auth status` with the account's `CLAUDE_CONFIG_DIR`: the CLI reads its own login, Pitlane
 /// only reads the answer. API key accounts are "signed in" when they have a helper (Pitlane never
 /// runs it).
@@ -301,8 +304,9 @@ pub fn status(account: &Account, pitlane_home: &Path, claude_bin: &str) -> Accou
         cmd.env("CLAUDE_CONFIG_DIR", dir);
     }
     cmd.env_remove("CLAUDECODE");
-    match cmd.output() {
-        Ok(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+    match crate::procs::output_within(&mut cmd, STATUS_WITHIN) {
+        Ok(None) => AccountStatus { problem: Some(format!("claude auth status took longer than {} seconds", STATUS_WITHIN.as_secs())), ..Default::default() },
+        Ok(Some(out)) => match serde_json::from_slice::<serde_json::Value>(&out) {
             Ok(v) => AccountStatus {
                 logged_in: v.get("loggedIn").and_then(|x| x.as_bool()).unwrap_or(false),
                 method: v.get("authMethod").and_then(|x| x.as_str()).filter(|m| *m != "none").map(str::to_owned),
