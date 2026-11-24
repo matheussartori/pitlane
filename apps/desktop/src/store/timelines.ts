@@ -73,6 +73,11 @@ export async function startTimelines(onEvent: (run: string, e: RunEvent) => void
       take(run, i, e);
       onEvent(run, e);
     },
-    (run) => onEnd(run),
+    (run) => {
+      // A follow ended: read what is on disk once more, so a last event it did not pass on (its
+      // final answer) still shows instead of waiting for the session's next turn.
+      if (timelines[run]) void ensureTimeline(run, true);
+      onEnd(run);
+    },
   );
 }

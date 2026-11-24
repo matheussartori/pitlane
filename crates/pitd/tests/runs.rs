@@ -1941,6 +1941,52 @@ async fn the_board_assistant_ends_after_answering_and_a_message_picks_it_back_up
     assert_eq!(said, ["Make cards from this list.", "And one more.", "A third one."]);
 }
 
+/// Following the Board assistant once it was written to again hears that turn to its end: its
+/// timeline already holds the exit of the turn before, and stopping there dropped the answer
+/// (the app showed it only once the next message picked the session up again).
+#[tokio::test(flavor = "multi_thread")]
+async fn following_a_picked_up_assistant_hears_its_answer() {
+    use pit_core::runs::SessionKind;
+    let fx = fx();
+    let cfg = Config { home: fx.home.clone(), claude_bin: fx.fake.to_string_lossy().into_owned(), pit_bin: Some(fx.fake.clone()) };
+    let server = tokio::spawn(pitd::serve(cfg));
+    let (home, repo) = (fx.home.clone(), fx.repo.clone());
+    let (events, end) = tokio::task::spawn_blocking(move || {
+        let mut c = loop {
+            if let Ok(c) = Client::connect(&home, None) {
+                break c;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        c.assist(&repo, "Make cards from this list.".into()).unwrap();
+        let mut first = None;
+        for _ in 0..1000 {
+            first = c.sessions(None).unwrap().into_iter().find(|m| m.kind == SessionKind::Assist && !m.state.is_live());
+            if first.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let first = first.expect("the first turn ended");
+        c.say(&first.id, "And the status, in a table.".into()).unwrap();
+        let mut f = Client::connect(&home, None).unwrap();
+        let mut seen = Vec::new();
+        let end = f.follow(&first.id, 0, |i, e| {
+            seen.push((i, e));
+            true
+        });
+        (seen, end.unwrap().unwrap())
+    })
+    .await
+    .unwrap();
+    server.abort();
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    let exits = events.iter().filter(|(_, e)| matches!(e, RunEvent::Exited { .. })).count();
+    assert_eq!(exits, 2, "both turns, to the end of the second: {events:?}");
+    assert!(matches!(events.last().unwrap().1, RunEvent::Exited { .. }));
+    assert!(events.iter().enumerate().all(|(i, (n, _))| i == *n), "no gaps");
+}
+
 /// A question to a working run goes to a copy of its conversation, which answers it in the run's
 /// log while the run goes on: the run never reads it, and a follow-up hears the earlier answer.
 #[tokio::test(flavor = "multi_thread")]

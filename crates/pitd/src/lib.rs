@@ -356,13 +356,15 @@ async fn follow(sup: &Arc<Supervisor>, run: &str, from: usize, w: &mut tokio::ne
         Err(e) => return send(w, &json!({ "error": format!("{e:#}") })).await,
     };
     let mut next = from;
-    let mut ended = false;
     for (i, ev) in sub.replay {
-        ended |= matches!(ev, RunEvent::Exited { .. });
         send(w, &json!({ "i": i, "event": ev })).await?;
         next = i + 1;
     }
-    if let (Some(mut rx), false) = (sub.rx, ended) {
+    // Live now: keep listening, whatever exits the replay held. A session written to again once
+    // it ended (the Board assistant) goes on in the same timeline, one exit per turn, and stopping
+    // at an earlier one dropped what came after it, its last answer included. A session ending
+    // right now closes the channel, which ends this too.
+    if let Some(mut rx) = sub.rx {
         loop {
             match rx.recv().await {
                 Ok((i, ev)) if i >= next => {
@@ -377,14 +379,12 @@ async fn follow(sup: &Arc<Supervisor>, run: &str, from: usize, w: &mut tokio::ne
                 // Fell behind: catch up from the timeline on disk, then keep listening.
                 Err(RecvError::Lagged(_)) => {
                     let sub = sup.subscribe(&id, next)?;
-                    let mut done = false;
                     for (i, ev) in sub.replay {
-                        done |= matches!(ev, RunEvent::Exited { .. });
                         send(w, &json!({ "i": i, "event": ev })).await?;
                         next = i + 1;
                     }
                     // The run ended in what was caught up on: nothing more will come.
-                    if done {
+                    if sub.rx.is_none() {
                         break;
                     }
                 }
