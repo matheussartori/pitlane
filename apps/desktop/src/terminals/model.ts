@@ -212,7 +212,10 @@ const faceCss = (f: Face) => (TERMINAL_FACES.find((x) => x.v === f) ?? TERMINAL_
 /** How glyphs reach the screen. Smooth: WebKit draws the text as Warp does (grayscale, no stem
  * thickening), soft to read for hours. Sharp: the GPU atlas, whose canvas glyphs macOS thickens. */
 export type Render = "smooth" | "gpu";
-export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face; render: Render }>({ tabs: [], active: null, side: "left", font: 14, face: "hack", render: "smooth" });
+/** The terminal's text size until you change it: Warp's. */
+export const DEFAULT_FONT = 13;
+
+export const [st, setSt] = createStore<{ tabs: Tab[]; active: number | null; side: "left" | "top"; font: number; face: Face; render: Render }>({ tabs: [], active: null, side: "left", font: DEFAULT_FONT, face: "hack", render: "smooth" });
 export const [meta, setMeta] = createStore<Record<number, Meta>>({});
 export const [screenOn, setScreenOn] = createSignal(false);
 let nextTab = 1;
@@ -225,6 +228,7 @@ interface Saved {
   active: number | null;
   side: "left" | "top";
   font: number;
+  font13?: boolean; // saved since 13px became the size (Warp's): before it, 14 was only the default
   face?: Face;
   face2?: Face; // the face chosen since Hack became the default (an old "menlo" was only the default)
   render?: Render;
@@ -236,7 +240,7 @@ export function save() {
     const tabs = unwrap(st.tabs);
     const places: Saved["places"] = {};
     for (const t of tabs) for (const id of panesOf(t.root)) if (meta[id]) places[id] = { cwd: meta[id]!.cwd, label: meta[id]!.label, run: meta[id]!.run };
-    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, face: st.face, face2: st.face, render: st.render, places } satisfies Saved));
+    localStorage.setItem(KEY, JSON.stringify({ tabs, active: st.active, side: st.side, font: st.font, font13: true, face: st.face, face2: st.face, render: st.render, places } satisfies Saved));
   } catch {
     /* no storage: the layout lives for this window */
   }
@@ -275,10 +279,10 @@ const dark = () => getComputedStyle(document.documentElement).getPropertyValue("
 
 function theme() {
   return {
-    background: tok("--color-paper-sunk"),
+    background: tok("--color-term-paper"),
     foreground: tok("--color-term-ink"),
     cursor: tok("--color-accent"),
-    cursorAccent: tok("--color-paper-sunk"),
+    cursorAccent: tok("--color-term-paper"),
     selectionBackground: tok("--color-term-select"),
     scrollbarSliderBackground: dark() ? "#ffffff18" : "#00000018",
     scrollbarSliderHoverBackground: dark() ? "#ffffff30" : "#00000030",
@@ -580,7 +584,7 @@ function make(info: TermInfo, run?: string): Live {
     fontSize: st.font,
     fontWeight: "normal",
     fontWeightBold: "bold",
-    lineHeight: 1.35, // Warp-like air between lines (Hack is already tall)
+    lineHeight: 1, // the face's own line, as Warp sets it: 13px Hack on rows of about 15.5px
     cursorStyle: "bar",
     cursorWidth: 2,
     cursorInactiveStyle: "outline",
@@ -687,8 +691,8 @@ export async function startTerminals() {
   if (face && TERMINAL_FACES.some((f) => f.v === face)) setSt("face", face);
   if (saved?.render === "gpu") setSt("render", "gpu");
   // Measure cells with the real face, never a fallback: a late font leaves gaps between letters.
-  await Promise.all(["normal", "bold"].map((w) => document.fonts.load(`${w} 14px ${faceCss(st.face)}`))).catch(() => {});
-  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || saved.font <= 13 ? 14 : saved.font)) }); // 12 and 13 were old defaults: they move to 14 with Hack
+  await Promise.all(["normal", "bold"].map((w) => document.fonts.load(`${w} ${DEFAULT_FONT}px ${faceCss(st.face)}`))).catch(() => {});
+  if (saved) setSt({ side: saved.side === "top" ? "top" : "left", font: Math.min(20, Math.max(9, !saved.font || (!saved.font13 && saved.font <= 14) ? DEFAULT_FONT : saved.font)) }); // 12, 13 and 14 were defaults once: they move to today's
   let existing: TermInfo[] = [];
   try {
     existing = await terms.list();

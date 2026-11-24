@@ -6,7 +6,7 @@ import { t } from "../i18n";
 import { Icon } from "../icons";
 import { dismissable } from "../ui";
 import { Grip } from "../layout";
-import { activeTab, AGENTS_H, closePane, equal, focusPane, fontSize, jumpToWanting, live, meta, neighbour, openTerminal, panesOf, resizeFocused, resumeInTerminal, save, screenOn, seen, selectTab, setRoots, setScreenOn, setSt, setTab, type Side, SIDE_W, split, st } from "./model";
+import { activeTab, AGENTS_H, closePane, DEFAULT_FONT, equal, focusPane, fontSize, jumpToWanting, live, meta, neighbour, openTerminal, panesOf, resizeFocused, resumeInTerminal, save, screenOn, seen, selectTab, setRoots, setScreenOn, setSt, setTab, type Side, SIDE_W, split, st } from "./model";
 import { drag } from "./drag";
 import { TabRow } from "./tabs";
 import { FindBar, NodeView, PaneView } from "./panes";
@@ -118,7 +118,7 @@ export function TerminalScreen(props: { repo: string; repoName: string; lanes: L
       fontSize(st.font - 1);
     } else if (k === "0") {
       take();
-      fontSize(14);
+      fontSize(DEFAULT_FONT);
     }
   }
 

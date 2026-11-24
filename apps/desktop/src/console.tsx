@@ -11,6 +11,7 @@ import { ApprovalBlock } from "./approvals";
 import { Icon } from "./icons";
 import { Prose } from "./prose";
 import { msg } from "./format";
+import { highlight, langOf } from "./highlight";
 import { TERMINAL_FACES, terminalPrefs } from "./terminals";
 
 type Done = Extract<RunEvent, { kind: "tool-done" }>;
@@ -471,25 +472,26 @@ const TOOL_LABEL: Record<string, string> = { Edit: "Update", MultiEdit: "Update"
 const toolLabel = (name: string) =>
   name.startsWith("mcp__browser__browser_") ? `${t("Browser")} · ${name.slice(22).replace(/_/g, " ")}` : t(TOOL_LABEL[name] ?? name);
 
-/** What a finished tool came to, in one line, the way Claude Code sums it up. */
-function resultLine(name: string, d: Done): string {
+/** What a finished tool came to, in one line, the way Claude Code sums it up: what it printed
+ * in the log's ink, and what only counts (lines read, results found, lines left out) dimmed. */
+function resultLine(name: string, d: Done): { text: string; more?: string; dim?: boolean } {
   const n = d.lines ?? (d.detail ? 1 : 0);
-  if (!d.ok) return d.detail || t("Failed");
-  if (name === "Read") return plural(n, "Read {n} line", "Read {n} lines");
-  if (name === "Edit" || name === "MultiEdit" || name === "Write" || name === "NotebookEdit") return d.detail || t("Done");
-  if (name === "Grep" || name === "Glob") return n > 1 ? t("Found {n} results", { n }) : d.detail || t("No matches");
-  const more = n > 1 ? `  … ${plural(n - 1, "+{n} line", "+{n} lines")}` : "";
-  return `${d.detail || t("Done")}${more}`;
+  if (!d.ok) return { text: d.detail || t("Failed") };
+  if (name === "Read") return { text: plural(n, "Read {n} line", "Read {n} lines"), dim: true };
+  if (name === "Edit" || name === "MultiEdit" || name === "Write" || name === "NotebookEdit") return { text: d.detail || t("Done") };
+  if (name === "Grep" || name === "Glob") return n > 1 ? { text: t("Found {n} results", { n }), dim: true } : { text: d.detail || t("No matches"), dim: !d.detail };
+  return { text: d.detail || t("Done"), more: n > 1 ? `  … ${plural(n - 1, "+{n} line", "+{n} lines")}` : undefined, dim: !d.detail };
 }
 
-/** An edit as Claude Code shows it: removed lines, then added ones. */
-function Diff(props: { change: { old: string; new: string; cut: number } }) {
+/** An edit as Claude Code shows it: removed lines, then added ones, in the file's syntax colours. */
+function Diff(props: { change: { old: string; new: string; cut: number }; path: string }) {
   const old = () => (props.change.old ? props.change.old.split("\n") : []);
   const add = () => (props.change.new ? props.change.new.split("\n") : []);
+  const lang = () => langOf(props.path);
   return (
     <div class="cc-diff">
-      <For each={old()}>{(l) => <div class="cc-del"><span class="cc-sign">-</span>{l || " "}</div>}</For>
-      <For each={add()}>{(l) => <div class="cc-add"><span class="cc-sign">+</span>{l || " "}</div>}</For>
+      <For each={old()}>{(l) => <div class="cc-del"><span class="cc-sign">-</span>{highlight(l || " ", lang())}</div>}</For>
+      <For each={add()}>{(l) => <div class="cc-add"><span class="cc-sign">+</span>{highlight(l || " ", lang())}</div>}</For>
       <Show when={props.change.cut > 0}>
         <div class="cc-more">… {plural(props.change.cut, "{n} more line", "{n} more lines")}</div>
       </Show>
@@ -582,15 +584,23 @@ function Line(props: { e: RunEvent; m: RunMeta; done?: Done; asking?: boolean; o
               </Show>
             </span>
           </div>
-          <Show when={e.change}>{(c) => <Diff change={c()} />}</Show>
+          <Show when={e.change}>{(c) => <Diff change={c()} path={e.detail ?? ""} />}</Show>
           <Show when={d()} fallback={<Show when={live()}><div class="cc-result ag-muted">⎿  {t("Running…")}</div></Show>}>
-            {(d) => <div class={`cc-result ${d().ok ? "ag-muted" : "ag-fail"}`}>⎿  {resultLine(e.name, d())}</div>}
+            {(d) => {
+              const r = () => resultLine(e.name, d());
+              return (
+                <div class="cc-result" classList={{ "ag-fail": !d().ok, "ag-muted": d().ok && !!r().dim }}>
+                  ⎿  {r().text}
+                  <Show when={r().more}><span class="cc-more">{r().more}</span></Show>
+                </div>
+              );
+            }}
           </Show>
         </div>
       );
     }
     case "tool-done":
-      return e.ok ? <div class="cc-result ag-muted">⎿  {e.detail}</div> : <Sys glyph="✕" tone="fail">{e.detail}</Sys>;
+      return e.ok ? <div class="cc-result">⎿  {e.detail}</div> : <Sys glyph="✕" tone="fail">{e.detail}</Sys>;
     case "shot":
       return <Shot run={props.m.id} file={e.file} />;
     case "aside":

@@ -718,7 +718,7 @@ body[data-resizing="row"] { cursor: col-resize; }
 body[data-resizing="col"] { cursor: row-resize; }
 body[data-resizing] .pane { pointer-events: none; }
 
-.pane { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--color-paper-sunk); }
+.pane { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--color-term-paper); }
 .pane-bar { display: flex; align-items: center; gap: var(--space-xs); height: 28px; padding-inline: var(--space-sm) var(--space-2xs); border-bottom: 1px solid var(--color-rule); color: var(--color-muted); font-size: var(--text-xs); cursor: grab; user-select: none; }
 .pane[data-focus] .pane-bar { color: var(--color-ink-2); box-shadow: inset 0 -1px 0 var(--color-accent); }
 .pane-name { font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -1027,10 +1027,10 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 /* Beside the nav rail: the name and its key, a size up. */
 .tip[data-side] { max-width: none; font-size: var(--text-sm); line-height: 1; white-space: pre; }
 
-.ag-pane { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--color-paper-sunk); }
+.ag-pane { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--color-term-paper); }
 /* One Claude Code session as a terminal (src/console.tsx): the same in Terminal › Agents and in a
  * card's run. The log wears the Terminal's face and size; the agent's prose stays Geist. */
-.console { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--color-paper-sunk); outline: none; }
+.console { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--color-term-paper); outline: none; }
 .console > .ag-log { flex: 1; min-height: 0; }
 .console[data-framed] { border-radius: var(--radius-lg); box-shadow: var(--ring); overflow: hidden; }
 /* The prompt and the status line sit on the terminal's own ground, under one hairline. */
@@ -1044,7 +1044,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-crumb { flex-shrink: 0; border: 0; background: none; padding: 0; color: var(--color-ink-2); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-rule-strong); }
 .ag-bar-meta { flex-shrink: 0; font: var(--text-xs)/1 var(--font-mono); color: var(--color-muted); white-space: pre; }
 .ag-bar-fill { flex: 1; }
-.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) var(--term-size, 14px)/1.5 var(--term-face, var(--font-mono)); color: var(--color-term-ink); text-shadow: var(--text-soft); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; -webkit-font-smoothing: subpixel-antialiased; }
+.ag-log { overflow: auto; padding: var(--space-sm) var(--space-md) var(--space-md); font: var(--weight-regular) var(--term-size, 13px)/1.2 var(--term-face, var(--font-mono)); color: var(--color-term-ink); text-shadow: var(--text-soft); user-select: text; text-rendering: optimizeLegibility; font-variant-numeric: tabular-nums; -webkit-font-smoothing: subpixel-antialiased; }
 /* Jump to present: sticks to the log's bottom edge while you read above, as in Discord and Warp. */
 .ag-jump-dock { position: sticky; bottom: 0; height: 0; display: flex; justify-content: center; pointer-events: none; }
 .ag-jump { pointer-events: auto; display: inline-flex; align-items: center; gap: var(--space-2xs); height: 26px; padding-inline: var(--space-xs) var(--space-sm); transform: translateY(calc(-100% - var(--space-sm))); border: 0; border-radius: var(--radius-md); background: var(--color-paper-3); box-shadow: var(--ring), var(--shadow-pop); color: var(--color-ink); font: var(--weight-strong) var(--text-xs)/1 var(--font-body); cursor: pointer; animation: ag-jump-in 200ms ease-out; }
@@ -1070,7 +1070,7 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-input { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-md); border-top: 1px solid var(--color-rule); background: var(--color-paper); }
 .ag-prompt { font: var(--weight-strong) var(--text-md)/1 var(--font-mono); color: var(--color-accent-text); }
 .ag-input[data-off] .ag-prompt { color: var(--color-muted); }
-.ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) var(--term-size, 14px)/1 var(--term-face, var(--font-mono)); outline: none; }
+.ag-field { flex: 1; min-width: 0; height: 30px; border: 0; background: none; color: var(--color-ink); font: var(--weight-regular) var(--term-size, 13px)/1 var(--term-face, var(--font-mono)); outline: none; }
 .ag-field::placeholder { color: var(--color-muted); }
 .ag-input { position: relative; }
 /* The model and effort, always in sight under the prompt, as Claude Code's status line. */
@@ -1231,7 +1231,9 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 
 /* ---------------------------------------------------------------- agent sessions, as Claude Code draws them */
 .cc-msg, .cc-call { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); align-items: start; }
-.cc-msg { margin-block: 0.8lh; }
+/* One empty row between entries and the lines of one entry on consecutive rows, as a terminal
+ * draws Claude Code. */
+.cc-msg { margin-block: 1lh; }
 .cc-dot { color: var(--color-ink); line-height: inherit; }
 /* Lines that are not the agent's own (setup, your answers, checks, the end): a glyph in the dot's
  * gutter, the words muted unless they matter. */
@@ -1256,20 +1258,31 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-dot[data-s="ended"] { color: var(--color-muted); }
 /* The agent's words read as Claude Code's do in Warp: the terminal's own face and size, brighter
  * than the calls around them, a blank line's worth of air between paragraphs. */
-.cc-text { min-width: 0; max-width: 100ch; color: var(--color-term-ink); }
+/* The agent's words fill the row and break where it ends, as in a terminal: no measure, no
+ * balanced lines. */
+.cc-text { min-width: 0; color: var(--color-term-ink); }
 .cc-text .prose { font: inherit; color: inherit; max-width: none; }
-.cc-text .prose > * + * { margin-top: 0.7lh; }
+.cc-text .prose, .cc-text .prose * { text-wrap: wrap; }
+.cc-text .prose p { max-width: none; }
+.cc-text .prose > * + * { margin-top: 1lh; }
 .cc-text .prose li + li { margin-top: 0; }
 .cc-text .prose :where(b, strong), .cc-text .prose .prose-h { color: var(--color-ink); font-weight: 700; }
 .cc-text code, .cc-text .prose code { padding: 0; border-radius: 0; background: none; font: inherit; color: var(--color-term-code); }
 .cc-text .prose .link { color: var(--color-term-code); }
 .cc-text pre, .cc-text .prose pre { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: var(--color-paper-2); font: inherit; white-space: pre-wrap; }
 .cc-text pre code { color: var(--color-term-ink); }
-.cc-tool { margin-block: 0.8lh; }
+.cc-tool { margin-block: 1lh; }
 .ag-spawn.cc-call { padding: 0; margin-block: var(--space-2xs); }
 .cc-name { color: var(--color-ink); font-weight: 700; }
-.cc-arg { color: var(--color-ink-2); overflow-wrap: anywhere; }
-.cc-result { padding-inline-start: 1.4em; color: var(--color-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-arg { color: var(--color-term-ink); overflow-wrap: anywhere; }
+/* A call too long for its row goes on two cells in, as Claude Code indents it. */
+.cc-call > :last-child { padding-inline-start: 2ch; text-indent: -2ch; }
+.cc-call > :last-child > * { text-indent: 0; }
+/* A result reads in the log's ink when it is what the tool printed, and dimmed (`ag-muted`) when
+ * it only counts or notes something, as Claude Code dims them. What wraps hangs under the text,
+ * not under the ⎿ (three cells: the glyph and its two spaces). */
+.cc-result { padding-inline-start: calc(1.4em + 3ch); text-indent: -3ch; color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cc-result > * { text-indent: 0; }
 .cc-shot { display: flex; gap: var(--space-2xs); padding-inline-start: 1.4em; margin-block: var(--space-2xs); color: var(--color-muted); }
 .cc-shot-thumb { display: block; padding: 0; border: 1px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-paper-2); overflow: hidden; cursor: zoom-in; max-width: min(100%, 420px); }
 .cc-shot-thumb:hover { border-color: var(--color-rule-strong); }
@@ -1277,11 +1290,15 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .cc-shot-thumb img { display: block; max-width: 100%; max-height: 240px; object-fit: contain; }
 .shot-view { position: fixed; inset: 0; z-index: 900; display: grid; place-items: center; padding: var(--space-xl); background: color-mix(in oklch, black 72%, transparent); cursor: zoom-out; }
 .shot-view img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-md); box-shadow: var(--shadow-pop); }
-.cc-diff { margin: var(--space-3xs) 0 var(--space-3xs) 1.4em; padding-block: 2px; border-radius: var(--radius-sm); background: var(--color-paper); box-shadow: var(--ring); font: 0.92em/1.5 var(--term-face, var(--font-mono)); overflow-x: auto; }
+/* An edit's lines sit on the log's own rows, at its size: full pastel rows with no box around
+ * them, as Claude Code draws a diff in Warp. */
+.cc-diff { margin: 0 0 0 1.4em; font: inherit; overflow-x: auto; }
 .cc-diff > div { padding-inline: var(--space-xs); white-space: pre; }
 .cc-sign { display: inline-block; width: 1.4em; color: var(--color-muted); user-select: none; }
-.cc-del { background: color-mix(in oklab, var(--color-fail) 16%, transparent); color: var(--color-ink); }
-.cc-add { background: color-mix(in oklab, var(--color-done) 16%, transparent); color: var(--color-ink); }
+.cc-del .cc-sign { color: var(--color-fail); font-weight: 700; }
+.cc-add .cc-sign { color: var(--color-done); font-weight: 700; }
+.cc-del { background: var(--color-del); color: var(--color-ink); }
+.cc-add { background: var(--color-add); color: var(--color-ink); }
 .cc-more { color: var(--color-muted); }
 @media (prefers-reduced-motion: reduce) { .cc-dot[data-s="work"] { animation: none; } }
 

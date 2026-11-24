@@ -19,6 +19,7 @@
   --color-muted: oklch(70% 0.003 255);
   --color-term-ink: oklch(90.5% 0.003 90); /* terminal and agent text: a step under UI ink, as bright as Warp's (about #dededd) */
   --color-term-code: oklch(79% 0.1 268); /* code and links in the agent's words: Claude Code's lavender */
+  --color-term-paper: var(--color-paper-sunk); /* what the terminal and the agent's log sit on */
   --color-term-select: oklch(37% 0.006 255);
   /* Reading text (the terminal, the agent log, a diff) is drawn as Warp draws it: the stroke a little fuller with a soft edge, the "slight blur" that
    * rests the eye. A half-pixel bloom in the text's own colour; never on UI labels (24 nov 2026). */
@@ -122,6 +123,7 @@
   --color-ink-2: oklch(33% 0.003 255);
   --color-muted: oklch(45% 0.004 255);
   --color-term-ink: oklch(19% 0.003 255);
+  --color-term-paper: oklch(100% 0 0); /* Warp's light ground: pure white */
   --color-term-select: oklch(89% 0.004 255);
   --color-term-code: oklch(50% 0.16 266);
   --ansi-black: oklch(30% 0.004 255); --ansi-bright-black: oklch(48% 0.004 255);
@@ -166,6 +168,7 @@
     --color-ink-2: oklch(33% 0.003 255);
     --color-muted: oklch(45% 0.004 255);
   --color-term-ink: oklch(19% 0.003 255);
+  --color-term-paper: oklch(100% 0 0); /* Warp's light ground: pure white */
   --color-term-select: oklch(89% 0.004 255);
   --color-term-code: oklch(50% 0.16 266);
     --ansi-black: oklch(30% 0.004 255); --ansi-bright-black: oklch(48% 0.004 255);
