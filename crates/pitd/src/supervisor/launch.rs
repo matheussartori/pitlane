@@ -152,8 +152,9 @@ impl Supervisor {
             fs::create_dir_all(dir)?;
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }
-        // One --settings for all of it: the sandbox, and for an API key account the helper
-        // Claude Code runs to get the key (the key never passes here).
+        // One --settings for all of it: the sandbox, for an API key account the helper Claude
+        // Code runs to get the key (the key never passes here), and no messages from other
+        // sessions (`INBOUND`).
         let mut settings = serde_json::Map::new();
         if prep.sandbox && !autopilot {
             settings.extend(sandbox_settings(&prep.worktree, prep.related.iter().map(|l| l.worktree.as_path())));
@@ -161,9 +162,8 @@ impl Supervisor {
         if let Some(helper) = &choice.api_key_helper {
             settings.insert("apiKeyHelper".into(), helper.clone().into());
         }
-        if !settings.is_empty() {
-            cmd.arg("--settings").arg(Value::Object(settings).to_string());
-        }
+        settings.insert(INBOUND.0.into(), INBOUND.1.into());
+        cmd.arg("--settings").arg(Value::Object(settings).to_string());
         self.emit(
             id,
             RunEvent::Note {
@@ -200,7 +200,7 @@ impl Supervisor {
     pub(super) fn side_command(&self, id: &str, side: &Side) -> Result<Command> {
         let mut cmd = stream_json(&self.cfg.claude_bin);
         cmd.args(["--session-id", &self.get(id)?.session_id])
-            .args(with_language(&side.args, &self.cfg.home));
+            .args(with_language(&refuse_peers(&side.args), &self.cfg.home));
         // Whatever the session does not set comes from your Claude Code: model and effort.
         let set = side
             .args
@@ -335,6 +335,26 @@ fn your_claude(config_dir: Option<&Path>, model: Option<&str>) -> (Option<String
 }
 
 /// A session's arguments with the language you chose for agents added to its system prompt.
+/// Claude Code's messages from other sessions on this machine (`SendMessage`) are refused by
+/// every session Pitlane starts: a `-p` session cannot approve them, and Pitlane would not see
+/// what they say. What reaches an agent goes through Pitlane, in its log (`say`, `relay`); the
+/// sender is told the message was refused.
+const INBOUND: (&str, &str) = ("crossSessionInbound", "refuse");
+
+/// A side session's arguments with `INBOUND` in its `--settings`, merged into the one it has.
+fn refuse_peers(args: &[String]) -> Vec<String> {
+    let mut out = args.to_vec();
+    if let Some(i) = out.iter().position(|a| a == "--settings")
+        && let Some(Ok(Value::Object(mut m))) = out.get(i + 1).map(|s| serde_json::from_str::<Value>(s))
+    {
+        m.insert(INBOUND.0.into(), INBOUND.1.into());
+        out[i + 1] = Value::Object(m).to_string();
+        return out;
+    }
+    out.extend(["--settings".into(), serde_json::json!({ INBOUND.0: INBOUND.1 }).to_string()]);
+    out
+}
+
 fn with_language(args: &[String], home: &Path) -> Vec<String> {
     let rule = pit_core::language::rule(&pit_core::language::agent_language(home));
     let mut out = args.to_vec();
@@ -461,5 +481,18 @@ mod your_claude_tests {
             your_claude(Some(&d.path().join("none")), None),
             (None, None)
         );
+    }
+
+    #[test]
+    fn side_sessions_refuse_other_sessions_messages_in_their_one_settings() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let merged = refuse_peers(&args(&["--model", "opus", "--settings", r#"{"apiKeyHelper":"k"}"#]));
+        assert_eq!(merged.iter().filter(|a| *a == "--settings").count(), 1, "{merged:?}");
+        let set: Value = serde_json::from_str(&merged[3]).unwrap();
+        assert_eq!(set["apiKeyHelper"], "k");
+        assert_eq!(set["crossSessionInbound"], "refuse");
+        let added = refuse_peers(&args(&["--model", "opus"]));
+        assert_eq!(added[2], "--settings");
+        assert_eq!(serde_json::from_str::<Value>(&added[3]).unwrap()["crossSessionInbound"], "refuse");
     }
 }

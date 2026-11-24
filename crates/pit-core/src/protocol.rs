@@ -63,6 +63,10 @@ pub enum Request {
     Sessions { repo: Option<PathBuf> },
     Get { run: String },
     Say { run: String, text: String },
+    /// What the Board's assistant was asked to pass on to a card's agent: the card's live run
+    /// reads it after its current step; with no run working the card, it becomes a note on the
+    /// card. From a session, only the repository's Board assistant may send it.
+    Relay { repo: PathBuf, card: u32, text: String },
     /// `/model` and `/effort` for a live session.
     Tune { run: String, model: Option<String>, effort: Option<String> },
     Stop { run: String },
@@ -162,7 +166,7 @@ impl ReviewAction {
 /// Every op the daemon knows, as it is written in `op`.
 pub const OPS: &[&str] = &[
     "ping", "start", "analyze", "recheck", "unblock", "move", "report_digest", "describe", "talk", "stop_talk", "finish", "assist", "resume", "list", "sessions", "get",
-    "say", "tune", "stop", "stop_all", "perf", "perf_set", "perf_hold", "stop_analyses", "shutdown", "hold", "quota", "review", "enqueue",
+    "say", "relay", "tune", "stop", "stop_all", "perf", "perf_set", "perf_hold", "stop_analyses", "shutdown", "hold", "quota", "review", "enqueue",
     "queue", "queue_resume", "dequeue", "continue", "ask", "consult", "decide", "approvals", "follow", "presence", "presence_set",
 ];
 
@@ -202,6 +206,7 @@ impl Request {
             Self::Sessions { .. } => "sessions",
             Self::Get { .. } => "get",
             Self::Say { .. } => "say",
+            Self::Relay { .. } => "relay",
             Self::Tune { .. } => "tune",
             Self::Stop { .. } => "stop",
             Self::StopAll => "stop_all",
@@ -257,6 +262,7 @@ impl Request {
             | Self::Assist { .. }
             | Self::Resume { .. }
             | Self::Say { .. }
+            | Self::Relay { .. }
             | Self::Tune { .. }
             | Self::Stop { .. }
             | Self::StopAll
@@ -329,6 +335,12 @@ pub struct SessionsReply {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stopped {
     pub stopped: usize,
+}
+
+/// `relay`: the run that got the message, or none when it became a note on the card.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Relayed {
+    pub run: Option<String>,
 }
 
 /// `perf_hold`: whether the session was paused or resumed (false when it already was).
@@ -430,6 +442,10 @@ mod tests {
             (
                 Request::Decide { run: "r1".into(), approval: None, decision: Decision::Always, message: None },
                 json!({ "op": "decide", "run": "r1", "approval": null, "decision": "always", "message": null }),
+            ),
+            (
+                Request::Relay { repo: repo.clone(), card: 71, text: "run the test".into() },
+                json!({ "op": "relay", "repo": "/r", "card": 71, "text": "run the test" }),
             ),
             (
                 Request::Ask { run: "r1".into(), tool: "Bash".into(), input: json!({ "command": "ls" }), tool_use_id: Some("t1".into()) },

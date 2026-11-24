@@ -127,6 +127,14 @@ pub(super) fn tools() -> Value {
             }, "required": ["id", "text"] }
         },
         {
+            "name": "message_run",
+            "description": "Pass a message on to the agent working a card, when the person asks you to tell it something (run a test first, check a page, change course). The card's working run reads it after its current step, in its log; with no run working the card, it becomes a note on the card that the next run reads. The reply says which happened. Only the Board assistant may use it.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "integer", "description": "The card number." },
+                "text": { "type": "string", "description": "What to tell the agent, in the person's words." }
+            }, "required": ["id", "text"] }
+        },
+        {
             "name": "brief",
             "description": "Where to look in this repository for a card or a task: the most relevant files with their symbols (line and signature) and the tests nearby, from Pitlane's tree-sitter index. Give a card id, or a text describing the task.",
             "inputSchema": { "type": "object", "properties": {
@@ -172,6 +180,9 @@ pub(super) fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
     // move cards, relink lanes or delete cards.
     if std::env::var_os(RUN_ENV).is_some() {
         let moves = name == "update_card" && (args.get("state").is_some() || args.get("lane").is_some());
+        if name == "message_run" {
+            bail!("message_run is not available to an agent working a card: one run does not steer another");
+        }
         if moves || matches!(name, "answer" | "delete_card") {
             bail!("{name} is not available to an agent working a card: answers come from the person, and Pitlane moves the card when the run ends");
         }
@@ -255,6 +266,17 @@ pub(super) fn call(name: &str, args: &Value, dir: &Path) -> Result<Value> {
             let text = str_arg("text").context("text is required")?;
             card_json(&cards::note(&repo, id()?, "claude", &text)?)
         }
+        "message_run" => {
+            let text = str_arg("text").context("text is required")?;
+            let (_, home) = pit_core::default_homes();
+            // Never start a daemon from here: it would inherit the agent's environment and outlive the app.
+            let mut c = pit_core::runs::Client::connect(&home, None)
+                .context("Pitlane is not running, so no agent is working the card; add a note to it instead")?;
+            match c.relay(&repo.root, id()?, &text)? {
+                Some(run) => json!({ "delivered": "run", "run": run, "message": "The card's working agent reads it after its current step." }),
+                None => json!({ "delivered": "note", "message": "No agent is working this card: it is now a note on the card, which the next run reads." }),
+            }
+        }
         _ => bail!("unknown tool {name}"),
     })
 }
@@ -285,7 +307,7 @@ mod tests {
 
         let list = rpc(&dir, 2, "tools/list", json!({}));
         let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "delete_card", "ask", "answer", "add_note", "brief"]);
+        assert_eq!(names, ["add_card", "list_cards", "get_card", "update_card", "delete_card", "ask", "answer", "add_note", "message_run", "brief"]);
 
         let added = rpc(&dir, 3, "tools/call", json!({ "name": "add_card", "arguments": {
             "title": "Rate limit invites",

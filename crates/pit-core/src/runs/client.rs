@@ -153,6 +153,12 @@ impl Client {
         self.request(&Request::Talk { repo: repo.to_owned(), card, question, message })
     }
 
+    /// Passes a message on to a card's agent: the run that got it, or none when it became a
+    /// note on the card.
+    pub fn relay(&mut self, repo: &Path, card: u32, text: &str) -> Result<Option<String>> {
+        Ok(self.request_as::<crate::protocol::Relayed>(&Request::Relay { repo: repo.to_owned(), card, text: text.to_owned() })?.run)
+    }
+
     /// Stops the conversation on a card's questions; how many sessions stopped.
     pub fn stop_talk(&mut self, repo: &Path, card: u32) -> Result<usize> {
         Ok(self.request_as::<Stopped>(&Request::StopTalk { repo: repo.to_owned(), card })?.stopped)

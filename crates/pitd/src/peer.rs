@@ -29,6 +29,27 @@ pub fn from_agent(peer: i32, daemon: i32, groups: &HashSet<i32>) -> bool {
     false
 }
 
+/// Which of `sessions` (their pids, each its own process group) `peer` belongs to: it is in that
+/// session's process group, or the session is among its ancestors.
+pub fn session_of(peer: i32, sessions: &HashSet<i32>) -> Option<i32> {
+    // SAFETY: getpgid reads the group of a pid; it takes no pointers.
+    let group = unsafe { libc::getpgid(peer) };
+    if group > 1 && sessions.contains(&group) {
+        return Some(group);
+    }
+    let mut pid = peer;
+    for _ in 0..MAX_DEPTH {
+        if sessions.contains(&pid) {
+            return Some(pid);
+        }
+        match parent(pid) {
+            Some(p) if p > 1 => pid = p,
+            _ => return None,
+        }
+    }
+    None
+}
+
 #[cfg(target_os = "macos")]
 fn parent(pid: i32) -> Option<i32> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -59,6 +80,17 @@ mod tests {
         assert!(!from_agent(pid, 999_999, &HashSet::new()), "not a child of someone else");
         assert!(!from_agent(me, me + 1, &HashSet::new()));
         let mut child = child;
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+    #[test]
+    fn a_process_belongs_to_the_session_it_was_started_under() {
+        let me = std::process::id() as i32;
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+        let pid = child.id() as i32;
+        assert_eq!(session_of(pid, &HashSet::from([me])), Some(me), "started under it");
+        assert_eq!(session_of(pid, &HashSet::from([999_999])), None, "not under another");
+        assert_eq!(session_of(pid, &HashSet::new()), None);
         child.kill().unwrap();
         child.wait().unwrap();
     }

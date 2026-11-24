@@ -77,7 +77,8 @@ fn single_instance(home: &std::path::Path) -> Result<std::fs::File> {
 async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
     // Asked once per connection: a process does not leave a session while it holds a socket.
     // A peer whose pid cannot be read is treated as one of the sessions'.
-    let agent = match stream.peer_cred().ok().and_then(|c| c.pid()) {
+    let pid = stream.peer_cred().ok().and_then(|c| c.pid());
+    let agent = match pid {
         Some(pid) => peer::from_agent(pid, std::process::id() as i32, &sup.session_groups()),
         None => true,
     };
@@ -99,6 +100,21 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
                 continue;
             }
         };
+        if let Request::Relay { repo, card, text } = &req {
+            // From a session, only a Board assistant passes messages on (what the person asked it
+            // to tell a card's agent): a run never steers another run.
+            let assistant = if agent { pid.and_then(|p| sup.assistant_of(p)) } else { None };
+            let answer = if agent && assistant.is_none() {
+                json!({ "error": "only the Board assistant passes messages on to a card's agent; tell the person what to say instead" })
+            } else {
+                match sup.relay(repo.clone(), *card, text, assistant.as_deref()).await {
+                    Ok(run) => reply(protocol::Relayed { run })?,
+                    Err(e) => json!({ "error": format!("{e:#}") }),
+                }
+            };
+            send(&mut write, &answer).await?;
+            continue;
+        }
         if agent && !req.agent_safe() {
             let op = req.op();
             send(&mut write, &json!({ "error": format!("{op:?} is not open to a session's own processes: it is yours to do, from Pitlane or pit") })).await?;
@@ -238,7 +254,7 @@ async fn handle(sup: &Arc<Supervisor>, req: Request) -> Result<Value> {
             reply(ApprovalsReply { approvals })
         }
         // `connection` takes these over before they get here.
-        Request::Hold | Request::Follow { .. } => bail!("unknown op {:?}", req.op()),
+        Request::Hold | Request::Follow { .. } | Request::Relay { .. } => bail!("unknown op {:?}", req.op()),
     }
 }
 
