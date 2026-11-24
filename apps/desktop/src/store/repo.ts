@@ -2,7 +2,7 @@
 // cards, the runs and the quota, the merge queue and Run all's reports. One repository at a time.
 import { createSignal } from "solid-js";
 import { api, isLive, type Quota, type Card, type Lane, type Report, type RunMeta, type ShipJob, type Yard, isOpenJob } from "../api";
-import { keepUnchanged } from "../cards";
+import { keepUnchanged } from "../keep";
 import { toast } from "../ui";
 import { plural, t } from "../i18n";
 import { msg } from "../format";
@@ -31,7 +31,9 @@ export async function load(fetch: boolean) {
   try {
     const y = await api.yard(path, fetch);
     if (gen !== generation) return;
-    setYard(y);
+    // The lanes that read the same keep their objects, so their rows keep their DOM (hover, an
+    // open menu, selected text) across a refresh.
+    setYard((old) => ({ ...y, lanes: keepUnchanged(old?.lanes ?? null, y.lanes, (l) => l.branch) }));
     setError(null);
     if (fetch) setFetchedAt(Date.now());
   } catch (e) {

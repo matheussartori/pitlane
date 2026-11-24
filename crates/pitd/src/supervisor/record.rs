@@ -93,20 +93,62 @@ impl Supervisor {
         Ok(n)
     }
 
+    /// Every session's record. Asked for every few seconds by every screen, so a record is read
+    /// and parsed once and then again only when its file changed (its time and size say so):
+    /// with hundreds of old runs, the rest is one look at each file's date.
     pub(super) fn list_disk(&self) -> Result<Vec<RunMeta>> {
         let dir = runs::runs_dir(&self.cfg.home);
         let mut out = Vec::new();
         let Ok(rd) = fs::read_dir(&dir) else {
             return Ok(out);
         };
+        let mut read = self.records.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut seen = std::collections::HashSet::new();
         for e in rd.flatten() {
-            if let Ok(t) = fs::read_to_string(e.path().join("meta.json"))
+            let Ok(name) = e.file_name().into_string() else { continue };
+            let path = e.path().join("meta.json");
+            let Ok(stamp) = fs::metadata(&path).and_then(|md| Ok((md.modified()?, md.len()))) else { continue };
+            if let Some((at, m)) = read.get(&name)
+                && *at == stamp
+            {
+                out.push(m.clone());
+                seen.insert(name);
+                continue;
+            }
+            if let Ok(t) = fs::read_to_string(&path)
                 && let Ok(m) = serde_json::from_str::<RunMeta>(&t)
             {
-                out.push(m);
+                out.push(m.clone());
+                read.insert(name.clone(), (stamp, m));
+                seen.insert(name);
             }
         }
+        read.retain(|name, _| seen.contains(name));
         Ok(out)
+    }
+
+    /// Deletes the records of sessions that ended more than `prune::KEEP_DAYS` ago (see
+    /// `prune::expired` for what stays however old). Returns how many went.
+    pub fn prune_records(&self) -> usize {
+        let Ok(all) = self.list_disk() else { return 0 };
+        // What the reports still show: a run named in one keeps its screenshots.
+        let reports: String = fs::read_dir(pit_core::report::dir(&self.cfg.home))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| fs::read_to_string(e.path()).ok())
+            .collect();
+        let gone = runs::prune::expired(&all, now_secs(), &|id| reports.contains(id));
+        let mut n = 0;
+        for id in gone {
+            if !pit_core::is_plain_name(&id) || self.live().contains_key(&id) {
+                continue;
+            }
+            if fs::remove_dir_all(self.dir(&id)).is_ok() {
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Records a new session (its folder and `meta.json`) and holds it as live, with nobody

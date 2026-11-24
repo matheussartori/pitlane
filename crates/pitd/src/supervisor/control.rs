@@ -25,6 +25,21 @@ const GROUP_KILL_AFTER: Duration = Duration::from_secs(2);
 impl Supervisor {
     /// The Performance governor: samples the Mac every 2 s and pauses, resumes and throttles
     /// the agents to fit the mode (see `perf`).
+    /// Old session records are deleted once as the daemon starts and then once a day.
+    pub fn start_housekeeping(self: &Arc<Self>) {
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                let m = Arc::clone(&me);
+                let gone = tokio::task::spawn_blocking(move || m.prune_records()).await.unwrap_or(0);
+                if gone > 0 {
+                    eprintln!("pitd: deleted {gone} session record(s) that ended more than {} days ago", pit_core::runs::prune::KEEP_DAYS);
+                }
+                tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+            }
+        });
+    }
+
     pub fn start_perf(self: &Arc<Self>) {
         self.perf.enable();
         let me = Arc::clone(self);

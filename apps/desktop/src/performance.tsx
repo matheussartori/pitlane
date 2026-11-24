@@ -1,6 +1,7 @@
 // Performance: how much of this Mac the agents take. Full while you are away, Light while you use
 // it; the daemon's governor pauses, resumes and throttles the agents to fit, without losing a thing.
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { api, type PerfEvent, type PerfAgent, type PerfMode, type PerfSample, type PerfSnapshot, type PresenceConfig, type PresenceSnapshot } from "./api";
 import { Seg } from "./settings";
 import { Icon, type IconName } from "./icons";
@@ -28,7 +29,11 @@ const stateView: Record<PerfAgent["state"], { chip: string; icon: IconName; labe
 const pausedBy = { you: "by you", mode: "by the mode", memory: "for memory" } as const;
 
 export function PerformanceView(props: { onOpen: (id: string) => void }) {
-  const [snap, setSnap] = createSignal<PerfSnapshot | null>(null);
+  // A store, reconciled by id: the figures change every two seconds, and each row takes its new
+  // numbers in place instead of the whole list being rebuilt under the cursor.
+  const [read, setRead] = createStore<{ snap: PerfSnapshot | null }>({ snap: null });
+  const snap = () => read.snap;
+  const setSnap = (s: PerfSnapshot) => setRead("snap", reconcile(s, { key: "id" }));
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
 

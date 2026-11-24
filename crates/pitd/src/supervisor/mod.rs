@@ -143,7 +143,13 @@ pub struct Supervisor {
     one_shots: Mutex<std::collections::HashSet<u32>>,
     /// The apps holding the daemon open (`Hold`): it ends with the last one.
     pub holders: std::sync::atomic::AtomicUsize,
+    /// The session records already read from disk, by run, with the date and size of the file
+    /// they were read from (`list_disk`).
+    records: Mutex<HashMap<String, (FileStamp, RunMeta)>>,
 }
+
+/// A file's date and size: when both are the same, it was not rewritten.
+type FileStamp = (std::time::SystemTime, u64);
 
 pub struct Subscription {
     pub replay: Vec<(usize, RunEvent)>,
@@ -184,6 +190,7 @@ impl Supervisor {
             meta_writes: Mutex::new(()),
             one_shots: Mutex::default(),
             holders: Default::default(),
+            records: Mutex::default(),
         })
     }
 

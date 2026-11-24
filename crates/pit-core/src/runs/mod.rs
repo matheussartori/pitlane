@@ -22,6 +22,7 @@ use crate::protocol::{
 use crate::queue::ShipJob;
 
 pub mod answer;
+pub mod prune;
 mod permissions;
 mod stream;
 mod briefing;

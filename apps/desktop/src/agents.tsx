@@ -4,7 +4,8 @@
 // itself a moment after it ends, unless you talked to it.
 import { For, Show, createEffect, createMemo, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { api, isLive, onRun, type RunEvent, type RunMeta } from "./api";
+import { api, isLive, type RunEvent, type RunMeta } from "./api";
+import { dropTimelines, ensureTimeline, resetTimelines, startTimelines, timelineOf } from "./store/timelines";
 import { Icon, type IconName } from "./icons";
 import { plural, t, tx } from "./i18n";
 import { toast } from "./ui";
@@ -22,7 +23,6 @@ const [repo, setRepo] = createSignal<string | null>(null);
 const [store, setStore] = createStore<{ list: RunMeta[] }>({ list: [] });
 const sessions = () => store.list;
 const setSessions = (all: RunMeta[]) => setStore("list", reconcile(all, { key: "id" }));
-const [timelines, setTimelines] = createStore<Record<string, RunEvent[]>>({});
 const [kept, setKept] = createSignal<string[]>(readKept());
 const [selected, setSelected] = createSignal<{ id: string; sub: string | null } | null>(null);
 const [watching, setWatching] = createSignal(false);
@@ -50,7 +50,7 @@ function keep(id: string, on: boolean) {
 const live = (m: RunMeta) => isLive(m.state);
 /** A live session the person opened that answered and now waits for their next message: its
  *  process is still there, but it is not working. */
-const idle = (m: RunMeta) => live(m) && m.waiting.length === 0 && (timelines[m.id] ?? []).at(-1)?.kind === "finished";
+const idle = (m: RunMeta) => live(m) && m.waiting.length === 0 && (timelineOf(m.id) ?? []).at(-1)?.kind === "finished";
 const endedMs = (m: RunMeta) => (m.ended_at ?? m.started_at) * 1000;
 
 /** What the Terminal screen and the dock show: live sessions, ones you talked to, the one you
@@ -131,24 +131,11 @@ export async function refreshAgents() {
         void api.runFollow(m.id, 0).catch(() => {});
       }
     }
+    // What left the list (ended a while ago, closed) gives its log back.
+    const listed = new Set(agentSessions().map((m) => m.id));
+    dropTimelines((id) => listed.has(id));
   } catch {
     /* no daemon yet, or the browser preview */
-  }
-}
-
-const loading = new Set<string>();
-async function ensureTimeline(id: string, force = false) {
-  if ((!force && timelines[id]) || loading.has(id)) return;
-  loading.add(id);
-  try {
-    const t = await api.runTimeline(id);
-    const evs = t.map(([, e]) => e);
-    // Live events may have arrived meanwhile: keep the longer one.
-    if (!timelines[id] || evs.length >= timelines[id]!.length) setTimelines(id, reconcile(evs));
-  } catch {
-    if (!timelines[id]) setTimelines(id, []);
-  } finally {
-    loading.delete(id);
   }
 }
 
@@ -157,7 +144,7 @@ export function setAgentsRepo(path: string | null) {
   setRepo(path);
   setSessions([]);
   setSelected(null);
-  setTimelines(reconcile({}));
+  resetTimelines();
   void refreshAgents();
 }
 
@@ -171,12 +158,8 @@ export async function startAgents() {
     const a = new URLSearchParams(location.search).get("agent");
     if (a) setTimeout(() => selectAgent(a), 300);
   }
-  await onRun(
-    (run, i, e) => {
-      const t = timelines[run];
-      if (!t) return;
-      if (i === t.length) setTimelines(run, t.length, e);
-      else if (i > t.length) void ensureTimeline(run, true);
+  await startTimelines(
+    (_run, e) => {
       if (e.kind === "approval" || e.kind === "decided" || e.kind === "started") void refreshAgents();
     },
     () => void refreshAgents(),
@@ -229,7 +212,7 @@ export interface Subagent {
 
 /** The subagents a session opened (Task/Agent tool calls), nested by who opened them. */
 export function subagentsOf(m: RunMeta): Subagent[] {
-  const t = timelines[m.id] ?? [];
+  const t = timelineOf(m.id) ?? [];
   const done = new Map<string, boolean>();
   for (const e of t) if (e.kind === "tool-done") done.set(e.id, e.ok);
   const parentOf = new Map<string, string | undefined>();
@@ -247,7 +230,7 @@ export function subagentsOf(m: RunMeta): Subagent[] {
 
 /** The last thing a session did, in one line. */
 export function lastLine(m: RunMeta): string {
-  const tl = timelines[m.id] ?? [];
+  const tl = timelineOf(m.id) ?? [];
   for (let i = tl.length - 1; i >= 0; i--) {
     const e = tl[i]!;
     if (e.kind === "text") return e.text.trim().split("\n").pop() ?? "";
@@ -517,7 +500,7 @@ export function AgentPane(props: { onOpenRun: (id: string) => void; onContinue?:
           </div>
           <AgentConsole
             m={mm()}
-            events={timelines[mm().id] ?? []}
+            events={timelineOf(mm().id) ?? []}
             sub={selected()?.sub ?? null}
             onSub={(s) => selectAgent(mm().id, s)}
             kind={kindLabel(mm())}

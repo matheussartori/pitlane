@@ -1058,6 +1058,9 @@ dialog.card-sheet[open] { display: flex; flex-direction: column; }
 .ag-tool-name { color: var(--color-ink); font-weight: 700; }
 .ag-glyph { color: var(--color-muted); }
 .ag-muted { color: var(--color-muted); }
+/* The way to a long log's earlier lines, at its top: reads as a line of the log, not a control. */
+.ag-earlier { display: block; margin-bottom: var(--space-xs); padding: 0; border: 0; background: none; font: inherit; color: var(--color-muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-rule-strong); cursor: pointer; }
+.ag-earlier:hover { color: var(--color-ink-2); }
 .ag-fail { color: var(--color-fail); }
 .ag-needs { color: var(--color-accent-text); }
 .ag-said { margin-block: var(--space-2xs); color: var(--color-accent-text); }

@@ -50,6 +50,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
     sup.start_unblocker();
     sup.start_perf();
     let recovered = sup.recover()?;
+    sup.start_housekeeping();
     eprintln!("pitd: listening on {} ({recovered} interrupted run(s) recovered)", sock.display());
     // Asked to end (kill, a closed terminal, Ctrl+C), it stops what it started first: agents are
     // in groups of their own and would otherwise go on with nobody watching.
@@ -168,7 +169,14 @@ async fn connection(sup: Arc<Supervisor>, stream: UnixStream) -> Result<()> {
                 _ = lines.next_line() => return Ok(()),
             }
         } else {
-            handle(&sup, req).await
+            // On a thread of its own: most requests read files or run git, and done on the
+            // runtime's workers that would hold up what the workers are for (reading every
+            // agent's output, answering the other connections).
+            let (s, rt) = (Arc::clone(&sup), tokio::runtime::Handle::current());
+            match tokio::task::spawn_blocking(move || rt.block_on(handle(&s, req))).await {
+                Ok(r) => r,
+                Err(e) => Err(anyhow::anyhow!("the request could not be answered: {e}")),
+            }
         };
         let answer = match answer {
             Ok(v) => v,

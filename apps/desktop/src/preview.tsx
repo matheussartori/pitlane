@@ -9,6 +9,7 @@ import { t } from "./i18n";
 import { localServers } from "./terminals";
 import { openExternal } from "./api";
 import { msg } from "./format";
+import { keepUnchanged } from "./keep";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const KEY = "pitlane.preview.url";
@@ -94,7 +95,7 @@ export function PreviewScreen(props: { onTerminal: () => void }) {
     // New servers show up while you are here.
     const look = () => {
       const found = localServers();
-      setServers(found);
+      setServers((old) => keepUnchanged(old, found, (s) => s.url));
       // Nothing chosen yet: the newest server a terminal printed.
       if (!url() && found[0]) remember(found[0].url);
     };

@@ -1,6 +1,7 @@
 // One run: what the agent is doing, live, beside the figures and its handoff.
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
-import { api, isLive, onRun, type Card, type RunEvent, type RunMeta, type RunState, type Yard } from "./api";
+import { api, isLive, onRun, type Card, type RunMeta, type RunState, type Yard } from "./api";
+import { holdTimeline, timelineOf } from "./store/timelines";
 import { kindLabel } from "./agents";
 import { AgentConsole } from "./console";
 import { LaneTrack } from "./board";
@@ -39,7 +40,6 @@ export function RunScreen(props: {
   onTerminal: (path: string, label: string) => void;
   onCode: (path: string) => void;
 }) {
-  const [events, setEvents] = createSignal<Map<number, RunEvent>>(new Map());
   const [sub, setSub] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [more, setMore] = createSignal(false);
@@ -62,50 +62,32 @@ export function RunScreen(props: {
   window.addEventListener("keydown", onEscape);
   onCleanup(() => window.removeEventListener("keydown", onEscape));
 
-  const add = (pairs: [number, RunEvent][]) =>
-    setEvents((prev) => {
-      const next = new Map(prev);
-      for (const [i, e] of pairs) next.set(i, e);
-      return next;
-    });
-
-  // Once the run is known (the list may land after the screen opens): listen first, then read
-  // the history, so an event can arrive twice but is never missed.
+  // The run's events come from the one timeline store every screen reads (the Terminal's Agents
+  // shows the same session): held while this page is open, grown by the daemon's events.
   createEffect(
     on(
       () => props.meta?.id,
       (id) => {
-        setEvents(new Map());
         setError(null); // the last run's failure is not this one's
         if (!id) return;
+        onCleanup(holdTimeline(id));
         let off: (() => void) | undefined;
         let gone = false;
         onCleanup(() => {
           gone = true;
           off?.();
         });
-        void (async () => {
-          const unlisten = await onRun(
-            (run, i, e) => run === id && add([[i, e]]),
-            (run) => run === id && props.onChanged(),
-          );
-          if (gone) return unlisten();
-          off = unlisten;
-          try {
-            const tl = await api.runTimeline(id);
-            // Another run opened meanwhile: its map is not this one's.
-            if (gone) return;
-            add(tl);
-            if (props.meta && isLive(props.meta.state)) await api.runFollow(id, 0);
-          } catch (e) {
-            setError(msg(e));
-          }
-        })();
+        // Its end refreshes the page (the card moved on, the checks ran).
+        void onRun(
+          () => {},
+          (run) => run === id && props.onChanged(),
+        ).then((unlisten) => (gone ? unlisten() : (off = unlisten)));
+        if (props.meta && isLive(props.meta.state)) void api.runFollow(id, 0).catch((e) => setError(msg(e)));
       },
     ),
   );
 
-  const ordered = createMemo(() => [...events().entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e));
+  const ordered = () => (props.meta ? timelineOf(props.meta.id) : undefined) ?? [];
   // A Task's steps show in the log when you open it; another run starts on the session itself.
   createEffect(on(() => props.meta?.id, () => setSub(null)));
 

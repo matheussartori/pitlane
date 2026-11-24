@@ -102,6 +102,8 @@ export default {
   // agents
   "Stopping {n} agent": "Parando {n} agente",
   "Stopping {n} agents": "Parando {n} agentes",
+  "Show {n} earlier line": "Mostrar {n} linha anterior",
+  "Show {n} earlier lines": "Mostrar {n} linhas anteriores",
   "Nothing was running": "Nada estava em execução",
   "Each ends its current step; anything still there after a few seconds is killed.": "Cada um termina o passo atual; o que ainda restar após alguns segundos é encerrado à força.",
   "Could not stop the agents": "Não foi possível parar os agentes",

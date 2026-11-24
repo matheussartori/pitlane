@@ -180,6 +180,14 @@ export function CardSheet(props: {
   let moveBox: HTMLDivElement | undefined;
   dismissable(() => moveBox, moveMenu, () => setMoveMenu(false));
   const [lane, setLane] = createSignal(props.card.lane ?? "");
+  // The card can change under an open sheet (its agent renames it, an analysis rewrites the
+  // spec). A field you have not touched follows the card; one you are editing keeps your text,
+  // and the sheet shows as edited until you save or discard.
+  const follow = (theirs: () => string, mine: () => string, set: (v: string) => void) =>
+    createEffect(on(theirs, (next, prev) => mine() === prev && set(next), { defer: true }));
+  follow(() => props.card.title, title, setTitle);
+  follow(() => props.card.body, body, setBody);
+  follow(() => props.card.lane ?? "", lane, setLane);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [note, setNote] = createSignal("");

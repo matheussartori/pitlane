@@ -2094,3 +2094,30 @@ async fn run_all_lands_a_stage_then_waits_for_the_look_it_asked_for() {
     assert!(s.recheck(fx.repo.clone(), id).unwrap());
     assert_eq!(card_state(&fx, id).0, CardState::Queued, "back in Run all's queue");
 }
+
+#[tokio::test]
+async fn old_records_are_deleted_and_the_list_follows_the_files() {
+    let fx = fx();
+    let s = sup(&fx);
+    let now = pit_core::time::now_secs();
+    let day = 86_400;
+    let record = |id: &str, started: u64, ended: Option<u64>| {
+        let m = pit_core::runs::RunMeta { id: id.into(), repo: fx.repo.clone(), card: 7, started_at: started, ended_at: ended, ..Default::default() };
+        let dir = pit_core::runs::runs_dir(&fx.home).join(id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("meta.json"), serde_json::to_string(&m).unwrap()).unwrap();
+        fs::write(dir.join("timeline.jsonl"), "").unwrap();
+    };
+    record("old-first", now - 90 * day, Some(now - 89 * day));
+    record("old-latest", now - 80 * day, Some(now - 79 * day));
+    record("recent", now - 2 * day, Some(now - day));
+    let ids = |s: &Arc<Supervisor>| s.sessions(None).unwrap().into_iter().map(|m| m.id).collect::<Vec<_>>();
+    assert_eq!(ids(&s), ["recent", "old-latest", "old-first"]);
+    // "recent" is the card's latest run; the two old ones are older than that, so both go.
+    assert_eq!(s.prune_records(), 2);
+    assert_eq!(ids(&s), ["recent"]);
+    assert!(!pit_core::runs::runs_dir(&fx.home).join("old-first").exists());
+    // A record rewritten on disk is read again, not answered from memory.
+    record("recent", now - 2 * day, Some(now));
+    assert_eq!(s.sessions(None).unwrap()[0].ended_at, Some(now));
+}

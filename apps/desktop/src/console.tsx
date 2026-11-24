@@ -2,7 +2,7 @@
 // an edit as red and green lines), the questions it asks at its end, a prompt that talks to it
 // while it works (Ctrl+C stops it, / for commands) and the model and effort under the prompt.
 // The same console wherever a session shows: Terminal › Agents and a card's run.
-import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, untrack, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { api, isLive, type RunEvent, type RunMeta } from "./api";
 import { plural, t } from "./i18n";
@@ -59,6 +59,9 @@ function relTo(worktree: string | null | undefined) {
   };
 }
 
+/** How many of a log's last lines are drawn when it opens, and how many more each request adds. */
+const LOG_WINDOW = 400;
+
 export function AgentConsole(props: {
   m: RunMeta;
   /** The session's whole timeline, in order. */
@@ -82,13 +85,11 @@ export function AgentConsole(props: {
   // A card's run at work is asked on the side by default: a copy of its conversation answers,
   // and the run goes on as if nobody had asked. ⌘Enter tells the run itself.
   const asksAside = () => live() && !props.sub && (m().kind ?? "run") === "run";
-  // Asides asked and not answered yet.
-  const asking = createMemo(() => {
-    const open = new Set<string>();
-    for (const e of props.events) if (e.kind === "aside") e.by === "you" ? open.add(e.session) : open.delete(e.session);
-    return open;
-  });
-  const rel = createMemo(() => relTo(m().worktree));
+  // Keyed on the values themselves: the session's record is read anew every few seconds, and
+  // nothing below should start over for a record that says the same.
+  const runId = createMemo(() => m().id);
+  const worktree = createMemo(() => m().worktree);
+  const rel = createMemo(() => relTo(worktree()));
 
   // One relative copy per event, so the log keeps its rows while the timeline grows.
   const relCache = new WeakMap<RunEvent, RunEvent>();
@@ -103,18 +104,51 @@ export function AgentConsole(props: {
     relCache.set(e, r);
     return r;
   };
-  const results = createMemo(() => {
-    const out = new Map<string, Done>();
-    for (const e of props.events) if (e.kind === "tool-done") out.set(e.id, relative(e) as Done);
-    return out;
+  // What the whole timeline says, kept as it grows: each event is looked at once, when it
+  // arrives, instead of the timeline being walked again for every new line (a long run has
+  // thousands). Starts over for another session, or when the timeline was read anew.
+  const fresh = () => ({
+    run: "",
+    rel: rel(),
+    n: 0,
+    /** Tool calls, by id. */
+    calls: new Set<string>(),
+    /** Their results, by the call's id. */
+    results: new Map<string, Done>(),
+    /** Asides asked and not answered yet. */
+    asking: new Set<string>(),
+    /** Where the agent started (setup notes before it are dropped), or -1. */
+    started: -1,
+    /** A turn that ended in failure: the exit after it says nothing new. */
+    failed: false,
   });
+  let seen = fresh();
+  const scanned = createMemo(
+    () => {
+      const all = props.events;
+      if (seen.run !== runId() || seen.rel !== rel() || all.length < seen.n) seen = { ...fresh(), run: runId() };
+      for (let i = seen.n; i < all.length; i++) {
+        const e = all[i]!;
+        if (e.kind === "tool") seen.calls.add(e.id);
+        else if (e.kind === "tool-done") seen.results.set(e.id, relative(e) as Done);
+        else if (e.kind === "aside") e.by === "you" ? seen.asking.add(e.session) : seen.asking.delete(e.session);
+        else if (e.kind === "started" && seen.started < 0) seen.started = i;
+        else if (e.kind === "finished" && !e.ok) seen.failed = true;
+      }
+      seen.n = all.length;
+      return seen;
+    },
+    undefined,
+    { equals: false },
+  );
+  const results = () => scanned().results;
+  const asking = () => scanned().asking;
   // Results show under their call, as in Claude Code (one with no call in view, a failure say,
   // still shows on its own); a subagent's steps show behind its Task; setup notes only until the
   // agent starts.
   const shown = createMemo(() => {
     const all = props.events;
-    const calls = new Set(all.flatMap((e) => (e.kind === "tool" ? [e.id] : [])));
-    const started = all.findIndex((e) => e.kind === "started");
+    const { calls, started, failed } = scanned();
     const s = props.sub;
     return all
       .filter((e, i) => {
@@ -124,7 +158,7 @@ export function AgentConsole(props: {
         if (e.kind === "tool-done" && calls.has(e.id)) return false;
         if (e.kind === "note" && started >= 0 && i < started) return false;
         // "Finished" already said it; only an exit that says something new stays.
-        if (e.kind === "exited" && (e.state === "done" || (e.state === "failed" && all.some((x) => x.kind === "finished" && !x.ok)))) return false;
+        if (e.kind === "exited" && (e.state === "done" || (e.state === "failed" && failed))) return false;
         return true;
       })
       .map(relative);
@@ -147,6 +181,21 @@ export function AgentConsole(props: {
   let input: HTMLInputElement | undefined;
   let root: HTMLDivElement | undefined;
   const tail = tailFollower(32);
+
+  // A long log opens on its last lines: drawing thousands of rows at once is what makes opening
+  // a long run slow. The earlier ones come in on request, a screenful at a time; the first line
+  // drawn stays put while the log grows, so nothing moves under what you are reading.
+  const [from, setFrom] = createSignal(0);
+  const visible = createMemo(() => (from() > 0 ? shown().slice(from()) : shown()));
+  let logEl: HTMLElement | undefined;
+  createEffect(on(() => shown().length, (len, prev) => len - (prev ?? 0) > LOG_WINDOW && setFrom(len - LOG_WINDOW)));
+  createEffect(on([runId, () => props.sub], () => setFrom(Math.max(0, untrack(() => shown().length) - LOG_WINDOW)), { defer: true }));
+  const showEarlier = () => {
+    const before = logEl?.scrollHeight ?? 0;
+    setFrom(Math.max(0, from() - LOG_WINDOW));
+    // Keep what was on screen where it was: the new rows went in above it.
+    if (logEl) logEl.scrollTop += logEl.scrollHeight - before;
+  };
 
   createEffect(on([() => shown().length, () => props.sub], () => tail.follow()));
   // A new session in view: follow it from its end. The prompt takes the keys, unless a question
@@ -291,8 +340,13 @@ export function AgentConsole(props: {
           <span class="console-crumb-sub">{subLabel()}</span>
         </div>
       </Show>
-      <div class="ag-log" ref={tail.ref} aria-live="polite">
-        <For each={shown()} fallback={<div class="ag-line ag-muted">{live() ? t("Starting…") : t("Nothing recorded.")}</div>}>
+      <div class="ag-log" ref={(el) => (tail.ref(el), (logEl = el))} aria-live="polite">
+        <Show when={from() > 0}>
+          <button type="button" class="ag-earlier" onClick={showEarlier}>
+            {plural(from(), "Show {n} earlier line", "Show {n} earlier lines")}
+          </button>
+        </Show>
+        <For each={visible()} fallback={<div class="ag-line ag-muted">{live() ? t("Starting…") : t("Nothing recorded.")}</div>}>
           {(e) => <Line e={e} m={m()} done={e.kind === "tool" ? results().get(e.id) : undefined} asking={e.kind === "aside" && asking().has(e.session)} onSub={props.onSub} />}
         </For>
         <Show when={working()}>
