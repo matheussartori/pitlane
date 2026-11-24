@@ -216,18 +216,32 @@ export function BoardView(props: {
     if (!d?.live || d.col === col) return undefined;
     return dropMove(d.id, col) ? "ok" : "no";
   };
-  /** Near the top or bottom edge of its column, a dragged card scrolls the column, faster the closer it gets. */
+  /** Near the top or bottom edge of its column, a dragged card scrolls the column, and near the board's left or right edge
+   *  the board, faster the closer it gets. */
   const EDGE = 64;
+  const edgeSpeed = (near: number, far: number) =>
+    near < EDGE ? -Math.ceil(((EDGE - Math.max(near, 0)) / EDGE) * 16) : far < EDGE ? Math.ceil(((EDGE - Math.max(far, 0)) / EDGE) * 16) : 0;
   let scrolling = 0;
   function autoscroll() {
     scrolling = 0;
-    const d = drag();
-    const body = d?.live && d.over ? bodyEls[d.over] : undefined;
-    if (!d || !body) return;
+    let d = drag();
+    if (!d?.live) return;
+    if (boardEl && boardEl.scrollWidth > boardEl.clientWidth) {
+      const b = boardEl.getBoundingClientRect();
+      const before = boardEl.scrollLeft;
+      boardEl.scrollLeft += edgeSpeed(d.px - b.left, b.right - d.px);
+      if (boardEl.scrollLeft !== before) {
+        d = { ...d, over: columnAt(d.px) };
+        setDrag(d);
+      }
+    }
+    const body = d.over ? bodyEls[d.over] : undefined;
+    if (!body) {
+      scrolling = requestAnimationFrame(autoscroll);
+      return;
+    }
     const r = body.getBoundingClientRect();
-    const top = d.py - r.top;
-    const bottom = r.bottom - d.py;
-    const speed = top < EDGE ? -Math.ceil(((EDGE - Math.max(top, 0)) / EDGE) * 16) : bottom < EDGE ? Math.ceil(((EDGE - Math.max(bottom, 0)) / EDGE) * 16) : 0;
+    const speed = edgeSpeed(d.py - r.top, r.bottom - d.py);
     if (speed !== 0) {
       const before = body.scrollTop;
       body.scrollTop += speed;
