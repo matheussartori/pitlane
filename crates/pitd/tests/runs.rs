@@ -58,6 +58,8 @@ while IFS= read -r line; do
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":100,"total_cost_usd":0.02,"usage":{"input_tokens":5,"output_tokens":7},"structured_output":{"status":"done","summary":"Did it.","questions":[{"text":"Also the studio?","options":["No","Yes"],"recommended":0}]}}'
     elif [ "$FAKE_MODE" = "partial" ]; then
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"partial","summary":"Stage 1 of 3: measured.","left":["Stage 2: the walls","Stage 3: the props"]}}'
+    elif [ "$FAKE_MODE" = "check" ]; then
+      echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"partial","summary":"The safe, made again.","left":["The other props"],"check":{"text":"Is the safe good to build on?","options":["Go on","Redo it"],"recommended":0,"context":"See renders/safe.webp."}}}'
     elif [ "$FAKE_MODE" = "server" ]; then
       echo '{"type":"system","subtype":"background_tasks_changed","tasks":[{"id":"b1","command":"npm run dev"}]}'
       echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":100,"total_cost_usd":0.01,"usage":{},"structured_output":{"status":"done","summary":"Did it, server left up."}}'
@@ -2005,4 +2007,90 @@ async fn a_queued_card_started_by_hand_stays_in_run_all() {
     let m = s.start(fx.repo.clone(), other, None, Default::default()).unwrap();
     assert!(!m.autopilot);
     wait_end(&s, &m.id).await;
+}
+
+/// A run that hands off part of the card can ask you to look at what it made before the next
+/// stage builds on it: the card waits for that answer in the Inbox instead of sitting in Review
+/// with nothing to do, goes on as soon as you answer (no reading again), and its next run picks
+/// the session up with your answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_partial_run_can_ask_for_your_look_before_the_card_goes_on() {
+    let fx = fx();
+    let id = card(&fx, "Props in stages");
+    let s = fake_in(&fx, "check");
+    let meta = s.start(fx.repo.clone(), id, None, Default::default()).unwrap();
+    let end = wait_end(&s, &meta.id).await;
+    assert_eq!(end.state, RunState::Done, "{:?}", end.error);
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!(c.state, CardState::Blocked);
+    assert_eq!(c.blocked.as_ref().map(|b| b.reason), Some(cards::BlockReason::Check));
+    assert_eq!(c.open_questions(), 1, "the check is in the Inbox");
+    assert_eq!(c.questions[0].text, "Is the safe good to build on?");
+    assert_eq!(c.paused.as_deref(), Some(meta.id.as_str()));
+
+    let q = c.questions[0].id;
+    let a = cards::answer(&r, id, q, "1").unwrap();
+    assert!(cards::wants_recheck(&a.card));
+    assert!(s.recheck(fx.repo.clone(), id).unwrap());
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!((c.state, c.blocked.is_none()), (CardState::Ready, true), "on at once, nothing read again");
+    assert_eq!(c.paused.as_deref(), Some(meta.id.as_str()), "the next run resumes the session");
+}
+
+/// Under Run all the stage it finished lands first; then, instead of going back to the queue,
+/// the card waits for the look it asked for.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_all_lands_a_stage_then_waits_for_the_look_it_asked_for() {
+    let fx = fx();
+    let origin = fx.home.parent().unwrap().join("origin.git");
+    git(
+        fx.home.parent().unwrap(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(
+        &fx.repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&fx.repo, &["push", "-q", "origin", "main"]);
+    git(&fx.repo, &["push", "-q", "origin", "main:dev"]);
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let id = card(&fx, "Maps and props, in stages");
+    git(&fx.repo, &["switch", "-q", "feat/x"]);
+    fs::write(fx.repo.join("stage-1.md"), "measured\n").unwrap();
+    git(&fx.repo, &["add", "stage-1.md"]);
+    git(&fx.repo, &["commit", "-qm", "stage 1"]);
+    git(&fx.repo, &["switch", "-q", "main"]);
+    let s = fake_in(&fx, "check");
+    s.start_queue();
+
+    let opts = pitd::supervisor::StartOpts {
+        autopilot: true,
+        ..Default::default()
+    };
+    let run = s.start(fx.repo.clone(), id, None, opts).unwrap();
+    let r = Repo::open(&fx.repo, fx.home.parent().unwrap(), &fx.home).unwrap();
+    for _ in 0..600 {
+        if card_state(&fx, id).0 == CardState::Blocked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let c = cards::get(&r, id).unwrap();
+    assert_eq!(c.blocked.as_ref().map(|b| b.reason), Some(cards::BlockReason::Check), "{:?}", c.notes.last());
+    assert_eq!((c.open_questions(), c.paused.as_deref()), (1, Some(run.id.as_str())));
+    git(&fx.repo, &["fetch", "-q", "origin"]);
+    let merged = Command::new("git").arg("-C").arg(&fx.repo).args(["merge-base", "--is-ancestor", "feat/x", "origin/dev"]).status().unwrap();
+    assert!(merged.success(), "the stage it finished landed");
+
+    cards::answer(&r, id, c.questions[0].id, "0").unwrap();
+    assert!(s.recheck(fx.repo.clone(), id).unwrap());
+    assert_eq!(card_state(&fx, id).0, CardState::Queued, "back in Run all's queue");
 }

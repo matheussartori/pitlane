@@ -38,6 +38,7 @@ export const stateLabel: Record<CardState, string> = {
 /** What blocked a card, on its tile. */
 export const blockLabel: Record<BlockReason, string> = {
   questions: "Blocked on questions",
+  check: "Waits for your look",
   stuck: "Agent stuck",
   failed: "Run failed",
   "no-route": "No account free",
@@ -56,6 +57,7 @@ export function unblockActions(card: Card): { action: UnblockAction; label: stri
   if (card.state !== "blocked" || b?.checking || (card.questions ?? []).some((q) => q.answer == null)) return [];
   const retry: Record<BlockReason, [string, string]> = {
     questions: ["Read again", "Read the card again with your answers; it goes back to the Backlog when nothing else is open"],
+    check: ["Go on", "Send it on with your answer; its next run picks up the agent's session"],
     stuck: ["Try again", "Run it again; the card's notes say where the last run stopped"],
     failed: ["Try again", "Run it again; a paused session picks up where it was"],
     "no-route": ["Try now", "Run it now, if an account is free"],

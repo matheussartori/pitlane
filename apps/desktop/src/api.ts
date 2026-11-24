@@ -187,7 +187,7 @@ export interface CardNote {
 }
 
 /** Why a card is blocked: what would free it. */
-export type BlockReason = "questions" | "stuck" | "failed" | "no-route" | "api-key" | "conflict" | "checks" | "other";
+export type BlockReason = "questions" | "check" | "stuck" | "failed" | "no-route" | "api-key" | "conflict" | "checks" | "other";
 export interface Block {
   reason: BlockReason;
   detail?: string;

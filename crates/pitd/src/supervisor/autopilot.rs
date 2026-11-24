@@ -199,6 +199,30 @@ impl Supervisor {
         if !unfinished(&last) {
             return;
         }
+        // It asked for your look at what it made before the next stage builds on it: the card
+        // waits for that answer, and its next run picks the session up with it.
+        if let Ok(Some(block)) = super::card::ask_check(&r, &last) {
+            let _ = cards::update(
+                &r,
+                card,
+                CardPatch {
+                    state: Some(CardState::Blocked),
+                    blocked: Some(block),
+                    paused: Some(Some(last.id.clone())),
+                    ..Default::default()
+                },
+            );
+            let _ = cards::note(
+                &r,
+                card,
+                "pitlane",
+                &format!(
+                    "Run {} landed what it did and asked you to look at it before the card goes on: answer in the Inbox, and the card goes back to the queue with your answer.",
+                    last.id
+                ),
+            );
+            return;
+        }
         let _ = cards::update(
             &r,
             card,

@@ -365,7 +365,7 @@ pub fn due(repo: &Repo, now: u64) -> Result<Vec<Card>> {
 /// nothing else is open.
 pub fn wants_recheck(card: &Card) -> bool {
     card.state == CardState::Blocked
-        && card.blocked.as_ref().is_some_and(|b| b.reason == BlockReason::Questions && b.checking.is_none())
+        && card.blocked.as_ref().is_some_and(|b| matches!(b.reason, BlockReason::Questions | BlockReason::Check) && b.checking.is_none())
         && card.open_questions() == 0
 }
 

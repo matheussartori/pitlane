@@ -53,7 +53,7 @@ impl Supervisor {
             }
             Unblock::Retry => {}
         }
-        if block.reason == BlockReason::Questions {
+        if matches!(block.reason, BlockReason::Questions | BlockReason::Check) {
             if card.open_questions() > 0 {
                 bail!("card #{id} has {} open question(s); answer them first", card.open_questions());
             }

@@ -33,7 +33,14 @@ pub fn handoff_schema() -> Value {
                     "text": { "type": "string" },
                     "options": { "type": "array", "items": { "type": "string" } },
                     "recommended": { "type": "integer" },
-                    "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is about, what you found, and what each option changes." } }, "required": ["text", "context"] } }
+                    "context": { "type": "string", "description": "One to three sentences so the person can answer without opening the card: what part of the work this is about, what you found, and what each option changes." } }, "required": ["text", "context"] } },
+            "check": { "type": "object", "description": "Only with status partial, and only when the next stage builds on something you made whose quality only the person can judge by looking (a model, art, a look, how it feels): one question asking them to look at it before the card goes on, with options (go on as it is, or what to redo) and the one you recommend. The card waits for the answer, and your session hears it. Never for what tests, screenshots you checked yourself or the judge settle.",
+                "properties": {
+                    "text": { "type": "string", "description": "The question, short: what to look at and whether it is good enough to build on." },
+                    "options": { "type": "array", "items": { "type": "string" } },
+                    "recommended": { "type": "integer" },
+                    "context": { "type": "string", "description": "Where to look (the paths of the renders, screenshots or files) and what you changed, in one to three sentences." } },
+                "required": ["text", "context"] }
         },
         "required": ["status", "summary"]
     })

@@ -300,6 +300,24 @@ pub(super) fn retry_policy(reason: cards::BlockReason, retries: u32, m: &RunMeta
     }
 }
 
+/// What a run that handed off part of the card asked you to look at (`check`), if it did.
+pub(super) fn check_of(m: &RunMeta) -> Option<NewQuestion> {
+    let h = m.handoff.as_ref()?;
+    if h.get("status").and_then(Value::as_str) != Some("partial") {
+        return None;
+    }
+    serde_json::from_value::<NewQuestion>(h.get("check")?.clone()).ok().filter(|q| !q.text.trim().is_empty())
+}
+
+/// Puts a run's check on its card as an open question, for the Inbox; returns the block that
+/// keeps the card waiting for the answer.
+pub(super) fn ask_check(r: &Repo, m: &RunMeta) -> Result<Option<cards::Block>> {
+    let Some(q) = check_of(m) else { return Ok(None) };
+    let detail = short(&q.text);
+    cards::ask(r, m.card, vec![q])?;
+    Ok(Some(cards::Block::new(cards::BlockReason::Check, detail, Some(m.id.clone()))))
+}
+
 /// The first line of a reason, cut to fit a board tile and a card's header.
 pub(super) fn short(text: &str) -> String {
     let line = text.trim().lines().next().unwrap_or_default().trim();
@@ -339,14 +357,17 @@ pub(super) fn resume_message(c: &cards::Card, prev: &RunMeta) -> String {
         )
     }));
     let asked = prev.handoff.as_ref().and_then(|h| h.get("status")).and_then(Value::as_str) == Some("blocked");
+    let checked = check_of(prev).is_some();
     let mut text = if asked {
         "You ended blocked on your questions; they are answered now, and you are resumed in the same session: carry on with the answers below. End with the handoff."
+    } else if checked {
+        "You handed off part of the card and asked the person to look at what you made. They answered below, and you are resumed in the same session: redo what they did not like, else go on with what is left. End with the handoff."
     } else {
         "You were stopped and are resumed in the same session: carry on from where you stopped (check the worktree first, a step may have been cut short). End with the handoff."
     }
     .to_owned();
     if !news.is_empty() {
-        text.push_str(if asked { "\n\nSince you stopped, the card got:\n" } else { "\n\nWhile you were stopped, the card got:\n" });
+        text.push_str(if asked || checked { "\n\nSince you stopped, the card got:\n" } else { "\n\nWhile you were stopped, the card got:\n" });
         text.push_str(&news.join("\n"));
     }
     text
@@ -417,7 +438,11 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         asked = cards::get(&r, m.card).is_ok_and(|c| c.questions.iter().any(|q| q.is_open() && q.run.as_deref() == Some(m.id.as_str())));
     }
     let summary = m.handoff.as_ref().and_then(|h| h.get("summary")).and_then(Value::as_str).unwrap_or_default();
+    // It handed off part of the card and wants your look first. Under Run all its work lands
+    // first, and the card waits for the answer instead of going back to the queue (autopilot.rs).
+    let check = if m.state == RunState::Done && !m.autopilot { ask_check(&r, m)? } else { None };
     let (next, block) = match (m.state, status) {
+        (RunState::Done, _) if check.is_some() => (CardState::Blocked, check),
         // It stopped to ask: once you answer, Pitlane rechecks the card and frees it.
         (RunState::Done, Some("blocked")) if asked => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Questions, short(summary), Some(m.id.clone())))),
         (RunState::Done, Some("blocked")) => (CardState::Blocked, Some(cards::Block::new(cards::BlockReason::Stuck, short(summary), Some(m.id.clone())))),
@@ -448,7 +473,7 @@ pub(super) fn settle_card(m: &RunMeta, home: &Path, ran: bool) -> Result<()> {
         None
     } else if m.state == RunState::Stopped {
         if ran { Some(m.id.clone()) } else { m.resumed_from.clone() }
-    } else if block.as_ref().is_some_and(|b| b.reason == cards::BlockReason::Questions) && ran {
+    } else if block.as_ref().is_some_and(|b| matches!(b.reason, cards::BlockReason::Questions | cards::BlockReason::Check)) && ran {
         Some(m.id.clone())
     } else {
         None

@@ -124,6 +124,9 @@ impl Question {
 pub enum BlockReason {
     /// The agent stopped to ask: answering frees it (after a recheck).
     Questions,
+    /// The agent handed off part of the card and asked you to look at what it made before the
+    /// next stage builds on it: answering frees it at once, and the next run hears the answer.
+    Check,
     /// The agent ended blocked without a question: something it cannot do or decide.
     Stuck,
     /// The run failed (the agent crashed, or could not start).

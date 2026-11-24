@@ -9,8 +9,21 @@ impl Supervisor {
     /// on the card, which keeps waiting for you. Returns at once; the reading goes on behind.
     pub fn recheck(self: &Arc<Self>, repo: PathBuf, id: u32) -> Result<bool> {
         let r = Repo::open(&repo, &home_dir(), &self.cfg.home)?;
-        if !cards::wants_recheck(&cards::get(&r, id)?) {
+        let card = cards::get(&r, id)?;
+        if !cards::wants_recheck(&card) {
             return Ok(false);
+        }
+        // Its agent asked for your look and you gave it: nothing to read again, the next run
+        // hears your answer in its own session.
+        if card.blocked.as_ref().is_some_and(|b| b.reason == cards::BlockReason::Check) {
+            let batch = self.latest_run(&r.root, id).is_some_and(|m| m.autopilot);
+            cards::update(&r, id, CardPatch { state: Some(if batch { CardState::Queued } else { CardState::Ready }), ..Default::default() })?;
+            let _ = cards::note(&r, id, "pitlane", if batch {
+                "You answered the agent's check, so the card is back in the queue. Its next run picks up the agent's session with your answer."
+            } else {
+                "You answered the agent's check, so the card is back in the Backlog. Its next run picks up the agent's session with your answer."
+            });
+            return Ok(true);
         }
         self.reread(r, id, Reading::Recheck)
     }
