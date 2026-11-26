@@ -31,7 +31,7 @@
 You write cards on a board. Pitlane asks you every question about them up front, gives each card its own branch and worktree, runs Claude Code on it, has the work checked, and merges it through a queue. Every agent it starts shows up live, and you can stop any of them.
 
 > [!NOTE]
-> **Pre-release (v0.1).** macOS only for now, and there are no signed builds yet: you build it from source. V1 supports Claude Code only; Codex and other agents are planned for V2.
+> **Pre-release (v0.1).** macOS only for now, and there are no signed builds yet: you build it from source. V1 supports Claude Code only. Support for other agents, Codex and Antigravity first, and for Linux and Windows is coming once the macOS version is stable; it still has rough edges.
 
 ## Contents
 
@@ -330,8 +330,12 @@ tools/screenshots.sh  retakes the README screenshots in .github/assets
 
 ## Roadmap
 
+- A stable macOS version. It still has known issues, and they come first.
 - Signed and notarized macOS builds, published as releases.
-- Codex (`codex app-server`) and other agents (V2).
+- Other agents (V2): Codex (`codex app-server`) and Antigravity first, then more.
+- Linux and Windows.
+
+The new agents and platforms start once the macOS version is stable.
 
 ## Contributing
 
