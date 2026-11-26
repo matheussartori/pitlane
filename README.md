@@ -287,6 +287,7 @@ The board key is the normalized remote URL. Moving the folder or cloning the rep
 ## Development
 
 ```bash
+npm install                        # once, at the repository root: installs the commit-msg hook
 cargo test                         # workspace tests (temporary git repos)
 cargo clippy --workspace           # keep it clean
 cd apps/desktop && npm run build   # type-check and bundle the UI
@@ -300,6 +301,7 @@ Conventions:
 - Don't run `cargo fmt`. The repository is not rustfmt-formatted, and running it rewrites dozens of files.
 - UI text is in English. Every string goes through `t()`, and translations live in `apps/desktop/src/locales/`.
 - UI work follows the locked design system in [`design/design.md`](design/design.md).
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) (`type(scope): subject`, then an optional prose body). commitlint checks every message in the `commit-msg` hook and rejects the commit when it doesn't match.
 
 ## Project layout
 
@@ -336,8 +338,9 @@ tools/screenshots.sh  retakes the README screenshots in .github/assets
 Contributions are welcome. In short:
 
 1. For anything bigger than a small fix, [open an issue](../../issues/new/choose) first so we can agree on the approach.
-2. Fork, branch, and keep `cargo test`, `cargo clippy --workspace` and `npm run build` passing. Don't run `cargo fmt`.
-3. Open a pull request that says what changes for the user.
+2. Fork, branch, run `npm install` at the root once, and keep `cargo test`, `cargo clippy --workspace` and `npm run build` passing. Don't run `cargo fmt`.
+3. Write [Conventional Commits](https://www.conventionalcommits.org) messages; the `commit-msg` hook checks them.
+4. Open a pull request that says what changes for the user.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the details. Please follow the [code of conduct](CODE_OF_CONDUCT.md), and report security issues privately as described in [SECURITY.md](SECURITY.md).
 
