@@ -3,10 +3,9 @@
 AI coding-agent orchestrator: terminal + editor + kanban in one local desktop app. One Rust daemon (`pitd`) owns boards, worktrees, runs, the merge queue and quotas; thin UIs (Tauri desktop, `pit` CLI, `pit mcp`) talk to it. Overview and commands: `README.md`.
 
 ## Read first
-- `RETOMADA.md`: current status, decisions already made (don't reopen them without a reason), pending work. Add a short entry when a delivery lands.
-- `PLANO.html`: the product plan (flow, brain, account and model routing, launching sessions, branches and worktrees, roadmap, risks). Published as an artifact; republish details are in `RETOMADA.md`.
 - `design/design.md`: the locked design system. Any UI work follows it; `design/index.html` is the live specimen.
-- `docs/research/ux-research.md`: what devs love, hate and miss in editors, terminals, agent managers and git tools. Principles P1 to P10 come from it.
+- `CONTRIBUTING.md`: the contribution rules every change keeps.
+- The maintainer's status notes, product plan and research live outside the repo; `CLAUDE.local.md` (not in git) points to them when present.
 
 ## Hard rules
 - Agents are launched through their official, unmodified CLIs (`claude -p` stream-json). Pitlane never reads, copies, stores or proxies login tokens, and never uses subscription OAuth through an SDK.

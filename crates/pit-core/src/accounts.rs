@@ -1,6 +1,6 @@
 //! Accounts and the route a run takes through them, from `~/.pitlane/routing.toml`.
 //!
-//! The rules come from the providers' terms (PLANO, "Roteador de contas e modelos"):
+//! The rules come from the providers' terms:
 //! - as many accounts as you like, but moving between two subscription accounts of the same
 //!   provider is always your hand (`pit account use`), never automatic and never suggested;
 //! - the route may move on its own only between models, between providers, or to an API key;

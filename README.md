@@ -300,7 +300,6 @@ apps/desktop/
   scripts/         fetch code-server and Whisper, build the pit sidecar
   vscode-bridge/   bundled VS Code extension (⌘L "Ask Claude about this")
 design/            design system: tokens, base and component CSS, specimen
-docs/research/     UX, terminal, editor and UI research; Phase 0 benchmark
 tools/bench/       replay benchmark for the briefing
 tools/screenshots.sh  retakes the README screenshots in .github/assets
 ```
@@ -318,8 +317,6 @@ tools/screenshots.sh  retakes the README screenshots in .github/assets
 - Signed and notarized macOS builds, published as releases.
 - Codex (`codex app-server`) and other agents (V2).
 
-[`RETOMADA.md`](RETOMADA.md) has the detailed status and what's next (in Portuguese).
-
 ## Contributing
 
 Contributions are welcome. In short:
@@ -332,10 +329,8 @@ Contributions are welcome. In short:
 
 ## Documentation
 
-- [`PLANO.html`](PLANO.html): product plan (flow, brain, routing, sessions, branches, roadmap, risks). Portuguese.
-- [`RETOMADA.md`](RETOMADA.md): current status, decisions made so far, and what's next. Portuguese.
 - [`design/design.md`](design/design.md) and [`design/index.html`](design/index.html): design system and live specimen.
-- [`docs/research/`](docs/research): UX research (principles P1–P10), terminals, editors, UI trends, and the Phase 0 benchmark.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): how to contribute and the rules every change keeps.
 
 ## Acknowledgements
 

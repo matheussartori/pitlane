@@ -1,7 +1,7 @@
 # Design: Pitlane
 
 The locked system. Every UI change reads this first; surfaces share it. Change it on purpose; the file is the rule.
-Live specimen: `design/index.html`. Research behind it: `docs/research/ux-research.md`.
+Live specimen: `design/index.html`.
 
 ## System
 - Genre: modern-minimal, app scope (a tool people work in, not a page they read)
