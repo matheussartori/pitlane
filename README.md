@@ -53,11 +53,25 @@ You write cards on a board. Pitlane asks you every question about them up front,
 
 ## How it works
 
+```mermaid
+flowchart TB
+  subgraph plan ["Ask everything first"]
+    direction LR
+    B["<b>Backlog</b><br/>your ideas"] -- Analyse --> I["<b>Inbox</b><br/>you answer the<br/>questions once"]
+    I -- Start --> Q["<b>Queued</b><br/>Run all picks what<br/>can run in parallel"]
+  end
+  subgraph work ["Then run, check, ship"]
+    direction LR
+    P["<b>In progress</b><br/>one worktree<br/>per card"] --> R["<b>Review</b><br/>checks + judge,<br/>then you decide"]
+    R -- Ask for changes --> P
+    R -- Approve --> M["<b>Merge queue</b><br/>into dev,<br/>then main"]
+  end
+  plan --> work
+  classDef you stroke:#f08c2e,stroke-width:2px
+  class I,R you
 ```
- Backlog ──Analyse──▶ questions in the Inbox ──Start──▶ Queued ──▶ In progress ──▶ Review ──▶ dev ──▶ main
-  ideas      one read-only        you answer once        Run all     one worktree    checks +    merge queue,
-             session per card     (answers = decisions)  works it    per card        judge       one lane at a time
-```
+
+<sub>Orange marks the two steps that wait for you.</sub>
 
 1. **Cards.** Add work to the Backlog from the board, the CLI (`pit card add`), the editor (select code and press ⌘L), or Claude Code itself through the `pitlane` MCP server.
 2. **Questions first.** *Analyse* opens one read-only session per card. It writes notes, finds dependencies between cards, and sends its questions to the Inbox. Each answer becomes a numbered project decision that every later run reads.
