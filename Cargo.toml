@@ -6,6 +6,8 @@ members = ["crates/pit-core", "crates/pitd", "crates/pit", "apps/desktop/src-tau
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/matheussartori/pitlane"
 
 [workspace.dependencies]
 pit-core = { path = "crates/pit-core" }

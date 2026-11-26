@@ -1,16 +1,42 @@
-# Pitlane
+<p align="center">
+  <img src=".github/assets/logo.png" alt="" width="96" height="96">
+</p>
 
-**A local desktop app for running Claude Code agents: terminal, editor and kanban in one window.**
+<h1 align="center">Pitlane</h1>
+
+<p align="center">
+  <strong>A local desktop app for running Claude Code agents: terminal, editor and kanban in one window.</strong>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-lightgrey">
+  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-orange">
+  <img alt="Built with Rust and Tauri" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri-b7410e">
+</p>
+
+<p align="center">
+  <a href="#getting-started">Getting started</a> ·
+  <a href="#tour">Tour</a> ·
+  <a href="#cli-reference">CLI</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/board-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/board-light.webp">
+  <img alt="The Board: cards that need you, the Backlog, Queued, In progress and Landed, with the agents working at the bottom" src=".github/assets/board-dark.webp">
+</picture>
 
 You write cards on a board. Pitlane asks you every question about them up front, gives each card its own branch and worktree, runs Claude Code on it, has the work checked, and merges it through a queue. Every agent it starts shows up live, and you can stop any of them.
 
-> **Status:** private, pre-release (v0.1). macOS only for now. V1 supports Claude Code only; Codex and other agents are planned for V2.
-
----
+> [!NOTE]
+> **Pre-release (v0.1).** macOS only for now, and there are no signed builds yet: you build it from source. V1 supports Claude Code only; Codex and other agents are planned for V2.
 
 ## Contents
 
 - [How it works](#how-it-works)
+- [Tour](#tour)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
@@ -21,7 +47,9 @@ You write cards on a board. Pitlane asks you every question about them up front,
 - [Development](#development)
 - [Project layout](#project-layout)
 - [Design principles](#design-principles)
-- [Documentation](#documentation)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## How it works
 
@@ -37,6 +65,48 @@ You write cards on a board. Pitlane asks you every question about them up front,
 4. **Runs.** Each card runs in its own worktree on a branch cut from a freshly fetched `origin/main`. The agent gets a briefing that lists the files to look at, built from a tree-sitter index.
 5. **Verification.** When a run finishes, your check commands run and a separate read-only Claude session judges the diff against the spec. You approve, ask for changes (the same session continues) or discard.
 6. **Shipping.** Approved lanes go through a merge queue into `dev`, then into `main`. Merges are done with git plumbing, so your checkouts are never touched. When the card is finished, its agent session closes.
+
+## Tour
+
+**Inbox.** Questions from the analysis and agents waiting for a permission, one at a time. Keys 1–9 answer, Enter takes the recommended option.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/inbox-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/inbox-light.webp">
+  <img alt="The Inbox: an agent asks to run npm test, with Allow once, Allow for this run, Always allow and Deny" src=".github/assets/inbox-dark.webp">
+</picture>
+
+**A run.** Every agent session, live, in Claude Code's own style: tool calls, diffs, and what changed and how it was checked on the side. Write to it without stopping it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/run-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/run-light.webp">
+  <img alt="A finished run: the session transcript on the left, files changed, checks and summary on the right" src=".github/assets/run-dark.webp">
+</picture>
+
+**Review.** The diff of a finished card, file by file, with Keep and Drop per hunk. Approve ships it, Ask for changes continues the same session.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/review-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/review-light.webp">
+  <img alt="Review of a card: a per-file diff with Keep and Drop per hunk, and Approve, Ask for changes and Discard" src=".github/assets/review-dark.webp">
+</picture>
+
+**Lanes.** Every branch and worktree, its sync with the remote, and whether it has really landed in `dev` and `main`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/lanes-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/lanes-light.webp">
+  <img alt="Lanes: branches grouped by Waiting on you, In progress, Shipped and Parked, each with a local, remote, dev and main track" src=".github/assets/lanes-dark.webp">
+</picture>
+
+**Terminal.** Real shells in tabs and split panes, next to every agent session.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/terminal-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/terminal-light.webp">
+  <img alt="The Terminal: agent sessions and shells in a sidebar, a shell running a failing test in a worktree" src=".github/assets/terminal-dark.webp">
+</picture>
 
 ## Features
 
@@ -100,7 +170,7 @@ flowchart LR
 ## Getting started
 
 ```bash
-git clone git@github.com:matheussartori/pitlane.git
+git clone https://github.com/matheussartori/pitlane.git
 cd pitlane
 
 # CLI (the Claude Code MCP server uses this binary too)
@@ -232,6 +302,7 @@ apps/desktop/
 design/            design system: tokens, base and component CSS, specimen
 docs/research/     UX, terminal, editor and UI research; Phase 0 benchmark
 tools/bench/       replay benchmark for the briefing
+tools/screenshots.sh  retakes the README screenshots in .github/assets
 ```
 
 ## Design principles
@@ -242,6 +313,23 @@ tools/bench/       replay benchmark for the briefing
 - **Visible and stoppable.** Every session Pitlane starts can be watched and stopped, and nothing runs after the app closes.
 - **Ask once.** All questions come before the work starts, and then Run all does not stop to ask again.
 
+## Roadmap
+
+- Signed and notarized macOS builds, published as releases.
+- Codex (`codex app-server`) and other agents (V2).
+
+[`RETOMADA.md`](RETOMADA.md) has the detailed status and what's next (in Portuguese).
+
+## Contributing
+
+Contributions are welcome. In short:
+
+1. For anything bigger than a small fix, [open an issue](../../issues/new/choose) first so we can agree on the approach.
+2. Fork, branch, and keep `cargo test`, `cargo clippy --workspace` and `npm run build` passing. Don't run `cargo fmt`.
+3. Open a pull request that says what changes for the user.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the details. Please follow the [code of conduct](CODE_OF_CONDUCT.md), and report security issues privately as described in [SECURITY.md](SECURITY.md).
+
 ## Documentation
 
 - [`PLANO.html`](PLANO.html): product plan (flow, brain, routing, sessions, branches, roadmap, risks). Portuguese.
@@ -249,6 +337,12 @@ tools/bench/       replay benchmark for the briefing
 - [`design/design.md`](design/design.md) and [`design/index.html`](design/index.html): design system and live specimen.
 - [`docs/research/`](docs/research): UX research (principles P1–P10), terminals, editors, UI trends, and the Phase 0 benchmark.
 
----
+## Acknowledgements
 
-Private repository. All rights reserved.
+Pitlane stands on [Claude Code](https://github.com/anthropics/claude-code), [Tauri](https://tauri.app), [Solid](https://www.solidjs.com), [code-server](https://github.com/coder/code-server), [xterm.js](https://xtermjs.org), [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [tree-sitter](https://tree-sitter.github.io).
+
+## License
+
+[MIT](LICENSE) © Matheus Sartori
+
+Pitlane is an independent project, not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
