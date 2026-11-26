@@ -30,6 +30,6 @@ AI coding-agent orchestrator: terminal + editor + kanban in one local desktop ap
 ## Conventions
 - Never run `cargo fmt`: the repo isn't rustfmt-formatted and it rewrites dozens of files.
 - Other sessions edit this same checkout: stage only your own files, never `git add -A`.
-- Work on `main`; commit and push at the end of each delivery. Commit messages are prose describing the user-visible change; no `Co-Authored-By` trailer.
+- Work on `main`; commit and push at the end of each delivery. Commit messages follow Conventional Commits (`type(scope): subject`, enforced by commitlint in the husky `commit-msg` hook; `npm install` at the root sets it up), with an optional prose body describing the user-visible change; no `Co-Authored-By` trailer. Never bypass the hook with `--no-verify`.
 - UI copy is English, through `t()`; Portuguese lives in `apps/desktop/src/locales/pt`. Reply to the user in Portuguese.
 - This repo's board is outside the repo: read and change cards only through the `pitlane` MCP tools.

@@ -24,7 +24,7 @@ cd apps/desktop && npm run build    # type-checks the UI
 - **UI text** is English and goes through `t()`. Add the Portuguese string to `apps/desktop/src/locales/pt`.
 - **UI work** follows the design system in [`design/design.md`](design/design.md).
 - **Screenshots:** if your change alters a screen shown in the README, retake them with `tools/screenshots.sh`.
-- **Commit messages** are prose that describes the change as a user sees it ("Approving a card ships it into its run's branch"), not a list of files.
+- **Commit messages** follow [Conventional Commits](https://www.conventionalcommits.org): `type(scope): subject` (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`…), then an optional prose body that describes the change as a user sees it, not a list of files. Run `npm install` once at the repository root: it installs the `commit-msg` hook, and commitlint rejects any message that doesn't follow the format.
 
 ## Rules a change must keep
 
