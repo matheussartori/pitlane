@@ -31,7 +31,7 @@
 You write cards on a board. Pitlane asks you every question about them up front, gives each card its own branch and worktree, runs Claude Code on it, has the work checked, and merges it through a queue. Every agent it starts shows up live, and you can stop any of them.
 
 > [!NOTE]
-> **Pre-release (v0.0.1).** macOS on Apple Silicon only for now. The [first release](https://github.com/matheussartori/pitlane/releases/latest) is an unsigned build, or you can build it from source. This first version supports Claude Code only. Support for other agents, Codex and Antigravity first, and for Linux and Windows is coming once the macOS version is stable; it still has rough edges.
+> **Pre-release (v0.0.1).** macOS on Apple Silicon only for now. The [first release](https://github.com/matheussartori/pitlane/releases/latest) is an unsigned build, or you can build it from source. This first version supports Claude Code only. The macOS version still has rough edges; once it is stable, support follows for other agents (Codex and Antigravity first) and for Linux and Windows.
 
 ## Contents
 
@@ -49,6 +49,8 @@ You write cards on a board. Pitlane asks you every question about them up front,
 - [Design principles](#design-principles)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
+- [Documentation](#documentation)
+- [Acknowledgements](#acknowledgements)
 - [License](#license)
 
 ## How it works
@@ -155,6 +157,7 @@ flowchart LR
   D -- Unix socket --> P
   C -- Unix socket --> P
   M --> K
+  M -- "Unix socket (approvals)" --> P
   P[pitd daemon<br/>tokio] --> K[pit-core<br/>cards, lanes, git, index,<br/>planner, queue, routing]
   P -- "claude -p stream-json" --> A[Claude Code CLI<br/>official, unmodified]
   K --> G[(git)]
@@ -218,7 +221,7 @@ The first `tauri dev` downloads the pinned code-server and the Whisper model (ab
 ```bash
 cd apps/desktop
 npx tauri build
-# → target/release/bundle/macos/Pitlane.app and a .dmg
+# → target/release/bundle/ at the repository root: macos/Pitlane.app and dmg/*.dmg
 ```
 
 The bundle includes the `pit` sidecar, code-server and the Whisper model. It is not signed or notarized yet, so it runs without a Gatekeeper warning only on the machine that built it.
@@ -272,7 +275,8 @@ brief           = true
 
 | Area | Commands |
 | --- | --- |
-| Lanes | `pit lanes`, `pit new <branch> [--card N]`, `pit ship [--to main]`, `pit clean [--dry-run \| --undo]` |
+| Setup | `pit init [--force]` |
+| Lanes | `pit lanes`, `pit new <branch> [--card N]`, `pit ship [--to main]`, `pit clean [--dry-run \| --undo <branch>]` |
 | Cards | `pit card add \| list \| show \| move \| ask \| answer \| link` |
 | Runs | `pit run <card>`, `pit runs`, `pit log <run> -f`, `pit say`, `pit stop`, `pit resume`, `pit continue` |
 | Approvals | `pit approvals`, `pit allow <run> [--run-wide \| --always]`, `pit deny <run> -m "…"` |
@@ -340,7 +344,7 @@ tools/screenshots.sh  retakes the README screenshots in .github/assets
 ## Design principles
 
 - **A pit wall.** Every lane is visible, and only the ones that need you light up. Orange means "your turn" and nothing else.
-- **Local first.** No account, no server, telemetry only if you opt in.
+- **Local first.** No Pitlane account, no server, telemetry only if you opt in.
 - **Official CLIs only.** Agents are the unmodified Claude Code CLI, using your own login.
 - **Visible and stoppable.** Every session Pitlane starts can be watched and stopped, and nothing runs after the app closes.
 - **Ask once.** All questions come before the work starts, and then Run all does not stop to ask again.
