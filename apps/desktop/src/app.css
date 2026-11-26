@@ -39,6 +39,11 @@ body { background: var(--color-frame); }
 .strip-repo-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The command center: centred on the window, quiet until hovered. */
 .strip { position: relative; }
+/* Browser preview only: macOS's traffic lights where tauri.conf.json's trafficLightPosition puts them (x 18). The window's own colours, not the design system's. */
+.strip-lights { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); display: flex; gap: 8px; pointer-events: none; }
+.strip-lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.2); }
+.strip-lights i:nth-child(2) { background: #febc2e; }
+.strip-lights i:nth-child(3) { background: #28c840; }
 .strip-search { position: absolute; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: var(--space-xs); width: min(420px, 36vw); height: 26px; padding-inline: var(--space-xs); border: 0; border-radius: var(--radius-md); background: color-mix(in oklch, var(--color-ink) 5%, transparent); color: var(--color-muted); font: var(--weight-regular) var(--text-sm)/1 var(--font-body); cursor: pointer; transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out); }
 .strip-search:hover { background: color-mix(in oklch, var(--color-ink) 9%, transparent); color: var(--color-ink-2); }
 .strip-search:active { transform: translateX(-50%) scale(0.98); }

@@ -213,6 +213,16 @@ npx tauri dev
 
 The first `tauri dev` downloads the pinned code-server and the Whisper model (about 550 MB) into `src-tauri/resources/`.
 
+### Build a release from source
+
+```bash
+cd apps/desktop
+npx tauri build
+# → target/release/bundle/macos/Pitlane.app and a .dmg
+```
+
+The bundle includes the `pit` sidecar, code-server and the Whisper model. It is not signed or notarized yet, so it runs without a Gatekeeper warning only on the machine that built it.
+
 ### Set up a repository
 
 In each repository, write the branch flow and connect Claude Code:
@@ -222,16 +232,6 @@ cd ~/code/your-repo
 pit init                              # writes .pitlane/flow.toml and turns on git rerere
 claude mcp add pitlane -- pit mcp     # lets Claude Code create and update cards
 ```
-
-### Release build
-
-```bash
-cd apps/desktop
-npx tauri build
-# → target/release/bundle/macos/Pitlane.app and a .dmg
-```
-
-The bundle includes the `pit` sidecar, code-server and the Whisper model. It is not signed or notarized yet, so it runs without a Gatekeeper warning only on the machine that built it.
 
 ## Configuration
 

@@ -638,6 +638,10 @@ export default function App() {
   return (
     <div class="app">
       <div class="strip" data-tauri-drag-region>
+        {/* the browser preview stands in for macOS's own traffic lights, so its screenshots look like the app */}
+        <Show when={!("__TAURI_INTERNALS__" in window)}>
+          <span class="strip-lights" aria-hidden="true"><i /><i /><i /></span>
+        </Show>
           <div class="anchor strip-repo" ref={repoBox}>
             <button
               type="button"
