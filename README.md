@@ -31,7 +31,7 @@
 You write cards on a board. Pitlane asks you every question about them up front, gives each card its own branch and worktree, runs Claude Code on it, has the work checked, and merges it through a queue. Every agent it starts shows up live, and you can stop any of them.
 
 > [!NOTE]
-> **Pre-release (v0.1).** macOS only for now, and there are no signed builds yet: you build it from source. V1 supports Claude Code only. Support for other agents, Codex and Antigravity first, and for Linux and Windows is coming once the macOS version is stable; it still has rough edges.
+> **Pre-release (v0.0.1).** macOS on Apple Silicon only for now. The [first release](https://github.com/matheussartori/pitlane/releases/latest) is an unsigned build, or you can build it from source. This first version supports Claude Code only. Support for other agents, Codex and Antigravity first, and for Linux and Windows is coming once the macOS version is stable; it still has rough edges.
 
 ## Contents
 
@@ -172,16 +172,31 @@ flowchart LR
 
 ## Requirements
 
-- macOS (Apple Silicon recommended, since dictation uses Metal)
-- [Rust](https://rustup.rs) 1.90 or newer (edition 2024)
-- Node.js 20.19 or newer, and npm
+- macOS on Apple Silicon (dictation uses Metal; the release build is Apple Silicon only)
 - `git` 2.38 or newer (needed for `merge-tree --write-tree`)
 - [Claude Code](https://docs.claude.com/claude-code) installed and signed in (`claude auth login`)
 - Optional: `gh`, to detect merged PRs
+- To build from source: [Rust](https://rustup.rs) 1.90 or newer (edition 2024), and Node.js 20.19 or newer with npm
 
 > If rustup was installed with Homebrew, it is keg-only. Add `/opt/homebrew/opt/rustup/bin` to your `PATH`.
 
 ## Getting started
+
+### From a release
+
+Download the `.dmg` from [Releases](https://github.com/matheussartori/pitlane/releases/latest) (Apple Silicon) and drag Pitlane to Applications. The build is not signed or notarized yet, so macOS blocks it as downloaded from the internet. Clear that flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Pitlane.app
+```
+
+The app bundles the `pit` CLI. Put it on your `PATH`:
+
+```bash
+sudo mkdir -p /usr/local/bin && sudo ln -sf /Applications/Pitlane.app/Contents/MacOS/pit /usr/local/bin/pit
+```
+
+### From source
 
 ```bash
 git clone https://github.com/matheussartori/pitlane.git
@@ -198,7 +213,9 @@ npx tauri dev
 
 The first `tauri dev` downloads the pinned code-server and the Whisper model (about 550 MB) into `src-tauri/resources/`.
 
-Set up a repository and connect Claude Code:
+### Set up a repository
+
+In each repository, write the branch flow and connect Claude Code:
 
 ```bash
 cd ~/code/your-repo
@@ -331,8 +348,8 @@ tools/screenshots.sh  retakes the README screenshots in .github/assets
 ## Roadmap
 
 - A stable macOS version. It still has known issues, and they come first.
-- Signed and notarized macOS builds, published as releases.
-- Other agents (V2): Codex (`codex app-server`) and Antigravity first, then more.
+- Signed and notarized macOS builds.
+- Other agents: Codex (`codex app-server`) and Antigravity first, then more.
 - Linux and Windows.
 
 The new agents and platforms start once the macOS version is stable.

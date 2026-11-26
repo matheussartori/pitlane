@@ -3039,7 +3039,7 @@ dependencies = [
 
 [[package]]
 name = "pit"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3054,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "pit-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "pitd"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "pitlane-desktop"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
