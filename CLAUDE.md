@@ -5,7 +5,6 @@ AI coding-agent orchestrator: terminal + editor + kanban in one local desktop ap
 ## Read first
 - `design/design.md`: the locked design system. Any UI work follows it; `design/index.html` is the live specimen.
 - `CONTRIBUTING.md`: the contribution rules every change keeps.
-- The maintainer's status notes, product plan and research live outside the repo; `CLAUDE.local.md` (not in git) points to them when present.
 
 ## Hard rules
 - Agents are launched through their official, unmodified CLIs (`claude -p` stream-json). Pitlane never reads, copies, stores or proxies login tokens, and never uses subscription OAuth through an SDK.
